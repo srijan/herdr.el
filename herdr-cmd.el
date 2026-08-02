@@ -423,6 +423,16 @@ name to a worktree with its own herdr workspace."
 
 ;;; Agents
 
+(defcustom herdr-agent-kinds
+  '("pi" "omp" "claude" "codex" "copilot" "devin" "droid"
+    "kimi" "opencode" "kilo" "hermes" "qodercli" "cursor" "mastracode")
+  "Known agent kinds offered when starting an agent.
+Completion candidates only, not a closed set: herdr types
+`agent.start''s `kind' parameter as a free string rather than an enum,
+so a kind not listed here is still accepted.  Add your own to taste."
+  :type '(repeat string)
+  :group 'herdr)
+
 (defun herdr-agent-prompt (text &optional target)
   "Send TEXT as a prompt to the agent in TARGET."
   (interactive (list (read-string "Prompt: ")))
@@ -465,7 +475,7 @@ about.  TIMEOUT is in seconds."
   "Start agent NAME of KIND in PANE-ID."
   (interactive
    (list (read-string "Agent name: ")
-         (read-string "Agent kind: ")))
+         (completing-read "Agent kind: " herdr-agent-kinds nil nil)))
   (herdr-rpc-call "agent.start"
                   `((pane_id . ,(or pane-id (herdr-select-target-pane)))
                     (name . ,name)
