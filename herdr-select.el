@@ -123,15 +123,34 @@ With a prefix argument, always prompt."
 
 ;;; Optional integrations, registered only when the package is loaded
 
+;; These are conveniences, not requirements: the completion tables above
+;; already carry an `annotation-function', and marginalia falls back to
+;; it for any category it does not know.  Registering the categories
+;; only buys marginalia's column alignment.
+;;
+;; So every hook here is guarded by `boundp'.  These are third-party
+;; variables on their own release schedules — `marginalia-annotator-registry'
+;; was renamed to `marginalia-annotators', which broke startup — and a
+;; cosmetic integration must never be able to do that.
+
+(defconst herdr-select-annotators
+  '((herdr-pane      herdr-select--annotate-pane)
+    (herdr-workspace herdr-select--annotate-workspace)
+    (herdr-tab       herdr-select--annotate-tab))
+  "Annotator per completion category, in `marginalia-annotators' order.")
+
+(defun herdr-select--register-marginalia ()
+  "Register herdr's categories with marginalia, if its API is recognised."
+  (let ((registry (cond ((boundp 'marginalia-annotators) 'marginalia-annotators)
+                        ;; marginalia before the 2024 rename.
+                        ((boundp 'marginalia-annotator-registry)
+                         'marginalia-annotator-registry))))
+    (when registry
+      (dolist (entry herdr-select-annotators)
+        (add-to-list registry (append entry '(builtin none)))))))
+
 (with-eval-after-load 'marginalia
-  (with-no-warnings
-    (add-to-list 'marginalia-annotator-registry
-                 '(herdr-pane herdr-select--annotate-pane builtin none))
-    (add-to-list 'marginalia-annotator-registry
-                 '(herdr-workspace herdr-select--annotate-workspace
-                                   builtin none))
-    (add-to-list 'marginalia-annotator-registry
-                 '(herdr-tab herdr-select--annotate-tab builtin none))))
+  (herdr-select--register-marginalia))
 
 (defvar herdr-select-pane-embark-map
   (let ((map (make-sparse-keymap)))
@@ -144,9 +163,24 @@ With a prefix argument, always prompt."
   "Embark actions offered on a herdr pane candidate.")
 
 (with-eval-after-load 'embark
-  (with-no-warnings
+  (when (boundp 'embark-keymap-alist)
     (add-to-list 'embark-keymap-alist
                  '(herdr-pane . herdr-select-pane-embark-map))))
+
+(defun herdr-select--consult-source ()
+  "Return a `consult-buffer' source listing herdr panes."
+  `(:name "herdr pane"
+    :narrow ?h
+    :category herdr-pane
+    :annotate ,#'herdr-select--annotate-pane
+    :action ,#'herdr-pane-focus
+    :items ,(lambda () (herdr-state-pane-ids (herdr-state-current)))))
+
+(with-eval-after-load 'consult
+  (when (boundp 'consult-buffer-sources)
+    (defvar herdr-select-consult-source (herdr-select--consult-source)
+      "herdr pane source for `consult-buffer'.")
+    (add-to-list 'consult-buffer-sources 'herdr-select-consult-source t)))
 
 (provide 'herdr-select)
 ;;; herdr-select.el ends here
