@@ -56,6 +56,7 @@ Optional, used when present, never required: `marginalia`, `embark`, `consult`, 
          :map project-prefix-map
          ("h" . herdr-project))
   :custom (herdr-terminal-backend 'session)
+  ;; (herdr-display-action '(display-buffer-full-frame))  ; TUI takes the frame
   :config (herdr-agents-mode-line-mode 1))
 ```
 
@@ -73,8 +74,13 @@ Both are supported. Set `herdr-terminal-backend`.
 One ghostel buffer, `*herdr*`, running the herdr TUI. herdr owns the layout. Plain shell panes
 work normally. About sixty lines of glue and nothing to go wrong.
 
-`herdr-display-action` controls placement and defaults to `display-buffer-full-frame`, because
-herdr draws a 26-column sidebar beside its panes and a narrow window leaves it very little.
+`herdr-display-action` controls placement, and every path that shows a herdr buffer goes through
+it — starting herdr, going to a pane, attaching — so the same buffer cannot appear one way from
+`M-x herdr` and another from Go to.
+
+It defaults to reusing the current window and leaving your splits alone. herdr's TUI wants width
+for its 26-column sidebar, so under `session` you may prefer
+`'(display-buffer-full-frame)` — which does delete your other windows — or a side window.
 
 ### `agent-windows`
 

@@ -57,14 +57,29 @@ represented, since herdr will not attach to a pane without an agent."
                  (const :tag "One buffer per agent" agent-windows))
   :group 'herdr)
 
-(defcustom herdr-display-action '(display-buffer-full-frame)
-  "Display action used for the `session' backend's buffer.
+(defcustom herdr-display-action
+  '((display-buffer-reuse-window display-buffer-same-window))
+  "How herdr buffers are shown, for every path that shows one.
 
-herdr draws a 26-column sidebar next to its panes, so a narrow window
-leaves it very little room.  Full frame is the default for that reason;
-a side window or dedicated frame works if you would rather."
+One knob, honoured everywhere: starting herdr, going to a pane, and
+attaching all route through it, so the same buffer cannot appear two
+different ways depending on which command got you there.
+
+The default reuses the current window.  Rearranging the frame is the
+user\='s business — `C-x 2\=', `C-x 3\=', `display-buffer-alist\=' — not
+something navigating should do on your behalf.
+
+herdr\='s TUI draws a 26-column sidebar beside its panes and so wants
+width, which is advice rather than grounds for bulldozing a layout.  For
+the old behaviour of taking the whole frame:
+
+    (setq herdr-display-action \='(display-buffer-full-frame))"
   :type 'sexp
   :group 'herdr)
+
+(defun herdr-term--show (buffer)
+  "Show BUFFER according to `herdr-display-action' and select it."
+  (pop-to-buffer buffer herdr-display-action))
 
 (defcustom herdr-server-start-timeout 15.0
   "Seconds to wait for a freshly launched herdr server to answer."
@@ -133,7 +148,7 @@ and outlives it, so the buffer is discarded once ping succeeds."
     ;; and is killed straight after, so showing it would be a flash of a
     ;; window the user never asked for.
     (when (eq herdr-terminal-backend 'session)
-      (display-buffer buffer herdr-display-action))
+      (herdr-term--show buffer))
     (ghostel-exec buffer herdr-executable (herdr-term-session-args))
     (let ((deadline (+ (float-time) herdr-server-start-timeout)))
       (while (and (< (float-time) deadline) (not (herdr-server-live-p)))
@@ -170,9 +185,7 @@ Returns the buffer when it showed one."
     (unless (buffer-live-p buffer)
       (setq buffer (herdr-term--attach-if-possible pane-id)))
     (when (buffer-live-p buffer)
-      ;; Reuse the current window.  Splitting is the user's business —
-      ;; `C-x 2\=' and friends — not something going to a pane should do.
-      (pop-to-buffer-same-window buffer)
+      (herdr-term--show buffer)
       buffer)))
 
 (defun herdr-term--attach-if-possible (pane-id)
@@ -229,9 +242,9 @@ steals the first one's terminal."
     ;; displaying, or with a window that is deleted straight afterwards,
     ;; kills the client and ghostel then kills the buffer.  Being merely
     ;; hidden later is fine — a buried terminal keeps running — so the
-    ;; window only has to exist, not persist.  Same window rather than
-    ;; `display-buffer\=': going to a pane should not split the frame.
-    (pop-to-buffer-same-window buffer)
+    ;; window only has to exist, not persist.  Shown through
+    ;; `herdr-display-action\=' like every other path.
+    (herdr-term--show buffer)
     (condition-case err
         (ghostel-exec buffer herdr-executable
                       (herdr-term-attach-args pane-id nil))
@@ -427,7 +440,7 @@ deliberately instead, through the menu, the agents list, or
 `consult-buffer'."
   (when (eq herdr-terminal-backend 'session)
     (when-let* ((buffer (get-buffer herdr-term-session-buffer-name)))
-      (display-buffer buffer herdr-display-action))))
+      (herdr-term--show buffer))))
 
 (defun herdr-term-teardown ()
   "Kill this backend's buffers.  The herdr server is left running."

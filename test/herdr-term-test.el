@@ -240,5 +240,39 @@ business, not a side effect of navigation."
             (should (= before (length (window-list))))))
       (kill-buffer target))))
 
+;;; One display knob, honoured by every path
+
+(ert-deftest herdr-term-show-honours-the-display-action ()
+  (let* ((buffer (generate-new-buffer " *shown*"))
+         (seen nil)
+         (herdr-display-action '(my-action)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'pop-to-buffer)
+                   (lambda (buf action &rest _) (setq seen (cons buf action)))))
+          (herdr-term--show buffer)
+          (should (eq buffer (car seen)))
+          (should (equal '(my-action) (cdr seen))))
+      (kill-buffer buffer))))
+
+(ert-deftest herdr-term-display-and-select-use-the-same-action ()
+  "The same buffer must not appear one way from `M-x herdr' and another
+way from Go to."
+  (let* ((herdr-terminal-backend 'session)
+         (buffer (get-buffer-create herdr-term-session-buffer-name))
+         (actions nil)
+         (herdr-display-action '(recorded)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'pop-to-buffer)
+                   (lambda (_buf action &rest _) (push action actions) _buf)))
+          (herdr-term-display)
+          (herdr-term-select-pane "w1:p1")
+          (should (equal '((recorded) (recorded)) actions)))
+      (kill-buffer buffer))))
+
+(ert-deftest herdr-display-action-defaults-to-reusing-the-window ()
+  "The default must not delete the user's other windows."
+  (should (equal '((display-buffer-reuse-window display-buffer-same-window))
+                 (default-value 'herdr-display-action))))
+
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here
