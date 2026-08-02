@@ -27,6 +27,7 @@
 (require 'herdr-rpc)
 (require 'herdr-state)
 (require 'herdr-select)
+(require 'herdr-term)
 
 (defconst herdr-cmd-methods
   '((herdr-pane-split-right      "pane.split"           "direction" "target_pane_id" "focus")
@@ -66,6 +67,17 @@
 Each entry is (COMMAND METHOD PARAM...).  Verified against the live
 schema by the drift test.")
 
+(defun herdr-cmd--follow-new-pane ()
+  "Select the newly created pane's buffer, or say why there is not one.
+
+Under `agent-windows' a freshly created pane is a plain shell, and herdr
+refuses to attach to a pane with no agent — so nothing appears.  Silence
+there reads as a broken command, which is worse than the limitation."
+  (when (eq herdr-terminal-backend 'agent-windows)
+    (unless (herdr-term-select-focused)
+      (message "herdr: new pane is a plain shell, so it has no buffer under \
+agent-windows; adopt it with M-x herdr-adopt-shell (P A in the menu)"))))
+
 (defun herdr-cmd--read-source (&optional prompt)
   "Read a `ReadSource' value, defaulting to the one worth having.
 `recent_unwrapped' is the useful default: it is the whole recent
@@ -83,7 +95,8 @@ result greppable."
   (herdr-rpc-call "pane.split"
                   `((direction . "right")
                     (target_pane_id . ,(or target (herdr-select-target-pane)))
-                    (focus . t))))
+                    (focus . t)))
+  (herdr-cmd--follow-new-pane))
 
 (defun herdr-pane-split-down (&optional target)
   "Split TARGET, or the focused pane, downward."
@@ -91,7 +104,8 @@ result greppable."
   (herdr-rpc-call "pane.split"
                   `((direction . "down")
                     (target_pane_id . ,(or target (herdr-select-target-pane)))
-                    (focus . t))))
+                    (focus . t)))
+  (herdr-cmd--follow-new-pane))
 
 (defun herdr-pane-close (&optional pane-id)
   "Close PANE-ID, or the focused pane."
@@ -133,10 +147,16 @@ result greppable."
                     (label . ,label))))
 
 (defun herdr-pane-focus (&optional pane-id)
-  "Focus PANE-ID, prompting when not given."
+  "Focus PANE-ID, prompting when not given, and select its buffer.
+
+Focusing is server-side.  Under `agent-windows' that has no visible
+effect on its own, because each pane is a separate Emacs buffer and
+nothing repaints — so Emacs is moved to match."
   (interactive)
-  (herdr-rpc-call "pane.focus"
-                  `((pane_id . ,(or pane-id (herdr-select-pane "Focus pane: "))))))
+  (let ((pane (or pane-id (herdr-select-pane "Focus pane: "))))
+    (herdr-rpc-call "pane.focus" `((pane_id . ,pane)))
+    (herdr-term-select-pane pane)
+    pane))
 
 (defun herdr-cmd-read-text (result)
   "Return the terminal text carried by a read RESULT.
@@ -216,7 +236,8 @@ TIMEOUT is in seconds.  PATTERN is treated as a regular expression."
   (interactive (list (read-string "Tab label (optional): ")))
   (herdr-rpc-call "tab.create"
                   `((label . ,(unless (string-empty-p (or label "")) label))
-                    (focus . t))))
+                    (focus . t)))
+  (herdr-cmd--follow-new-pane))
 
 (defun herdr-tab-close (&optional tab-id)
   "Close TAB-ID, prompting when not given."
@@ -225,10 +246,12 @@ TIMEOUT is in seconds.  PATTERN is treated as a regular expression."
                   `((tab_id . ,(or tab-id (herdr-select-tab "Close tab: "))))))
 
 (defun herdr-tab-focus (&optional tab-id)
-  "Focus TAB-ID, prompting when not given."
+  "Focus TAB-ID, prompting when not given, and follow it in Emacs."
   (interactive)
   (herdr-rpc-call "tab.focus"
-                  `((tab_id . ,(or tab-id (herdr-select-tab "Focus tab: "))))))
+                  `((tab_id . ,(or tab-id (herdr-select-tab "Focus tab: ")))))
+  ;; Which pane that lands on is the server's decision, so ask.
+  (herdr-term-select-focused))
 
 (defun herdr-tab-rename (label &optional tab-id)
   "Rename TAB-ID to LABEL."
@@ -246,7 +269,8 @@ TIMEOUT is in seconds.  PATTERN is treated as a regular expression."
                   `((cwd . ,(expand-file-name cwd))
                     (label . ,(or label (file-name-nondirectory
                                          (directory-file-name cwd))))
-                    (focus . t))))
+                    (focus . t)))
+  (herdr-cmd--follow-new-pane))
 
 (defun herdr-workspace-close (&optional workspace-id)
   "Close WORKSPACE-ID, prompting when not given."
@@ -256,11 +280,12 @@ TIMEOUT is in seconds.  PATTERN is treated as a regular expression."
       (herdr-rpc-call "workspace.close" `((workspace_id . ,workspace))))))
 
 (defun herdr-workspace-focus (&optional workspace-id)
-  "Focus WORKSPACE-ID, prompting when not given."
+  "Focus WORKSPACE-ID, prompting when not given, and follow it in Emacs."
   (interactive)
   (herdr-rpc-call "workspace.focus"
                   `((workspace_id . ,(or workspace-id
-                                         (herdr-select-workspace "Focus: "))))))
+                                         (herdr-select-workspace "Focus: ")))))
+  (herdr-term-select-focused))
 
 (defun herdr-workspace-rename (label &optional workspace-id)
   "Rename WORKSPACE-ID to LABEL."
@@ -373,10 +398,12 @@ about.  TIMEOUT is in seconds."
                              (format "%S" result)))))
 
 (defun herdr-agent-focus (&optional target)
-  "Focus the agent in TARGET."
+  "Focus the agent in TARGET and select its buffer."
   (interactive)
-  (herdr-rpc-call "agent.focus"
-                  `((target . ,(or target (herdr-select-agent "Focus agent: "))))))
+  (let ((agent (or target (herdr-select-agent "Focus agent: "))))
+    (herdr-rpc-call "agent.focus" `((target . ,agent)))
+    ;; TARGET may be a pane id or an agent name, so resolve via the server.
+    (or (herdr-term-select-pane agent) (herdr-term-select-focused))))
 
 ;;; Adopting plain shells
 

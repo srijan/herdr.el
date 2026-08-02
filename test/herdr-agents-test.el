@@ -67,5 +67,38 @@
                    '("w1:p1" "claude" "blocked")
                    '("w1:p2" "shell" "blocked"))))))
 
+;;; Mode line wiring
+
+(ert-deftest herdr-agents-global-mode-string-leads-with-an-empty-string ()
+  "A mode-line list starting with a symbol is read as a conditional.
+On a fresh Emacs `global-mode-string' is nil, so appending our symbol
+gave (herdr-agents-mode-line-string), which rendered as *invalid* in
+every mode line."
+  (let ((global-mode-string nil))
+    (herdr-agents--ensure-global-mode-string)
+    (should (equal '("") global-mode-string))
+    (add-to-list 'global-mode-string 'herdr-agents-mode-line-string t)
+    (should (equal "" (car global-mode-string)))
+    (should (memq 'herdr-agents-mode-line-string global-mode-string))))
+
+(ert-deftest herdr-agents-global-mode-string-preserves-existing-entries ()
+  (let ((global-mode-string '("" display-time-string)))
+    (herdr-agents--ensure-global-mode-string)
+    (should (equal '("" display-time-string) global-mode-string))))
+
+(ert-deftest herdr-agents-global-mode-string-prefixes-a-symbol-led-list ()
+  (let ((global-mode-string '(display-time-string)))
+    (herdr-agents--ensure-global-mode-string)
+    (should (equal '("" display-time-string) global-mode-string))))
+
+(ert-deftest herdr-agents-global-mode-string-tolerates-a-non-list ()
+  (let ((global-mode-string "raw"))
+    (herdr-agents--ensure-global-mode-string)
+    (should (equal '("" "raw") global-mode-string))))
+
+(ert-deftest herdr-agents-mode-line-string-is-risky ()
+  "Without this its keymap and mouse properties are stripped."
+  (should (get 'herdr-agents-mode-line-string 'risky-local-variable)))
+
 (provide 'herdr-agents-test)
 ;;; herdr-agents-test.el ends here

@@ -88,6 +88,25 @@ read.  Only the states worth acting on appear."
                                   map))))))
   (force-mode-line-update t))
 
+(defun herdr-agents--ensure-global-mode-string ()
+  "Make `global-mode-string' safe to append a symbol to.
+
+A mode-line construct that is a list beginning with a symbol is read as
+a conditional — (SYMBOL THEN ELSE) — not as a list of elements.  So on a
+fresh Emacs, where `global-mode-string' is nil, appending our symbol
+produced (herdr-agents-mode-line-string), which Emacs evaluated as a
+conditional with no branches and rendered as *invalid* in every mode
+line.
+
+Leading with an empty string forces the list-of-elements reading.  This
+is why Emacs's own `global-mode-string' conventionally starts with \"\"."
+  (cond
+   ((null global-mode-string) (setq global-mode-string '("")))
+   ((not (listp global-mode-string))
+    (setq global-mode-string (list "" global-mode-string)))
+   ((not (equal (car global-mode-string) ""))
+    (setq global-mode-string (cons "" global-mode-string)))))
+
 ;;;###autoload
 (define-minor-mode herdr-agents-mode-line-mode
   "Show a count of noteworthy herdr agents in the modeline."
@@ -95,6 +114,7 @@ read.  Only the states worth acting on appear."
   :group 'herdr
   (if herdr-agents-mode-line-mode
       (progn
+        (herdr-agents--ensure-global-mode-string)
         (add-to-list 'global-mode-string
                      'herdr-agents-mode-line-string t)
         (add-hook 'herdr-state-change-hook #'herdr-agents--refresh-segment)

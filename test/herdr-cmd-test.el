@@ -9,6 +9,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'herdr-test-helper)
 (require 'herdr-cmd)
 (require 'herdr-schema)
 
@@ -71,6 +72,48 @@
   ;; Tolerate a flat shape too, rather than returning nil if it changes.
   (should (equal "flat" (herdr-cmd-read-text '((text . "flat")))))
   (should (equal "" (herdr-cmd-read-text '((type . "pane_read"))))))
+
+;;; Focus must move Emacs, not just the server
+
+(ert-deftest herdr-pane-focus-selects-the-buffer-for-that-pane ()
+  "Focusing is server-side; under `agent-windows' nothing repaints, so
+Emacs has to be moved to match or the command looks like a no-op."
+  (let (selected)
+    (cl-letf (((symbol-function 'herdr-term-select-pane)
+               (lambda (pane) (setq selected pane))))
+      (herdr-test-with-server
+          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-pane-focus "w1:p7")
+        (should (equal "w1:p7" selected))))))
+
+(ert-deftest herdr-agent-focus-selects-a-buffer ()
+  (let (selected)
+    (cl-letf (((symbol-function 'herdr-term-select-pane)
+               (lambda (pane) (setq selected pane)))
+              ((symbol-function 'herdr-term-select-focused) (lambda () nil)))
+      (herdr-test-with-server
+          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-agent-focus "w1:p3")
+        (should (equal "w1:p3" selected))))))
+
+(ert-deftest herdr-tab-focus-follows-to-whatever-pane-the-server-picked ()
+  "Which pane a tab lands on is the server's choice, so it must be asked."
+  (let (asked)
+    (cl-letf (((symbol-function 'herdr-term-select-focused)
+               (lambda () (setq asked t))))
+      (herdr-test-with-server
+          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-tab-focus "w1:t2")
+        (should asked)))))
+
+(ert-deftest herdr-workspace-focus-follows-in-emacs ()
+  (let (asked)
+    (cl-letf (((symbol-function 'herdr-term-select-focused)
+               (lambda () (setq asked t))))
+      (herdr-test-with-server
+          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-workspace-focus "w2")
+        (should asked)))))
 
 (provide 'herdr-cmd-test)
 ;;; herdr-cmd-test.el ends here

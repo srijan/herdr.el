@@ -150,6 +150,28 @@ and outlives it, so the buffer is discarded once ping succeeds."
         (seq-filter (lambda (cell) (buffer-live-p (cdr cell)))
                     herdr-term--agent-buffers)))
 
+(defun herdr-term-select-pane (pane-id)
+  "Select the Emacs buffer showing PANE-ID, if this backend has one.
+
+Focus is server-side state, and under `session' the TUI repaints so the
+change is visible.  Under `agent-windows' nothing repaints: each pane is
+a separate Emacs buffer, so focusing a pane server-side has no visible
+effect at all unless Emacs also selects that buffer.  Returns the buffer
+when it selected one."
+  (when-let* ((buffer (herdr-term-buffer-for-pane pane-id))
+              ((buffer-live-p buffer)))
+    (pop-to-buffer buffer)
+    buffer))
+
+(defun herdr-term-select-focused ()
+  "Select the buffer for whichever pane herdr now considers focused.
+Asks the server rather than trusting the cache, because focus may have
+moved as a side effect of the command that just ran."
+  (when-let* ((pane (ignore-errors
+                      (alist-get 'pane_id
+                                 (alist-get 'pane (herdr-rpc-call "pane.current")))))) 
+    (herdr-term-select-pane pane)))
+
 (defun herdr-term-buffer-for-pane (pane-id)
   "Return the buffer showing PANE-ID, if this backend has one."
   (pcase herdr-terminal-backend
@@ -157,9 +179,21 @@ and outlives it, so the buffer is discarded once ping succeeds."
     ('agent-windows (cdr (assoc pane-id (herdr-term--live-agent-buffers))))))
 
 (defun herdr-term--attach (pane)
-  "Create and start a ghostel buffer attached to PANE."
+  "Create and start a ghostel buffer attached to PANE.
+Returns an existing buffer untouched rather than attaching twice:
+attachment is exclusive per pane, so a second attach either fails or
+steals the first one's terminal."
   (let* ((pane-id (alist-get 'pane_id pane))
-         (buffer (get-buffer-create (herdr-term-agent-buffer-name pane))))
+         (existing (herdr-term-buffer-for-pane pane-id)))
+    (if (buffer-live-p existing)
+        existing
+      (herdr-term--attach-1 pane pane-id))))
+
+(defun herdr-term--attach-1 (pane pane-id)
+  "Create and start a ghostel buffer attached to PANE, named for PANE-ID."
+  (let ((buffer (get-buffer-create (herdr-term-agent-buffer-name pane))))
+    ;; Set the mode before displaying so `display-buffer-alist' rules can
+    ;; match on it, the way ghostel's own buffer creation does.
     (with-current-buffer buffer (ghostel-mode))
     ;; Display before starting: ghostel sizes the PTY from the window,
     ;; and herdr paints nothing into a zero-sized terminal.
