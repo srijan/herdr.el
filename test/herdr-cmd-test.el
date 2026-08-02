@@ -163,5 +163,32 @@ add a spurious row to herdr's own agents list."
       (herdr-cmd--follow-new-pane)
       (should-not adopted))))
 
+;;; Confirmations must not be left on screen
+
+(ert-deftest herdr-pane-close-reports-afterwards ()
+  "Closing reaps the pane's buffer, so redisplay happens while the
+confirmation is still up; without a following message it sits there
+looking unanswered."
+  (dolist (answer '(t nil))
+    (let (said)
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) answer))
+                ((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (herdr-test-with-server
+            (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
+          (herdr-pane-close "w1:p1")
+          (should said)
+          (should (string-match-p "w1:p1" said)))))))
+
+(ert-deftest herdr-workspace-close-reports-afterwards ()
+  (let (said)
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+      (herdr-test-with-server
+          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-workspace-close "w1")
+        (should (string-match-p "w1" (or said "")))))))
+
 (provide 'herdr-cmd-test)
 ;;; herdr-cmd-test.el ends here

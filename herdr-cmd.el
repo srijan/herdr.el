@@ -148,11 +148,17 @@ result greppable."
   (herdr-cmd--follow-new-pane))
 
 (defun herdr-pane-close (&optional pane-id)
-  "Close PANE-ID, or the focused pane."
+  "Close PANE-ID, or the pane being acted on."
   (interactive)
   (let ((pane (or pane-id (herdr-select-target-pane "Close pane: "))))
-    (when (y-or-n-p (format "Close pane %s? " pane))
-      (herdr-rpc-call "pane.close" `((pane_id . ,pane))))))
+    (if (y-or-n-p (format "Close pane %s? " pane))
+        (progn
+          (herdr-rpc-call "pane.close" `((pane_id . ,pane)))
+          ;; Say something afterwards.  Closing reaps the pane's buffer,
+          ;; so redisplay happens while the confirmation prompt is still
+          ;; on screen and it otherwise sits there looking unanswered.
+          (message "herdr: closed %s" pane))
+      (message "herdr: %s left open" pane))))
 
 (defun herdr-pane-zoom (&optional pane-id)
   "Toggle zoom on PANE-ID, or the focused pane."
@@ -213,7 +219,8 @@ attach to a pane without an agent."
               (format "Pane %s is a plain shell with no buffer.  Adopt it? "
                       pane-id)))
         (herdr-adopt-shell pane-id)
-        (herdr-cmd--select-pane-when-ready pane-id))
+        (herdr-cmd--select-pane-when-ready pane-id)
+        (message "herdr: adopting %s" pane-id))
        (t (message "herdr: focused %s, but it has no buffer to show" pane-id))))))
 
 (defun herdr-cmd-read-text (result)
@@ -334,8 +341,11 @@ TIMEOUT is in seconds.  PATTERN is treated as a regular expression."
   "Close WORKSPACE-ID, prompting when not given."
   (interactive)
   (let ((workspace (or workspace-id (herdr-select-workspace "Close workspace: "))))
-    (when (y-or-n-p (format "Close workspace %s? " workspace))
-      (herdr-rpc-call "workspace.close" `((workspace_id . ,workspace))))))
+    (if (y-or-n-p (format "Close workspace %s? " workspace))
+        (progn
+          (herdr-rpc-call "workspace.close" `((workspace_id . ,workspace)))
+          (message "herdr: closed workspace %s" workspace))
+      (message "herdr: workspace %s left open" workspace))))
 
 (defun herdr-workspace-focus (&optional workspace-id)
   "Focus WORKSPACE-ID, prompting when not given, and follow it in Emacs."
@@ -392,10 +402,13 @@ name to a worktree with its own herdr workspace."
   "Remove the worktree workspace WORKSPACE-ID, forcing when FORCE."
   (interactive)
   (let ((workspace (or workspace-id (herdr-select-workspace "Remove worktree: "))))
-    (when (yes-or-no-p (format "Remove worktree workspace %s? " workspace))
-      (herdr-rpc-call "worktree.remove"
-                      `((workspace_id . ,workspace)
-                        (force . ,(if force t :false)))))))
+    (if (yes-or-no-p (format "Remove worktree workspace %s? " workspace))
+        (progn
+          (herdr-rpc-call "worktree.remove"
+                          `((workspace_id . ,workspace)
+                            (force . ,(if force t :false))))
+          (message "herdr: removed worktree %s" workspace))
+      (message "herdr: worktree %s kept" workspace))))
 
 ;;; Agents
 
