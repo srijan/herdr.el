@@ -82,6 +82,15 @@ than the null that an empty alist would produce."
         (puthash (symbol-name (car cell)) (cdr cell) table)))
     table))
 
+(defun herdr-rpc-array (items)
+  "Return ITEMS as a vector, which is how JSON arrays must be built.
+
+`json-serialize' cannot tell a list of alists from a single alist — both
+are lists of conses — so a list of objects is either misread as one
+object or rejected outright.  Vectors are unambiguous.  Every array-typed
+parameter must go through here."
+  (vconcat items))
+
 (defun herdr-rpc-encode (id method params)
   "Encode a request with ID, METHOD and PARAMS as one NDJSON line."
   (concat (json-serialize

@@ -83,5 +83,22 @@
       (should done)
       (should (equal (alist-get 'code got-error) "invalid_request")))))
 
+(ert-deftest herdr-rpc-array-serializes-as-a-json-array ()
+  "A list of alists is ambiguous to `json-serialize'; vectors are not."
+  (let ((json (herdr-rpc-encode
+               "1" "events.subscribe"
+               `((subscriptions . ,(herdr-rpc-array
+                                    (list '((type . "pane.created"))
+                                          '((type . "pane.closed")))))))))
+    (should (string-match-p
+             "\"subscriptions\":\\[{\"type\":\"pane.created\"},{\"type\":\"pane.closed\"}\\]"
+             json))))
+
+(ert-deftest herdr-rpc-encode-rejects-raw-list-of-alists ()
+  "Guard the mistake this replaced: a bare list of alists must not encode."
+  (should-error
+   (herdr-rpc-encode "1" "events.subscribe"
+                     '((subscriptions . (((type . "a")) ((type . "b"))))))))
+
 (provide 'herdr-rpc-test)
 ;;; herdr-rpc-test.el ends here
