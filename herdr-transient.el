@@ -29,6 +29,20 @@
 (declare-function herdr-project "herdr" ())
 (autoload 'herdr-project "herdr" nil t)
 
+(defun herdr-transient-tui-p ()
+  "Return non-nil when herdr's own layout is on screen.
+
+Tabs are a grouping inside a workspace whose only visual form is the
+TUI's tab bar.  Under `agent-windows\=' Emacs owns the layout, so
+renaming a tab changes nothing visible and focusing one is a roundabout
+way to reach a pane that `p\=' reaches directly.  Closing a tab still
+destroys its panes, so that stays available.
+
+Workspaces are not filtered: they are keyed by cwd, persist across
+restarts, group the agents buffer, and back `herdr-project\=' — they are
+herdr's per-project unit, not TUI furniture."
+  (eq herdr-terminal-backend 'session))
+
 (defun herdr-transient--origin-buffer ()
   "Return the buffer the menu was opened from.
 Descriptions are rendered with the transient\='s own buffer current, so
@@ -75,7 +89,7 @@ where magit puts the same two ideas."
     ("p" "pane"       herdr-pane-focus)
     ("a" "agent"      herdr-agent-focus)
     ("w" "workspace"  herdr-workspace-focus)
-    ("t" "tab"        herdr-tab-focus)]
+    ("t" "tab"        herdr-tab-focus :if herdr-transient-tui-p)]
    ["Menus"
     ("P" "pane…"      herdr-transient-pane)
     ("A" "agent…"     herdr-transient-agent)
@@ -124,9 +138,9 @@ where magit puts the same two ideas."
 (transient-define-prefix herdr-transient-tab ()
   "Act on a tab."
   ["Tab"
-   ("c" "create" herdr-tab-create)
-   ("f" "focus"  herdr-tab-focus)
-   ("R" "rename" herdr-tab-rename)
+   ("c" "create" herdr-tab-create :if herdr-transient-tui-p)
+   ("f" "focus"  herdr-tab-focus  :if herdr-transient-tui-p)
+   ("R" "rename" herdr-tab-rename :if herdr-transient-tui-p)
    ("k" "close"  herdr-tab-close)])
 
 (transient-define-prefix herdr-transient-workspace ()

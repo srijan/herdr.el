@@ -48,6 +48,19 @@ third element read."
       (funcall walk (get prefix 'transient--layout)))
     (nreverse found)))
 
+(defun herdr-transient-test--all-suffix-plists (prefix)
+  "Return the full plist of every suffix of PREFIX."
+  (let ((found nil))
+    (letrec ((walk
+              (lambda (node)
+                (let ((plist (herdr-transient-test--suffix-plist node)))
+                  (cond
+                   (plist (push plist found))
+                   ((vectorp node) (mapc walk (append node nil)))
+                   ((consp node) (mapc walk node)))))))
+      (funcall walk (get prefix 'transient--layout)))
+    (nreverse found)))
+
 (ert-deftest herdr-transient-every-prefix-has-suffixes ()
   "Guards the walker itself: a broken walk would make the rest vacuous."
   (dolist (prefix herdr-transient-test--prefixes)
@@ -148,6 +161,34 @@ what the commands target."
          (transient--original-buffer nil))
     (with-temp-buffer
       (should (string-match-p "w1:pA" (herdr-transient--target))))))
+
+;;; Tabs are TUI furniture and are filtered accordingly
+
+(ert-deftest herdr-transient-tui-p-tracks-the-backend ()
+  (let ((herdr-terminal-backend 'session))
+    (should (herdr-transient-tui-p)))
+  (let ((herdr-terminal-backend 'agent-windows))
+    (should-not (herdr-transient-tui-p))))
+
+(ert-deftest herdr-transient-tab-close-is-always-available ()
+  "Closing a tab destroys its panes, which is real under either backend."
+  (let ((entries (herdr-transient-test--suffixes 'herdr-transient-tab)))
+    (should (equal 'herdr-tab-close (cdr (assoc "k" entries))))))
+
+(ert-deftest herdr-transient-tab-entries-are-guarded-by-the-backend ()
+  "Rename changes nothing visible without a tab bar, and focus is a
+roundabout way to reach a pane."
+  (let ((guarded '(herdr-tab-create herdr-tab-focus herdr-tab-rename)))
+    (dolist (prefix '(herdr-transient herdr-transient-tab))
+      (dolist (node (herdr-transient-test--all-suffix-plists prefix))
+        (when (memq (plist-get node :command) guarded)
+          (should (eq 'herdr-transient-tui-p (plist-get node :if))))))))
+
+(ert-deftest herdr-transient-workspace-entries-are-not-guarded ()
+  "Workspaces are herdr's per-project unit, not layout."
+  (dolist (node (herdr-transient-test--all-suffix-plists 'herdr-transient))
+    (when (eq 'herdr-workspace-focus (plist-get node :command))
+      (should-not (plist-get node :if)))))
 
 (provide 'herdr-transient-test)
 ;;; herdr-transient-test.el ends here

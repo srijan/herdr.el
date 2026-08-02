@@ -100,7 +100,8 @@ Emacs has to be moved to match or the command looks like a no-op."
   "Which pane a tab lands on is the server's choice, so it must be asked."
   (let (asked)
     (cl-letf (((symbol-function 'herdr-term-select-focused)
-               (lambda () (setq asked t))))
+               (lambda () (setq asked t)))
+              ((symbol-function 'herdr-cmd--current-pane-id) (lambda () nil)))
       (herdr-test-with-server
           (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
         (herdr-tab-focus "w1:t2")
@@ -109,7 +110,8 @@ Emacs has to be moved to match or the command looks like a no-op."
 (ert-deftest herdr-workspace-focus-follows-in-emacs ()
   (let (asked)
     (cl-letf (((symbol-function 'herdr-term-select-focused)
-               (lambda () (setq asked t))))
+               (lambda () (setq asked t)))
+              ((symbol-function 'herdr-cmd--current-pane-id) (lambda () nil)))
       (herdr-test-with-server
           (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
         (herdr-workspace-focus "w2")
@@ -189,6 +191,18 @@ looking unanswered."
           (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
         (herdr-workspace-close "w1")
         (should (string-match-p "w1" (or said "")))))))
+
+(ert-deftest herdr-workspace-focus-offers-to-adopt-an-unattachable-pane ()
+  "Landing on a plain shell would otherwise do nothing at all."
+  (let (offered)
+    (cl-letf (((symbol-function 'herdr-term-select-focused) (lambda () nil))
+              ((symbol-function 'herdr-cmd--current-pane-id) (lambda () "w1:p4"))
+              ((symbol-function 'herdr-cmd--offer-to-adopt)
+               (lambda (p) (setq offered p))))
+      (herdr-test-with-server
+          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-workspace-focus "w1")
+        (should (equal "w1:p4" offered))))))
 
 (provide 'herdr-cmd-test)
 ;;; herdr-cmd-test.el ends here

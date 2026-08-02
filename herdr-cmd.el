@@ -205,6 +205,17 @@ nothing repaints — so Emacs is moved to match."
         (herdr-cmd--offer-to-adopt pane))
     pane))
 
+(defun herdr-cmd--follow-focus ()
+  "Show whichever pane herdr now considers focused.
+
+Focusing a workspace or tab lands on one of its panes — the server
+decides which — so the pane has to be asked for rather than assumed.  If
+that pane is a plain shell it cannot be attached, which would otherwise
+mean the command silently does nothing."
+  (or (herdr-term-select-focused)
+      (when-let* ((pane (herdr-cmd--current-pane-id)))
+        (herdr-cmd--offer-to-adopt pane))))
+
 (defun herdr-cmd--offer-to-adopt (pane-id)
   "Offer to adopt PANE-ID when it cannot be shown as it stands.
 
@@ -316,7 +327,7 @@ TIMEOUT is in seconds.  PATTERN is treated as a regular expression."
   (herdr-rpc-call "tab.focus"
                   `((tab_id . ,(or tab-id (herdr-select-tab "Focus tab: ")))))
   ;; Which pane that lands on is the server's decision, so ask.
-  (herdr-term-select-focused))
+  (herdr-cmd--follow-focus))
 
 (defun herdr-tab-rename (label &optional tab-id)
   "Rename TAB-ID to LABEL."
@@ -353,7 +364,7 @@ TIMEOUT is in seconds.  PATTERN is treated as a regular expression."
   (herdr-rpc-call "workspace.focus"
                   `((workspace_id . ,(or workspace-id
                                          (herdr-select-workspace "Focus: ")))))
-  (herdr-term-select-focused))
+  (herdr-cmd--follow-focus))
 
 (defun herdr-workspace-rename (label &optional workspace-id)
   "Rename WORKSPACE-ID to LABEL."
