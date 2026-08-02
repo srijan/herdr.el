@@ -181,10 +181,12 @@ read.  Only the states worth acting on appear."
       (dolist (pane (herdr-state-panes state))
         (when (equal workspace-id (alist-get 'workspace_id pane))
           (let* ((id (alist-get 'pane_id pane))
-                 (agent (alist-get 'agent pane))
-                 (status (alist-get 'agent_status pane))
-                 (glyph (alist-get status herdr-agents-status-glyphs
-                                   " " nil #'equal)))
+                 (shell (herdr-state-shell-pane-p pane))
+                 (agent (if shell "shell*" (alist-get 'agent pane)))
+                 (status (unless shell (alist-get 'agent_status pane)))
+                 (glyph (if shell "~"
+                          (alist-get status herdr-agents-status-glyphs
+                                     " " nil #'equal))))
             (insert
              (propertize
               (format "  %s %-10s %-9s %-12s %s\n"

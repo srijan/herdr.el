@@ -59,5 +59,13 @@
                    (get-text-property (line-beginning-position)
                                       'herdr-pane-id)))))
 
+(ert-deftest herdr-agents-segment-ignores-adopted-shells ()
+  "An adopted shell has a buffer but is not an agent; it must not count."
+  (should (equal "herdr:1⏸"
+                 (herdr-agents--segment
+                  (herdr-agents-test--state
+                   '("w1:p1" "claude" "blocked")
+                   '("w1:p2" "shell" "blocked"))))))
+
 (provide 'herdr-agents-test)
 ;;; herdr-agents-test.el ends here

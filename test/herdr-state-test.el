@@ -132,5 +132,41 @@
     (should (equal (herdr-state-focused-pane-id state)
                    (herdr-state-focused-pane-id b)))))
 
+;;; Adopted shells
+
+(ert-deftest herdr-state-attachable-includes-adopted-shells ()
+  "Reconciliation attaches anything herdr will accept, shells included."
+  (let ((state (herdr-state-from-snapshot
+                `((panes . (((pane_id . "w1:p1") (agent . "claude"))
+                            ((pane_id . "w1:p2") (agent . "shell"))
+                            ((pane_id . "w1:p3") (agent . nil))))))))
+    (should (equal '("w1:p1" "w1:p2")
+                   (mapcar (lambda (p) (alist-get 'pane_id p))
+                           (herdr-state-attachable state))))))
+
+(ert-deftest herdr-state-agents-excludes-adopted-shells ()
+  "A shell is not an agent; counting it would inflate the modeline."
+  (let ((state (herdr-state-from-snapshot
+                `((panes . (((pane_id . "w1:p1") (agent . "claude"))
+                            ((pane_id . "w1:p2") (agent . "shell"))))))))
+    (should (equal '("w1:p1")
+                   (mapcar (lambda (p) (alist-get 'pane_id p))
+                           (herdr-state-agents state))))))
+
+(ert-deftest herdr-state-shell-pane-p-keys-off-the-configured-name ()
+  (let ((herdr-shell-agent-name "adopted"))
+    (should (herdr-state-shell-pane-p '((agent . "adopted"))))
+    (should-not (herdr-state-shell-pane-p '((agent . "shell"))))
+    (should-not (herdr-state-shell-pane-p '((agent . nil))))))
+
+(ert-deftest herdr-state-pane-directory-prefers-cwd ()
+  (should (equal "/tmp/" (herdr-state-pane-directory
+                          '((cwd . "/tmp") (foreground_cwd . "/usr")))))
+  (should (equal "/usr/" (herdr-state-pane-directory
+                          '((foreground_cwd . "/usr")))))
+  (should (null (herdr-state-pane-directory '((pane_id . "w1:p1")))))
+  (should (null (herdr-state-pane-directory
+                 '((cwd . "/definitely/not/here/at/all"))))))
+
 (provide 'herdr-state-test)
 ;;; herdr-state-test.el ends here

@@ -84,8 +84,10 @@
     ("i" "send text"     herdr-pane-send-text)
     ("o" "wait output…"  herdr-pane-wait-for-output)]
    ["Manage"
-    ("R" "rename" herdr-pane-rename)
-    ("k" "close"  herdr-pane-close)]])
+    ("R" "rename"        herdr-pane-rename)
+    ("k" "close"         herdr-pane-close)
+    ("A" "adopt shell"   herdr-adopt-shell)
+    ("D" "release shell" herdr-release-shell)]])
 
 (transient-define-prefix herdr-transient-agent ()
   "Act on an agent."

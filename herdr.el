@@ -30,6 +30,7 @@
 (require 'herdr-state)
 (require 'herdr-term)
 (require 'herdr-cmd)
+(require 'herdr-agents)
 
 (declare-function project-root "project" (project))
 (declare-function project-current "project" (&optional maybe-prompt directory))

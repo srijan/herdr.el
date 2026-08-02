@@ -62,10 +62,25 @@ The reason to want it: **agents survive Emacs exiting**, because the herdr serve
 Quit Emacs, restart, `M-x herdr`, and every agent is still there and reattached. A plain ghostel
 shell cannot do that — it is a child of Emacs and dies with it.
 
-The cost: `herdr agent attach` refuses a pane with no detected agent, so plain shell panes have no
-buffer under this backend by default. (`pane.report_agent` can override that — see the design doc
-for why v1 does not.) They stay reachable through `pane.read`, `pane.send_text`,
-`pane.wait_for_output` and the menu. Use `ghostel-project` for interactive shells.
+The cost: `herdr agent attach` refuses a pane with no detected agent, so plain shell panes get no
+buffer by default. They stay reachable through `pane.read`, `pane.send_text`,
+`pane.wait_for_output` and the menu, and `ghostel-project` covers ordinary interactive shells.
+
+### Adopting a shell
+
+`M-x herdr-adopt-shell` gives one chosen shell pane a buffer anyway, by reporting an agent named
+`herdr-shell-agent-name` (default `shell`) — which is the only thing `agent attach` checks. Use it
+for a pane you want to watch in Emacs *and* keep running across an Emacs restart, such as a long
+build.
+
+Adopted shells get buffers but are **not** treated as agents: they stay out of the modeline count,
+the agent picker and notifications, since a shell has no lifecycle. They show as `shell*` with a
+`~` glyph in `*herdr-agents*`.
+
+The visible cost is one row in herdr's own sidebar, in its agents section, labelled `shell`. That
+section's membership rule is simply "has a reported agent", and herdr's sidebar does not list
+non-agent panes at all — so there is no "plain shell" row for it to be instead.
+`M-x herdr-release-shell` reverses it completely.
 
 ## What was measured
 
@@ -82,7 +97,7 @@ Recorded here because most of it is not written down anywhere else.
 | `agent attach` | Streams one pane full-screen; coexists with a session client; **exclusive per pane**; refuses panes without a detected agent. |
 | PTY size | A zero-sized PTY renders nothing. Buffers are displayed before the process starts so ghostel can size the terminal. |
 | OSC | **Not** forwarded — herdr's VT consumes OSC 7 and OSC 133. Beware the false positive: sending the escapes inline makes the shell echo the command text, which contains the same characters. |
-| cwd tracking | herdr tracks it **itself**, live — `pane.cwd` / `pane.foreground_cwd` follow `cd` and are published per pane. This replaces OSC 7 directory tracking. |
+| cwd tracking | herdr tracks it **itself** — `pane.cwd` follows a `cd` within about a second. But it publishes **no event** for it: a `cd` emits only `layout_updated` noise, so directory tracking has to poll (debounced off the event stream, with a slow backstop timer). |
 | Shell panes | `pane.report_agent` makes a plain shell pane attachable, so ghostel *can* front a herdr shell. Kept out of v1 by preference, not by limitation — see the design doc. |
 | `pane.read` shape | Text is nested under a `read` object, not a top-level field. |
 | JSON arrays | Emacs's `json-serialize` cannot distinguish a list of alists from one alist. Array parameters must be vectors or `events.subscribe` is rejected. |
@@ -102,6 +117,10 @@ Worth knowing about:
 - **`herdr-agent-wait`** and **`herdr-pane-wait-for-output`** — asynchronous, so Emacs stays
   responsive. "Tell me when the dev server prints `Listening on`" is one command.
 - **`herdr-project`** — focus or create the herdr workspace for the current `project.el` project.
+- **`herdr-adopt-shell`** / **`herdr-release-shell`** — see Adopting a shell, above.
+
+Terminal buffers track their pane's working directory (`herdr-term-track-directory`), so
+`find-file` and `compile` from a herdr buffer start in the right place.
 
 ## Agent awareness
 

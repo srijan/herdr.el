@@ -92,10 +92,44 @@ is \"resync\" and DATA is nil.")
   (seq-find (lambda (pane) (equal id (alist-get 'pane_id pane)))
             (herdr-state-panes state)))
 
-(defun herdr-state-agents (state)
-  "Return the panes in STATE that have a detected agent."
+(defcustom herdr-shell-agent-name "shell"
+  "Agent name reported for shell panes adopted by `herdr-adopt-shell'.
+
+herdr will only attach to a pane that has a reported agent, so adopting
+a plain shell means reporting one.  Panes carrying this name are treated
+as terminals rather than agents: they get a buffer, but they are kept
+out of the modeline count, the agent picker, and notifications, because
+a shell has no lifecycle worth reporting on."
+  :type 'string
+  :group 'herdr)
+
+(defun herdr-state-shell-pane-p (pane)
+  "Return non-nil when PANE is a shell adopted via `herdr-shell-agent-name'."
+  (equal (alist-get 'agent pane) herdr-shell-agent-name))
+
+(defun herdr-state-attachable (state)
+  "Return the panes in STATE that herdr will let a client attach to.
+That is every pane with a reported agent, adopted shells included."
   (seq-filter (lambda (pane) (alist-get 'agent pane))
               (herdr-state-panes state)))
+
+(defun herdr-state-agents (state)
+  "Return the panes in STATE running a real agent.
+Adopted shells are excluded; see `herdr-state-attachable' for the set
+that gets terminal buffers."
+  (seq-remove #'herdr-state-shell-pane-p (herdr-state-attachable state)))
+
+(defun herdr-state-pane-directory (pane)
+  "Return PANE's working directory as a directory name, or nil.
+
+herdr tracks cwd itself and republishes it as panes change directory,
+which is what makes this possible: it consumes OSC 7 rather than
+forwarding it, so a terminal buffer fronting a herdr pane has no other
+way to know where it is."
+  (when-let* ((dir (or (alist-get 'cwd pane)
+                       (alist-get 'foreground_cwd pane))))
+    (when (file-directory-p dir)
+      (file-name-as-directory dir))))
 
 (defun herdr-state-pane-ids (state)
   "Return every pane id in STATE."
@@ -430,6 +464,34 @@ A vector, because `subscriptions' is a JSON array."
           (mapcar (lambda (type) `((type . ,type)))
                   herdr-state-global-subscriptions))))
   (herdr-state--open-pane-stream))
+
+(defun herdr-state-refresh-directories ()
+  "Merge current working directories from herdr into the cache.
+
+Directory changes are the one thing herdr does not publish.  It tracks
+cwd accurately — `pane.get' reflects a `cd' within about a second — but
+a `cd' produces no `pane_updated', only unrelated `layout_updated'
+noise, so there is nothing to subscribe to.  One `pane.list' covers
+every pane at once, which is why this polls rather than asking per
+buffer."
+  (when-let* ((panes (ignore-errors
+                       (alist-get 'panes (herdr-rpc-call "pane.list")))))
+    (let ((changed nil))
+      (dolist (pane panes)
+        (let* ((id (alist-get 'pane_id pane))
+               (known (herdr-state-pane herdr-state--current id)))
+          (when (and known
+                     (not (equal (alist-get 'cwd known)
+                                 (alist-get 'cwd pane))))
+            (setq changed t)
+            (setq herdr-state--current
+                  (herdr-state--merge-pane
+                   herdr-state--current id
+                   (seq-filter #'cdr
+                               (list (cons 'cwd (alist-get 'cwd pane))
+                                     (cons 'foreground_cwd
+                                           (alist-get 'foreground_cwd pane)))))))))
+      changed)))
 
 (defun herdr-state-resync ()
   "Refetch the snapshot and rebuild per-pane subscriptions."

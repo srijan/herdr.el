@@ -75,5 +75,38 @@
   "The session backend runs bare herdr, which attaches the whole session."
   (should (equal nil (herdr-term-session-args))))
 
+;;; Adopted shells and directory tracking
+
+(ert-deftest herdr-term-reconcile-creates-a-buffer-for-an-adopted-shell ()
+  "An adopted shell is attachable, so it must get a buffer."
+  (let* ((state (herdr-term-test--state
+                 (herdr-term-test--pane "w1:p1" "claude")
+                 (herdr-term-test--pane "w1:p2" "shell")))
+         (result (herdr-term-reconcile state nil)))
+    (should (equal '("w1:p1" "w1:p2")
+                   (mapcar (lambda (p) (alist-get 'pane_id p)) (car result))))))
+
+(ert-deftest herdr-term-reconcile-reaps-a-released-shell ()
+  "Releasing the adopted agent makes the pane unattachable again."
+  (let* ((state (herdr-term-test--state (herdr-term-test--pane "w1:p2" nil)))
+         (result (herdr-term-reconcile state '(("w1:p2" . :buf)))))
+    (should (null (car result)))
+    (should (equal '(:buf) (cdr result)))))
+
+(ert-deftest herdr-term-set-directory-follows-the-pane ()
+  (with-temp-buffer
+    (let ((buffer (current-buffer)))
+      (setq default-directory "/")
+      (herdr-term--set-directory buffer '((cwd . "/tmp")))
+      (should (equal "/tmp/" default-directory)))))
+
+(ert-deftest herdr-term-set-directory-ignores-a-missing-directory ()
+  "A stale cwd must not leave `default-directory' pointing at nothing."
+  (with-temp-buffer
+    (setq default-directory "/")
+    (herdr-term--set-directory (current-buffer)
+                               '((cwd . "/no/such/place/anywhere")))
+    (should (equal "/" default-directory))))
+
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here

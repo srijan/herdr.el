@@ -95,9 +95,13 @@ a side window or dedicated frame works if you would rather."
   "Compare STATE against BUFFERS and return (TO-CREATE . TO-REAP).
 
 BUFFERS is an alist of (PANE-ID . BUFFER).  TO-CREATE holds pane alists
-that have an agent but no buffer; TO-REAP holds buffers whose pane is
-gone or has lost its agent.  Pure: no processes are touched."
-  (let* ((agents (herdr-state-agents state))
+that herdr will attach to but that have no buffer; TO-REAP holds buffers
+whose pane is gone or is no longer attachable.  Pure: no processes are
+touched.
+
+Attachability, not agenthood, is the criterion — a shell adopted through
+`herdr-adopt-shell' gets a buffer too."
+  (let* ((agents (herdr-state-attachable state))
          (agent-ids (mapcar (lambda (pane) (alist-get 'pane_id pane)) agents))
          (have-ids (mapcar #'car buffers)))
     (cons
@@ -172,6 +176,7 @@ and outlives it, so the buffer is discarded once ping succeeds."
          (kill-buffer buffer)
          (setq buffer nil))))
     (when buffer
+      (herdr-term--set-directory buffer pane)
       (push (cons pane-id buffer) herdr-term--agent-buffers))
     buffer))
 
@@ -185,10 +190,117 @@ and outlives it, so the buffer is discarded once ping succeeds."
       (when (buffer-live-p buffer) (kill-buffer buffer)))
     (herdr-term--live-agent-buffers)))
 
+;;; Directory tracking
+
+(defcustom herdr-term-track-directory t
+  "Whether terminal buffers follow their herdr pane's working directory.
+
+herdr consumes OSC 7 rather than forwarding it, so ghostel's own
+directory tracking cannot see through it.  herdr does track cwd itself,
+so `default-directory' is driven from that instead — and unlike OSC it
+works under both backends.
+
+It has to be polled.  herdr publishes no event when a pane changes
+directory: a `cd' produces only unrelated `layout_updated' traffic, so
+there is nothing to subscribe to.  See `herdr-term-directory-interval'."
+  :type 'boolean
+  :group 'herdr)
+
+(defcustom herdr-term-directory-interval 5.0
+  "Seconds between backstop working-directory polls, or nil to disable.
+
+Directories are normally refreshed off the event stream: a `cd' emits no
+`pane_updated', but it does emit `layout_updated', which is enough of a
+hint to go and look.  That refresh is debounced by
+`herdr-term-directory-debounce'.
+
+This timer is only a backstop for a directory change that produces no
+events at all.  Each poll is a single `pane.list' over a unix socket and
+runs only while herdr terminal buffers exist."
+  :type '(choice number (const :tag "Never poll" nil))
+  :group 'herdr)
+
+(defcustom herdr-term-directory-debounce 0.4
+  "Seconds to coalesce directory refreshes triggered by events.
+A single `cd' produced two dozen `layout_updated' events, so refreshing
+on each one would mean two dozen round trips for one directory change."
+  :type 'number
+  :group 'herdr)
+
+(defvar herdr-term--directory-timer nil)
+(defvar herdr-term--directory-debounce-timer nil)
+
+(defun herdr-term--poll-directories ()
+  "Refresh pane directories, then point buffers at them."
+  (when (and herdr-term-track-directory
+             (herdr-state-running-p)
+             (or (herdr-term--live-agent-buffers)
+                 (get-buffer herdr-term-session-buffer-name)))
+    (when (herdr-state-refresh-directories)
+      (herdr-term--sync-directories))))
+
+(defun herdr-term--schedule-directory-poll ()
+  "Refresh directories shortly, coalescing bursts of events."
+  (when herdr-term-track-directory
+    (when herdr-term--directory-debounce-timer
+      (cancel-timer herdr-term--directory-debounce-timer))
+    (setq herdr-term--directory-debounce-timer
+          (run-at-time herdr-term-directory-debounce nil
+                       (lambda ()
+                         (setq herdr-term--directory-debounce-timer nil)
+                         (herdr-term--poll-directories))))))
+
+(defun herdr-term--start-directory-timer ()
+  "Begin the backstop poll for working-directory changes.
+A repeating timer rather than an idle one: idle timers never fire while
+something keeps Emacs busy, which is exactly when a long-running command
+is changing directories."
+  (when (and herdr-term-track-directory
+             herdr-term-directory-interval
+             (not herdr-term--directory-timer))
+    (setq herdr-term--directory-timer
+          (run-at-time herdr-term-directory-interval
+                       herdr-term-directory-interval
+                       #'herdr-term--poll-directories))))
+
+(defun herdr-term--stop-directory-timer ()
+  "Stop polling for working-directory changes."
+  (dolist (timer (list herdr-term--directory-timer
+                       herdr-term--directory-debounce-timer))
+    (when timer (cancel-timer timer)))
+  (setq herdr-term--directory-timer nil
+        herdr-term--directory-debounce-timer nil))
+
+(defun herdr-term--set-directory (buffer pane)
+  "Point BUFFER's `default-directory' at PANE's working directory."
+  (when-let* (((buffer-live-p buffer))
+              (dir (herdr-state-pane-directory pane)))
+    (with-current-buffer buffer
+      (unless (equal default-directory dir)
+        (setq default-directory dir)))))
+
+(defun herdr-term--sync-directories ()
+  "Point every terminal buffer at its pane's current directory."
+  (when herdr-term-track-directory
+    (let ((state (herdr-state-current)))
+      (pcase herdr-terminal-backend
+        ('session
+         ;; One buffer for the whole session, so it follows the focused pane.
+         (when-let* ((buffer (get-buffer herdr-term-session-buffer-name))
+                     (id (herdr-state-focused-pane-id state))
+                     (pane (herdr-state-pane state id)))
+           (herdr-term--set-directory buffer pane)))
+        ('agent-windows
+         (dolist (cell (herdr-term--live-agent-buffers))
+           (when-let* ((pane (herdr-state-pane state (car cell))))
+             (herdr-term--set-directory (cdr cell) pane))))))))
+
 (defun herdr-term--on-state-change (_kind _data)
-  "Resync agent buffers after a cache change."
+  "Resync terminal buffers after a cache change."
   (when (eq herdr-terminal-backend 'agent-windows)
-    (herdr-term--sync-agent-windows)))
+    (herdr-term--sync-agent-windows))
+  (herdr-term--sync-directories)
+  (herdr-term--schedule-directory-poll))
 
 ;;; Interface
 
@@ -197,18 +309,23 @@ and outlives it, so the buffer is discarded once ping succeeds."
   (require 'ghostel)
   (let ((bootstrap (unless (herdr-server-live-p)
                      (herdr-term--bootstrap-server))))
-    (pcase herdr-terminal-backend
-      ('session
-       (or bootstrap
-           (let ((buffer (get-buffer herdr-term-session-buffer-name)))
-             (if (buffer-live-p buffer)
-                 buffer
-               (herdr-term--bootstrap-server)))))
-      ('agent-windows
-       ;; The bootstrap client was only there to start the daemon.
-       (when (buffer-live-p bootstrap) (kill-buffer bootstrap))
-       (add-hook 'herdr-state-change-hook #'herdr-term--on-state-change)
-       (herdr-term--sync-agent-windows)))))
+    ;; Both backends want the hook: one for buffer reconciliation and
+    ;; directory tracking, the other for directory tracking alone.
+    (add-hook 'herdr-state-change-hook #'herdr-term--on-state-change)
+    (prog1
+        (pcase herdr-terminal-backend
+          ('session
+           (or bootstrap
+               (let ((buffer (get-buffer herdr-term-session-buffer-name)))
+                 (if (buffer-live-p buffer)
+                     buffer
+                   (herdr-term--bootstrap-server)))))
+          ('agent-windows
+           ;; The bootstrap client was only there to start the daemon.
+           (when (buffer-live-p bootstrap) (kill-buffer bootstrap))
+           (herdr-term--sync-agent-windows)))
+      (herdr-term--sync-directories)
+      (herdr-term--start-directory-timer))))
 
 (defun herdr-term-display ()
   "Show this backend's primary buffer."
@@ -223,6 +340,7 @@ and outlives it, so the buffer is discarded once ping succeeds."
 (defun herdr-term-teardown ()
   "Kill this backend's buffers.  The herdr server is left running."
   (remove-hook 'herdr-state-change-hook #'herdr-term--on-state-change)
+  (herdr-term--stop-directory-timer)
   (pcase herdr-terminal-backend
     ('session
      (when-let* ((buffer (get-buffer herdr-term-session-buffer-name)))

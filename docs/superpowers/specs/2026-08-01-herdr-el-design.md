@@ -139,7 +139,9 @@ Established by probing herdr 0.7.5 directly, not from documentation.
 | Agents survive the client exiting? | **Yes.** Server is a daemon (`detached_server_daemon: true`). |
 | Does `pane.report_agent` make a shell pane attachable? | **Yes.** Reporting any agent name on a plain shell pane makes `agent attach` accept it, and the resulting ghostel buffer renders and updates live. Verified twice. |
 | Do OSC 7 / OSC 133 survive herdr's VT? | **No.** herdr consumes them, as a multiplexer should. An earlier probe appeared to show otherwise; it was matching the shell's own echo of the `printf` command line, not a forwarded escape. Re-run from a script file and matching the real `ESC ]7;` byte: not forwarded. |
-| Does herdr track cwd itself? | **Yes, live.** `pane.cwd` and `pane.foreground_cwd` follow `cd` within about a second and are published per pane. |
+| Does herdr track cwd itself? | **Yes**, `pane.cwd` follows a `cd` within about a second — but it is never announced. A `cd` produces no `pane_updated`, only two dozen `layout_updated`. Directory tracking therefore polls `pane.list`, debounced off the event stream with a slow backstop timer. |
+| Is adoption reversible? | **Yes.** `pane.release_agent` (which requires `source` *and* `agent`) clears the reported agent and makes the pane unattachable again. Neither adoption nor release is reliably announced, so both resync explicitly. |
+| How does herdr's sidebar render an adopted shell? | As one row in its **agents** section labelled with the reported name, e.g. `shell`. Non-agent panes are not listed in the sidebar at all, so there is no alternative row it could occupy. |
 
 ### Open question, to be settled by spike, not by assumption
 
@@ -266,10 +268,15 @@ What it costs, now that the OSC question is settled:
   a distinct agent name — `shell` was accepted and round-tripped — lets herdr.el filter it out of
   the modeline count and agents buffer, but herdr's own UI still shows it.
 
-The v1 decision stands: shells stay in ghostel, and `agent-windows` represents agents only.  The
-trade is now concrete rather than assumed — persistence and uniformity against OSC 133 prompt
-navigation and `ghostel-eval-cmds` — and it is a preference call rather than a technical
-limitation.
+Resolution: shells are not adopted **wholesale**, but `herdr-adopt-shell` makes it a per-pane
+choice.  The default stays as designed — `agent-windows` shows agents, and `ghostel-project`
+covers ordinary shells — while a pane you specifically want to watch in Emacs and keep across a
+restart can be adopted deliberately and released again.
+
+Adopted shells are attachable but are not agents: `herdr-state-attachable` drives reconciliation
+so they get buffers, while `herdr-state-agents` excludes them so they stay out of the modeline
+count, the agent picker and notifications.  Directory tracking applies to them as it does to
+agent buffers.
 
 ## Command surface
 
