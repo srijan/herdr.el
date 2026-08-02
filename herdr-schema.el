@@ -4,6 +4,7 @@
 
 ;; Author: Eddie Jesinsky
 ;; Keywords: processes, terminals, tools
+;; SPDX-License-Identifier: GPL-3.0-or-later
 ;; Package-Requires: ((emacs "28.1"))
 
 ;;; Commentary:

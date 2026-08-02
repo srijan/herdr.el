@@ -1,0 +1,390 @@
+;;; herdr-cmd.el --- Curated herdr commands -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2026 Eddie Jesinsky
+
+;; Author: Eddie Jesinsky
+;; Keywords: processes, terminals, tools
+;; SPDX-License-Identifier: GPL-3.0-or-later
+;; Package-Requires: ((emacs "28.1"))
+
+;;; Commentary:
+
+;; Hand-written wrappers for the methods worth a keybinding.  herdr
+;; exposes 89; generating all of them would produce a menu nobody can
+;; read and prompts that cannot know a pane id should default to the
+;; focused pane.  Everything not wrapped here stays reachable through
+;; `herdr-call'.
+;;
+;; `herdr-cmd-methods' records what each command calls so the drift test
+;; can check the whole set against the server's live schema.  When herdr
+;; renames or removes something, that test fails instead of a user
+;; discovering it as a runtime error.
+
+;;; Code:
+
+(require 'subr-x)
+(require 'ansi-color)
+(require 'herdr-rpc)
+(require 'herdr-state)
+(require 'herdr-select)
+
+(defconst herdr-cmd-methods
+  '((herdr-pane-split-right      "pane.split"           "direction" "target_pane_id" "focus")
+    (herdr-pane-split-down       "pane.split"           "direction" "target_pane_id" "focus")
+    (herdr-pane-close            "pane.close"           "pane_id")
+    (herdr-pane-zoom             "pane.zoom"            "pane_id" "mode")
+    (herdr-pane-resize           "pane.resize"          "pane_id" "direction" "amount")
+    (herdr-pane-swap             "pane.swap"            "pane_id" "direction")
+    (herdr-pane-rename           "pane.rename"          "pane_id" "label")
+    (herdr-pane-focus            "pane.focus"           "pane_id")
+    (herdr-pane-read             "pane.read"            "pane_id" "source" "lines" "format" "strip_ansi")
+    (herdr-pane-send-text        "pane.send_text"       "pane_id" "text")
+    (herdr-pane-run              "pane.send_text"       "pane_id" "text")
+    (herdr-pane-wait-for-output  "pane.wait_for_output" "pane_id" "source" "match" "timeout_ms")
+    (herdr-tab-create            "tab.create"           "label" "focus")
+    (herdr-tab-close             "tab.close"            "tab_id")
+    (herdr-tab-focus             "tab.focus"            "tab_id")
+    (herdr-tab-rename            "tab.rename"           "tab_id" "label")
+    (herdr-workspace-create      "workspace.create"     "cwd" "label" "focus")
+    (herdr-workspace-close       "workspace.close"      "workspace_id")
+    (herdr-workspace-focus       "workspace.focus"      "workspace_id")
+    (herdr-workspace-rename      "workspace.rename"     "workspace_id" "label")
+    (herdr-worktree-list         "worktree.list"        "cwd")
+    (herdr-worktree-create       "worktree.create"      "branch" "base" "cwd" "focus")
+    (herdr-worktree-open         "worktree.open"        "branch" "cwd" "focus")
+    (herdr-worktree-remove       "worktree.remove"      "workspace_id" "force")
+    (herdr-agent-prompt          "agent.prompt"         "target" "text")
+    (herdr-agent-read            "agent.read"           "target" "source" "lines" "format")
+    (herdr-agent-wait            "agent.wait"           "target" "until" "timeout_ms")
+    (herdr-agent-start           "agent.start"          "pane_id" "name" "kind")
+    (herdr-agent-explain         "agent.explain"        "target")
+    (herdr-agent-focus           "agent.focus"          "target")
+    (herdr-notification-show     "notification.show"    "title" "body" "sound"))
+  "Every curated command, with the method and parameters it uses.
+Each entry is (COMMAND METHOD PARAM...).  Verified against the live
+schema by the drift test.")
+
+(defun herdr-cmd--read-source (&optional prompt)
+  "Read a `ReadSource' value, defaulting to the one worth having.
+`recent_unwrapped' is the useful default: it is the whole recent
+scrollback with terminal line-wrapping undone, which is what makes the
+result greppable."
+  (completing-read (or prompt "Source: ")
+                   '("recent_unwrapped" "recent" "visible" "detection")
+                   nil t nil nil "recent_unwrapped"))
+
+;;; Panes
+
+(defun herdr-pane-split-right (&optional target)
+  "Split TARGET, or the focused pane, to the right."
+  (interactive)
+  (herdr-rpc-call "pane.split"
+                  `((direction . "right")
+                    (target_pane_id . ,(or target (herdr-select-target-pane)))
+                    (focus . t))))
+
+(defun herdr-pane-split-down (&optional target)
+  "Split TARGET, or the focused pane, downward."
+  (interactive)
+  (herdr-rpc-call "pane.split"
+                  `((direction . "down")
+                    (target_pane_id . ,(or target (herdr-select-target-pane)))
+                    (focus . t))))
+
+(defun herdr-pane-close (&optional pane-id)
+  "Close PANE-ID, or the focused pane."
+  (interactive)
+  (let ((pane (or pane-id (herdr-select-target-pane "Close pane: "))))
+    (when (y-or-n-p (format "Close pane %s? " pane))
+      (herdr-rpc-call "pane.close" `((pane_id . ,pane))))))
+
+(defun herdr-pane-zoom (&optional pane-id)
+  "Toggle zoom on PANE-ID, or the focused pane."
+  (interactive)
+  (herdr-rpc-call "pane.zoom"
+                  `((pane_id . ,(or pane-id (herdr-select-target-pane)))
+                    (mode . "toggle"))))
+
+(defun herdr-pane-resize (direction &optional amount pane-id)
+  "Resize the split around PANE-ID by AMOUNT toward DIRECTION."
+  (interactive
+   (list (completing-read "Direction: " '("left" "right" "up" "down") nil t)
+         (read-number "Amount: " 0.1)))
+  (herdr-rpc-call "pane.resize"
+                  `((pane_id . ,(or pane-id (herdr-select-target-pane)))
+                    (direction . ,direction)
+                    (amount . ,(or amount 0.1)))))
+
+(defun herdr-pane-swap (direction &optional pane-id)
+  "Swap PANE-ID with its neighbour toward DIRECTION."
+  (interactive
+   (list (completing-read "Direction: " '("left" "right" "up" "down") nil t)))
+  (herdr-rpc-call "pane.swap"
+                  `((pane_id . ,(or pane-id (herdr-select-target-pane)))
+                    (direction . ,direction))))
+
+(defun herdr-pane-rename (label &optional pane-id)
+  "Rename PANE-ID, or the focused pane, to LABEL."
+  (interactive (list (read-string "Pane label: ")))
+  (herdr-rpc-call "pane.rename"
+                  `((pane_id . ,(or pane-id (herdr-select-target-pane)))
+                    (label . ,label))))
+
+(defun herdr-pane-focus (&optional pane-id)
+  "Focus PANE-ID, prompting when not given."
+  (interactive)
+  (herdr-rpc-call "pane.focus"
+                  `((pane_id . ,(or pane-id (herdr-select-pane "Focus pane: "))))))
+
+(defun herdr-cmd-read-text (result)
+  "Return the terminal text carried by a read RESULT.
+
+Both `pane.read' and `agent.read' answer with an envelope — type plus a
+nested `read' object — rather than a bare text field, so the text has to
+be unwrapped."
+  (or (alist-get 'text (alist-get 'read result))
+      (alist-get 'text result)
+      ""))
+
+(defun herdr-cmd--display-read (name result)
+  "Show READ RESULT in a buffer called NAME and return that buffer."
+  (let ((buffer (get-buffer-create name))
+        (text (herdr-cmd-read-text result)))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert text)
+        (ansi-color-apply-on-region (point-min) (point-max))
+        (goto-char (point-max)))
+      (special-mode))
+    (pop-to-buffer buffer)
+    buffer))
+
+(defun herdr-pane-read (&optional pane-id source lines)
+  "Read PANE-ID's output from SOURCE into a buffer, at most LINES lines."
+  (interactive)
+  (let* ((pane (or pane-id (herdr-select-target-pane "Read pane: ")))
+         (source (or source (herdr-cmd--read-source)))
+         (result (herdr-rpc-call "pane.read"
+                                 `((pane_id . ,pane)
+                                   (source . ,source)
+                                   (lines . ,lines)
+                                   (format . "ansi")
+                                   (strip_ansi . :false)))))
+    (herdr-cmd--display-read (format "*herdr read: %s*" pane) result)))
+
+(defun herdr-pane-send-text (text &optional pane-id)
+  "Send TEXT to PANE-ID verbatim, without a trailing newline."
+  (interactive (list (read-string "Send text: ")))
+  (herdr-rpc-call "pane.send_text"
+                  `((pane_id . ,(or pane-id (herdr-select-target-pane)))
+                    (text . ,text))))
+
+(defun herdr-pane-run (command &optional pane-id)
+  "Run COMMAND in PANE-ID.
+There is no `pane.run' method — the CLI subcommand of that name is
+`pane.send_text' with a newline, which is what this does."
+  (interactive (list (read-string "Run in pane: ")))
+  (herdr-rpc-call "pane.send_text"
+                  `((pane_id . ,(or pane-id (herdr-select-target-pane)))
+                    (text . ,(concat command "\n")))))
+
+(defun herdr-pane-wait-for-output (pattern &optional pane-id timeout)
+  "Wait for PATTERN in PANE-ID's output, then report, without blocking Emacs.
+TIMEOUT is in seconds.  PATTERN is treated as a regular expression."
+  (interactive (list (read-string "Wait for regex: ")))
+  (let ((pane (or pane-id (herdr-select-target-pane "Wait on pane: "))))
+    (herdr-rpc-call-async
+     "pane.wait_for_output"
+     `((pane_id . ,pane)
+       (source . "recent_unwrapped")
+       (match . ((type . "regex") (value . ,pattern)))
+       (timeout_ms . ,(round (* 1000 (or timeout 600)))))
+     (lambda (result err)
+       (if err
+           (message "herdr: wait on %s failed: %s" pane (alist-get 'message err))
+         (message "herdr: %s matched: %s" pane
+                  (string-trim (or (alist-get 'matched_line result) ""))))))
+    (message "herdr: watching %s for %s" pane pattern)))
+
+;;; Tabs
+
+(defun herdr-tab-create (&optional label)
+  "Create a tab called LABEL."
+  (interactive (list (read-string "Tab label (optional): ")))
+  (herdr-rpc-call "tab.create"
+                  `((label . ,(unless (string-empty-p (or label "")) label))
+                    (focus . t))))
+
+(defun herdr-tab-close (&optional tab-id)
+  "Close TAB-ID, prompting when not given."
+  (interactive)
+  (herdr-rpc-call "tab.close"
+                  `((tab_id . ,(or tab-id (herdr-select-tab "Close tab: "))))))
+
+(defun herdr-tab-focus (&optional tab-id)
+  "Focus TAB-ID, prompting when not given."
+  (interactive)
+  (herdr-rpc-call "tab.focus"
+                  `((tab_id . ,(or tab-id (herdr-select-tab "Focus tab: "))))))
+
+(defun herdr-tab-rename (label &optional tab-id)
+  "Rename TAB-ID to LABEL."
+  (interactive (list (read-string "New tab label: ")))
+  (herdr-rpc-call "tab.rename"
+                  `((tab_id . ,(or tab-id (herdr-select-tab "Rename tab: ")))
+                    (label . ,label))))
+
+;;; Workspaces
+
+(defun herdr-workspace-create (cwd &optional label)
+  "Create a workspace rooted at CWD called LABEL."
+  (interactive (list (read-directory-name "Workspace directory: ")))
+  (herdr-rpc-call "workspace.create"
+                  `((cwd . ,(expand-file-name cwd))
+                    (label . ,(or label (file-name-nondirectory
+                                         (directory-file-name cwd))))
+                    (focus . t))))
+
+(defun herdr-workspace-close (&optional workspace-id)
+  "Close WORKSPACE-ID, prompting when not given."
+  (interactive)
+  (let ((workspace (or workspace-id (herdr-select-workspace "Close workspace: "))))
+    (when (y-or-n-p (format "Close workspace %s? " workspace))
+      (herdr-rpc-call "workspace.close" `((workspace_id . ,workspace))))))
+
+(defun herdr-workspace-focus (&optional workspace-id)
+  "Focus WORKSPACE-ID, prompting when not given."
+  (interactive)
+  (herdr-rpc-call "workspace.focus"
+                  `((workspace_id . ,(or workspace-id
+                                         (herdr-select-workspace "Focus: "))))))
+
+(defun herdr-workspace-rename (label &optional workspace-id)
+  "Rename WORKSPACE-ID to LABEL."
+  (interactive (list (read-string "New workspace label: ")))
+  (herdr-rpc-call "workspace.rename"
+                  `((workspace_id . ,(or workspace-id
+                                         (herdr-select-workspace "Rename: ")))
+                    (label . ,label))))
+
+;;; Worktrees
+
+(defun herdr-worktree-list ()
+  "Show the git worktrees herdr knows about for the current directory."
+  (interactive)
+  (let ((result (herdr-rpc-call "worktree.list"
+                                `((cwd . ,(expand-file-name default-directory))))))
+    (message "herdr worktrees: %s"
+             (mapconcat (lambda (worktree)
+                          (format "%s (%s)"
+                                  (or (alist-get 'branch worktree) "?")
+                                  (or (alist-get 'path worktree) "?")))
+                        (alist-get 'worktrees result)
+                        ", "))))
+
+(defun herdr-worktree-create (branch &optional base)
+  "Create a git worktree for BRANCH off BASE and open it as a workspace.
+This is the command that pays for the package: one step from a branch
+name to a worktree with its own herdr workspace."
+  (interactive (list (read-string "New worktree branch: ")
+                     (read-string "Base ref (optional): ")))
+  (herdr-rpc-call "worktree.create"
+                  `((branch . ,branch)
+                    (base . ,(unless (string-empty-p (or base "")) base))
+                    (cwd . ,(expand-file-name default-directory))
+                    (focus . t))))
+
+(defun herdr-worktree-open (branch)
+  "Open the existing worktree for BRANCH as a workspace."
+  (interactive (list (read-string "Worktree branch: ")))
+  (herdr-rpc-call "worktree.open"
+                  `((branch . ,branch)
+                    (cwd . ,(expand-file-name default-directory))
+                    (focus . t))))
+
+(defun herdr-worktree-remove (&optional workspace-id force)
+  "Remove the worktree workspace WORKSPACE-ID, forcing when FORCE."
+  (interactive)
+  (let ((workspace (or workspace-id (herdr-select-workspace "Remove worktree: "))))
+    (when (yes-or-no-p (format "Remove worktree workspace %s? " workspace))
+      (herdr-rpc-call "worktree.remove"
+                      `((workspace_id . ,workspace)
+                        (force . ,(if force t :false)))))))
+
+;;; Agents
+
+(defun herdr-agent-prompt (text &optional target)
+  "Send TEXT as a prompt to the agent in TARGET."
+  (interactive (list (read-string "Prompt: ")))
+  (herdr-rpc-call "agent.prompt"
+                  `((target . ,(or target (herdr-select-agent "Prompt agent: ")))
+                    (text . ,text))))
+
+(defun herdr-agent-read (&optional target source lines)
+  "Read the agent in TARGET from SOURCE into a buffer, at most LINES lines."
+  (interactive)
+  (let* ((agent (or target (herdr-select-agent "Read agent: ")))
+         (source (or source (herdr-cmd--read-source)))
+         (result (herdr-rpc-call "agent.read"
+                                 `((target . ,agent)
+                                   (source . ,source)
+                                   (lines . ,lines)
+                                   (format . "ansi")
+                                   (strip_ansi . :false)))))
+    (herdr-cmd--display-read (format "*herdr agent: %s*" agent) result)))
+
+(defun herdr-agent-wait (&optional target until timeout)
+  "Report when the agent in TARGET reaches one of UNTIL, without blocking.
+UNTIL defaults to done and blocked, which are the states worth knowing
+about.  TIMEOUT is in seconds."
+  (interactive)
+  (let ((agent (or target (herdr-select-agent "Wait on agent: "))))
+    (herdr-rpc-call-async
+     "agent.wait"
+     `((target . ,agent)
+       (until . ,(herdr-rpc-array (or until '("done" "blocked"))))
+       (timeout_ms . ,(round (* 1000 (or timeout 1800)))))
+     (lambda (result err)
+       (if err
+           (message "herdr: wait on %s failed: %s" agent (alist-get 'message err))
+         (message "herdr: agent %s is now %s" agent
+                  (or (alist-get 'agent_status result) "done")))))
+    (message "herdr: watching agent %s" agent)))
+
+(defun herdr-agent-start (name kind &optional pane-id)
+  "Start agent NAME of KIND in PANE-ID."
+  (interactive
+   (list (read-string "Agent name: ")
+         (read-string "Agent kind: ")))
+  (herdr-rpc-call "agent.start"
+                  `((pane_id . ,(or pane-id (herdr-select-target-pane)))
+                    (name . ,name)
+                    (kind . ,kind))))
+
+(defun herdr-agent-explain (&optional target)
+  "Explain how herdr detected the agent in TARGET."
+  (interactive)
+  (let* ((agent (or target (herdr-select-pane "Explain pane: ")))
+         (result (herdr-rpc-call "agent.explain" `((target . ,agent)))))
+    (message "herdr: %s" (or (alist-get 'explanation result)
+                             (format "%S" result)))))
+
+(defun herdr-agent-focus (&optional target)
+  "Focus the agent in TARGET."
+  (interactive)
+  (herdr-rpc-call "agent.focus"
+                  `((target . ,(or target (herdr-select-agent "Focus agent: "))))))
+
+;;; Miscellaneous
+
+(defun herdr-notification-show (title &optional body)
+  "Show a herdr-side notification with TITLE and BODY."
+  (interactive (list (read-string "Title: ") (read-string "Body: ")))
+  (herdr-rpc-call "notification.show"
+                  `((title . ,title)
+                    (body . ,(unless (string-empty-p (or body "")) body))
+                    (sound . "none"))))
+
+(provide 'herdr-cmd)
+;;; herdr-cmd.el ends here
