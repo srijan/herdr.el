@@ -108,9 +108,20 @@ buffer by default. They stay reachable through `pane.read`, `pane.send_text`,
 
 ### Adopting a shell
 
-Panes you create *from Emacs* — split, new tab, new workspace — are adopted automatically, so they
-appear as buffers like anything else. That is `herdr-adopt-created-shells`, on by default; the rule
-is about provenance, so panes appearing from elsewhere are never claimed behind your back.
+"Pane" here always means a **herdr pane** — a PTY and shell process owned by the herdr daemon,
+with an id like `w2:p1`. It is not a ghostel buffer and not an Emacs window. The daemon forks the
+shell; Emacs only ever asks it to. That is why a pane outlives Emacs, and why adoption happens
+*before* any buffer exists — a ghostel buffer is what you get after adopting, not the thing being
+adopted.
+
+herdr panes you create *from Emacs* — split, new tab, new workspace — are adopted automatically,
+so they get buffers like anything else. That is `herdr-adopt-created-shells`, on by default. The
+rule is about provenance: panes appearing from anywhere else, including ones an agent creates for
+itself, are never claimed behind your back.
+
+Provenance is judged once, when the command runs; there is no lasting record that Emacs created a
+pane. The adoption it produces *is* lasting, though, because the reported agent is server-side
+state — so an adopted pane is still adopted after you restart Emacs.
 
 `M-x herdr-adopt-shell` does the same for any pane you point it at, by reporting an agent named
 `herdr-shell-agent-name` (default `shell`) — which is the only thing `agent attach` checks. Use it
