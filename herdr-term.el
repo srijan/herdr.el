@@ -214,6 +214,20 @@ steals the first one's terminal."
       (push (cons pane-id buffer) herdr-term--agent-buffers))
     buffer))
 
+(defun herdr-term--rename-stale-buffers ()
+  "Rename buffers whose pane has changed identity since they were created.
+
+A pane adopted as a shell and later promoted to a real agent keeps the
+same buffer — attachment is still valid, so there is nothing to recreate
+— but its name would otherwise still read `shell' forever."
+  (dolist (cell (herdr-term--live-agent-buffers))
+    (when-let* ((pane (herdr-state-pane (herdr-state-current) (car cell)))
+                (wanted (herdr-term-agent-buffer-name pane))
+                ((not (equal wanted (buffer-name (cdr cell))))))
+      (with-current-buffer (cdr cell)
+        ;; Unique suffix rather than an error if the name is taken.
+        (rename-buffer wanted t)))))
+
 (defun herdr-term--sync-agent-windows ()
   "Bring the set of agent buffers in line with the cache."
   (let* ((plan (herdr-term-reconcile (herdr-state-current)
@@ -222,6 +236,7 @@ steals the first one's terminal."
       (herdr-term--attach pane))
     (dolist (buffer (cdr plan))
       (when (buffer-live-p buffer) (kill-buffer buffer)))
+    (herdr-term--rename-stale-buffers)
     (herdr-term--live-agent-buffers)))
 
 ;;; Directory tracking

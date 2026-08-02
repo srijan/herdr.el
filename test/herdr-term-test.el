@@ -168,5 +168,35 @@ resolves to it — that is what makes Go to work there too."
         (should (eq buffer (herdr-term-buffer-for-pane "w9:p9")))
       (kill-buffer buffer))))
 
+;;; Buffers must follow their pane's identity
+
+(ert-deftest herdr-term-renames-a-buffer-whose-pane-was-promoted ()
+  "A shell adopted and later promoted keeps its buffer — attachment is
+still valid — so the name has to be corrected in place."
+  (let* ((herdr-terminal-backend 'agent-windows)
+         (buffer (generate-new-buffer "*herdr: shell w1:p1*"))
+         (herdr-term--agent-buffers (list (cons "w1:p1" buffer)))
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((panes . (((pane_id . "w1:p1") (agent . "claude"))))))))
+    (unwind-protect
+        (progn
+          (herdr-term--rename-stale-buffers)
+          (should (equal "*herdr: claude w1:p1*" (buffer-name buffer))))
+      (kill-buffer buffer))))
+
+(ert-deftest herdr-term-leaves-a-correctly-named-buffer-alone ()
+  (let* ((herdr-terminal-backend 'agent-windows)
+         (buffer (generate-new-buffer "*herdr: claude w1:p1*"))
+         (herdr-term--agent-buffers (list (cons "w1:p1" buffer)))
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((panes . (((pane_id . "w1:p1") (agent . "claude"))))))))
+    (unwind-protect
+        (progn
+          (herdr-term--rename-stale-buffers)
+          (should (equal "*herdr: claude w1:p1*" (buffer-name buffer))))
+      (kill-buffer buffer))))
+
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here
