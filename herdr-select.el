@@ -88,13 +88,17 @@
     (completing-read prompt table nil t)))
 
 (defun herdr-select-pane (&optional prompt)
-  "Read a pane id, defaulting the prompt to PROMPT."
+  "Read a pane id, defaulting the prompt to PROMPT.
+Refreshes first: a picker listing panes that no longer exist is worse
+than one extra round trip, and the cache can drift."
+  (herdr-state-refresh)
   (herdr-select--read (or prompt "Pane: ")
                       (herdr-state-pane-ids (herdr-state-current))
                       'herdr-pane #'herdr-select--annotate-pane))
 
 (defun herdr-select-agent (&optional prompt)
   "Read the pane id of an agent, defaulting the prompt to PROMPT."
+  (herdr-state-refresh)
   (herdr-select--read (or prompt "Agent: ")
                       (mapcar (lambda (pane) (alist-get 'pane_id pane))
                               (herdr-state-agents (herdr-state-current)))
@@ -102,6 +106,7 @@
 
 (defun herdr-select-workspace (&optional prompt)
   "Read a workspace id, defaulting the prompt to PROMPT."
+  (herdr-state-refresh)
   (herdr-select--read (or prompt "Workspace: ")
                       (mapcar (lambda (w) (alist-get 'workspace_id w))
                               (herdr-state-workspaces (herdr-state-current)))
@@ -109,6 +114,7 @@
 
 (defun herdr-select-tab (&optional prompt)
   "Read a tab id, defaulting the prompt to PROMPT."
+  (herdr-state-refresh)
   (herdr-select--read (or prompt "Tab: ")
                       (mapcar (lambda (tab) (alist-get 'tab_id tab))
                               (herdr-state-tabs (herdr-state-current)))
@@ -198,7 +204,12 @@ transient, which can offer to adopt them."
     :category herdr-pane
     :annotate ,#'herdr-select--annotate-pane
     :action ,#'herdr-select--consult-visit
-    :items ,#'herdr-select-panes-with-buffers))
+    ;; Reconcile at the call site, not inside the query: the query stays
+    ;; a pure function of the cache and so remains testable without a
+    ;; server.
+    :items ,(lambda ()
+              (herdr-state-reconcile-panes)
+              (herdr-select-panes-with-buffers))))
 
 (with-eval-after-load 'consult
   (when (boundp 'consult-buffer-sources)

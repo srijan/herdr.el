@@ -465,24 +465,46 @@ A vector, because `subscriptions' is a JSON array."
                   herdr-state-global-subscriptions))))
   (herdr-state--open-pane-stream))
 
-(defun herdr-state-refresh-directories ()
-  "Merge current working directories from herdr into the cache.
+(defun herdr-state-reconcile-panes ()
+  "Make the cached pane set match the server, and refresh directories.
 
-Directory changes are the one thing herdr does not publish.  It tracks
-cwd accurately — `pane.get' reflects a `cd' within about a second — but
-a `cd' produces no `pane_updated', only unrelated `layout_updated'
-noise, so there is nothing to subscribe to.  One `pane.list' covers
-every pane at once, which is why this polls rather than asking per
-buffer."
+Two problems this solves, both of which leave the cache wrong in ways
+the event stream cannot correct on its own.
+
+Directory changes are never announced: herdr tracks cwd accurately, but
+a `cd\=' produces no `pane_updated\=', only unrelated `layout_updated\='
+traffic.
+
+Worse, panes can linger.  `events.subscribe\=' replays history, and
+priming ends after a fixed quiet period — so a bursty replay can end
+priming early, and `pane_created\=' events for long-closed panes then
+fold in after the settling snapshot, resurrecting them.  Those ghosts
+show up in every picker and cannot be navigated to.
+
+One `pane.list\=' answers both: it is the authoritative set, so panes
+missing from it are dropped, panes new to us are added, and directories
+are refreshed in the same pass.  Returns non-nil when anything changed."
   (when-let* ((panes (ignore-errors
                        (alist-get 'panes (herdr-rpc-call "pane.list")))))
-    (let ((changed nil))
+    (let* ((live-ids (mapcar (lambda (pane) (alist-get 'pane_id pane)) panes))
+           (cached-ids (herdr-state-pane-ids herdr-state--current))
+           (stale (seq-remove (lambda (id) (member id live-ids)) cached-ids))
+           (changed nil))
+      (dolist (id stale)
+        (setq changed t)
+        (setq herdr-state--current
+              (herdr-state-reduce herdr-state--current "pane_closed"
+                                  `((pane_id . ,id)))))
       (dolist (pane panes)
         (let* ((id (alist-get 'pane_id pane))
                (known (herdr-state-pane herdr-state--current id)))
-          (when (and known
-                     (not (equal (alist-get 'cwd known)
-                                 (alist-get 'cwd pane))))
+          (cond
+           ((null known)
+            (setq changed t)
+            (setq herdr-state--current
+                  (herdr-state-reduce herdr-state--current "pane_created"
+                                      `((pane . ,pane)))))
+           ((not (equal (alist-get 'cwd known) (alist-get 'cwd pane)))
             (setq changed t)
             (setq herdr-state--current
                   (herdr-state--merge-pane
@@ -490,8 +512,27 @@ buffer."
                    (seq-filter #'cdr
                                (list (cons 'cwd (alist-get 'cwd pane))
                                      (cons 'foreground_cwd
-                                           (alist-get 'foreground_cwd pane)))))))))
+                                           (alist-get 'foreground_cwd pane))))))))))
+      (when changed
+        (run-hook-with-args 'herdr-state-change-hook "reconcile" nil))
       changed)))
+
+(define-obsolete-function-alias 'herdr-state-refresh-directories
+  'herdr-state-reconcile-panes "0.1.0")
+
+(defun herdr-state-refresh ()
+  "Replace the cache from a fresh snapshot, leaving subscriptions alone.
+
+Lighter than `herdr-state-resync\=', which also rebuilds the per-pane
+event connection and so triggers another replay.  This is what the
+pickers use: the cache can drift, and a picker offering panes that no
+longer exist is worse than one extra round trip."
+  (when-let* ((snapshot (ignore-errors
+                          (alist-get 'snapshot
+                                     (herdr-rpc-call "session.snapshot")))))
+    (setq herdr-state--current (herdr-state-from-snapshot snapshot))
+    (run-hook-with-args 'herdr-state-change-hook "refresh" nil)
+    herdr-state--current))
 
 (defun herdr-state-resync ()
   "Refetch the snapshot and rebuild per-pane subscriptions."

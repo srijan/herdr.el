@@ -162,5 +162,73 @@ so an unsuppressed hook would fire once per replayed event."
           (should (= 1 (length events))))
       (delete-process proc))))
 
+;;; Reconciling the pane set against the server
+
+(defun herdr-state-live-test--pane-list-server (panes)
+  "Return a responder answering `pane.list' with PANES."
+  (lambda (req)
+    (cons (herdr-test-ok req `((type . "pane_list") (panes . ,panes))) nil)))
+
+(ert-deftest herdr-state-reconcile-drops-panes-the-server-no-longer-has ()
+  "Ghost panes are the visible symptom of the replay race: a bursty
+replay can end priming early, letting pane_created events for
+long-closed panes land after the settling snapshot.  They then appear in
+every picker and cannot be navigated to."
+  (herdr-test-with-server
+      (herdr-state-live-test--pane-list-server
+       [((pane_id . "w1:p1") (cwd . "/tmp"))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))
+                        ((pane_id . "w1:ghost1"))
+                        ((pane_id . "w1:ghost2"))))))))
+      (should (herdr-state-reconcile-panes))
+      (should (equal '("w1:p1") (herdr-state-pane-ids herdr-state--current))))))
+
+(ert-deftest herdr-state-reconcile-adds-panes-the-cache-missed ()
+  (herdr-test-with-server
+      (herdr-state-live-test--pane-list-server
+       [((pane_id . "w1:p1") (cwd . "/tmp"))
+        ((pane_id . "w1:p2") (cwd . "/tmp") (agent . "claude"))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))))))
+      (should (herdr-state-reconcile-panes))
+      (should (equal '("w1:p1" "w1:p2")
+                     (herdr-state-pane-ids herdr-state--current)))
+      (should (= 1 (length (herdr-state-agents herdr-state--current)))))))
+
+(ert-deftest herdr-state-reconcile-picks-up-directory-changes ()
+  (herdr-test-with-server
+      (herdr-state-live-test--pane-list-server
+       [((pane_id . "w1:p1") (cwd . "/usr/local"))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))))))
+      (should (herdr-state-reconcile-panes))
+      (should (equal "/usr/local"
+                     (alist-get 'cwd (herdr-state-pane herdr-state--current
+                                                       "w1:p1")))))))
+
+(ert-deftest herdr-state-reconcile-reports-no-change-when-in-sync ()
+  "The poll runs every few seconds; it must not fire the change hook
+for nothing."
+  (herdr-test-with-server
+      (herdr-state-live-test--pane-list-server
+       [((pane_id . "w1:p1") (cwd . "/tmp"))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))))))
+      (should-not (herdr-state-reconcile-panes)))))
+
+(ert-deftest herdr-state-reconcile-leaves-the-cache-alone-when-unreachable ()
+  "A failed poll must not empty the cache."
+  (let ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
+        (herdr-state--current
+         (herdr-state-from-snapshot
+          '((panes . (((pane_id . "w1:p1"))))))))
+    (should-not (herdr-state-reconcile-panes))
+    (should (equal '("w1:p1") (herdr-state-pane-ids herdr-state--current)))))
+
 (provide 'herdr-state-live-test)
 ;;; herdr-state-live-test.el ends here

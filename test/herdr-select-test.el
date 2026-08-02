@@ -90,7 +90,12 @@ where you were."
           (should (equal '("w1:p1") (herdr-select-panes-with-buffers)))
           (let ((source (herdr-select--consult-source)))
             (should (equal 'herdr-pane (plist-get source :category)))
-            (should (equal '("w1:p1") (funcall (plist-get source :items))))))
+            ;; The source reconciles against the server before listing;
+            ;; stub that out so the suite stays hermetic.
+            (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
+                       (lambda () nil)))
+              (should (equal '("w1:p1")
+                             (funcall (plist-get source :items)))))))
       (kill-buffer live))))
 
 (ert-deftest herdr-select-consult-source-lists-everything-under-session ()

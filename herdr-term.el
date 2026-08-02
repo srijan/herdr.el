@@ -270,7 +270,7 @@ on each one would mean two dozen round trips for one directory change."
              (herdr-state-running-p)
              (or (herdr-term--live-agent-buffers)
                  (get-buffer herdr-term-session-buffer-name)))
-    (when (herdr-state-refresh-directories)
+    (when (herdr-state-reconcile-panes)
       (herdr-term--sync-directories))))
 
 (defun herdr-term--schedule-directory-poll ()
