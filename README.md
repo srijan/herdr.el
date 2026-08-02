@@ -38,11 +38,17 @@ Optional, used when present, never required: `marginalia`, `embark`, `consult`, 
 
 ```elisp
 (use-package herdr
+  :ensure nil                          ; local checkout, not on MELPA
   :load-path "~/src/herdr.el"
-  :bind ("C-c h" . herdr)
+  :bind (("C-x M" . herdr)             ; pairs with C-x m if you bind ghostel there
+         ("C-c H" . herdr-agents)
+         :map project-prefix-map
+         ("h" . herdr-project))
   :custom (herdr-terminal-backend 'session)
   :config (herdr-agents-mode-line-mode 1))
 ```
+
+`:ensure nil` matters if you set `use-package-always-ensure` — without it Emacs tries MELPA and fails at startup.
 
 `M-x herdr` starts the server if it is not running, brings up the terminals, connects the event
 stream, and opens the menu.
@@ -111,7 +117,7 @@ Recorded here because most of it is not written down anywhere else.
 
 ## Commands
 
-Thirty-one curated commands cover the methods worth a keybinding; `M-x herdr-call` reaches all
+33 curated commands cover the methods worth a keybinding; `M-x herdr-call` reaches all
 **89**, prompting for each parameter from the server's own schema. Nothing is out of reach and
 there is no generated 89-entry menu.
 
