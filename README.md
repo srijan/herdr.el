@@ -81,7 +81,11 @@ buffer by default. They stay reachable through `pane.read`, `pane.send_text`,
 
 ### Adopting a shell
 
-`M-x herdr-adopt-shell` gives one chosen shell pane a buffer anyway, by reporting an agent named
+Panes you create *from Emacs* — split, new tab, new workspace — are adopted automatically, so they
+appear as buffers like anything else. That is `herdr-adopt-created-shells`, on by default; the rule
+is about provenance, so panes appearing from elsewhere are never claimed behind your back.
+
+`M-x herdr-adopt-shell` does the same for any pane you point it at, by reporting an agent named
 `herdr-shell-agent-name` (default `shell`) — which is the only thing `agent attach` checks. Use it
 for a pane you want to watch in Emacs *and* keep running across an Emacs restart, such as a long
 build.

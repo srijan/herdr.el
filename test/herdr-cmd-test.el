@@ -115,5 +115,53 @@ Emacs has to be moved to match or the command looks like a no-op."
         (herdr-workspace-focus "w2")
         (should asked)))))
 
+;;; Panes created from Emacs must become visible
+
+(ert-deftest herdr-cmd-created-pane-is-adopted-so-it-gets-a-buffer ()
+  "Under `agent-windows' a new pane is a plain shell, which herdr will
+not attach to.  A pane the user asked herdr.el to create should still
+appear, so it is adopted."
+  (let ((herdr-terminal-backend 'agent-windows)
+        (herdr-adopt-created-shells t)
+        adopted selected)
+    (cl-letf (((symbol-function 'herdr-term-select-focused) (lambda () nil))
+              ((symbol-function 'herdr-cmd--current-pane-id) (lambda () "w1:p9"))
+              ((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p)))
+              ((symbol-function 'herdr-term-select-pane)
+               (lambda (p) (setq selected p) t)))
+      (herdr-cmd--follow-new-pane)
+      (should (equal "w1:p9" adopted))
+      (should (equal "w1:p9" selected)))))
+
+(ert-deftest herdr-cmd-created-pane-is-not-adopted-when-disabled ()
+  (let ((herdr-terminal-backend 'agent-windows)
+        (herdr-adopt-created-shells nil)
+        adopted)
+    (cl-letf (((symbol-function 'herdr-term-select-focused) (lambda () nil))
+              ((symbol-function 'herdr-cmd--current-pane-id) (lambda () "w1:p9"))
+              ((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p))))
+      (herdr-cmd--follow-new-pane)
+      (should-not adopted))))
+
+(ert-deftest herdr-cmd-created-pane-is-left-alone-under-session ()
+  "The session backend shows every pane already; adopting would only
+add a spurious row to herdr's own agents list."
+  (let ((herdr-terminal-backend 'session)
+        (herdr-adopt-created-shells t)
+        adopted)
+    (cl-letf (((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p))))
+      (herdr-cmd--follow-new-pane)
+      (should-not adopted))))
+
+(ert-deftest herdr-cmd-existing-agent-pane-is-selected-not-adopted ()
+  "If the new pane already has an agent there is nothing to adopt."
+  (let ((herdr-terminal-backend 'agent-windows)
+        (herdr-adopt-created-shells t)
+        adopted)
+    (cl-letf (((symbol-function 'herdr-term-select-focused) (lambda () t))
+              ((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p))))
+      (herdr-cmd--follow-new-pane)
+      (should-not adopted))))
+
 (provide 'herdr-cmd-test)
 ;;; herdr-cmd-test.el ends here

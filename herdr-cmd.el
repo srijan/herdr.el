@@ -67,16 +67,55 @@
 Each entry is (COMMAND METHOD PARAM...).  Verified against the live
 schema by the drift test.")
 
-(defun herdr-cmd--follow-new-pane ()
-  "Select the newly created pane's buffer, or say why there is not one.
+(defcustom herdr-adopt-created-shells t
+  "Whether panes created from Emacs are adopted so they get a buffer.
 
-Under `agent-windows' a freshly created pane is a plain shell, and herdr
-refuses to attach to a pane with no agent — so nothing appears.  Silence
-there reads as a broken command, which is worse than the limitation."
+Only relevant under `agent-windows', where herdr refuses to attach to a
+pane that has no agent, so a newly created shell pane would otherwise be
+invisible.
+
+The rule is deliberately about provenance rather than about shells in
+general: a pane you asked herdr.el to create is one you want to see, so
+it is adopted.  Panes that appear from anywhere else are left alone
+rather than silently claimed on your behalf — use `herdr-adopt-shell'
+for those.  Set this to nil to be told instead of followed."
+  :type 'boolean
+  :group 'herdr)
+
+(defun herdr-cmd--current-pane-id ()
+  "Return the id of the pane herdr currently considers focused."
+  (ignore-errors
+    (alist-get 'pane_id (alist-get 'pane (herdr-rpc-call "pane.current")))))
+
+(defun herdr-cmd--follow-new-pane ()
+  "Show the pane just created, adopting it first if that is what it takes.
+
+Under `agent-windows' a fresh pane is a plain shell and herdr will not
+attach to a pane without an agent, so nothing appears on its own."
   (when (eq herdr-terminal-backend 'agent-windows)
     (unless (herdr-term-select-focused)
-      (message "herdr: new pane is a plain shell, so it has no buffer under \
-agent-windows; adopt it with M-x herdr-adopt-shell (P A in the menu)"))))
+      (if-let* ((created herdr-adopt-created-shells)
+                (pane (herdr-cmd--current-pane-id)))
+          (progn
+            (herdr-adopt-shell pane)
+            (unless (herdr-term-select-pane pane)
+              ;; Reconciliation builds the buffer off the event stream, so
+              ;; it may not exist yet; take the next change hook instead of
+              ;; blocking here.
+              (herdr-cmd--select-pane-when-ready pane)))
+        (message "herdr: new pane is a plain shell, so it has no buffer under \
+agent-windows; adopt it with M-x herdr-adopt-shell (P A in the menu)")))))
+
+(defun herdr-cmd--select-pane-when-ready (pane-id)
+  "Select PANE-ID's buffer as soon as reconciliation has built it."
+  (letrec ((attempts 0)
+           (check
+            (lambda ()
+              (setq attempts (1+ attempts))
+              (cond
+               ((herdr-term-select-pane pane-id))
+               ((< attempts 20) (run-at-time 0.25 nil check))))))
+    (run-at-time 0.25 nil check)))
 
 (defun herdr-cmd--read-source (&optional prompt)
   "Read a `ReadSource' value, defaulting to the one worth having.
