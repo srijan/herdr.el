@@ -94,6 +94,16 @@ Adopted shells get buffers but are **not** treated as agents: they stay out of t
 the agent picker and notifications, since a shell has no lifecycle. They show as `shell*` with a
 `~` glyph in `*herdr-agents*`.
 
+**Adoption suppresses herdr's own agent detection for that pane.** Reporting an agent takes
+lifecycle authority, so the reported label outranks the detector: start Claude inside an adopted
+shell and the pane stays labelled `shell`. herdr.el compensates by reading what the detector
+concluded — `agent.explain` still reports it — and relabelling the pane accordingly. That runs on
+the poll; `M-x herdr-promote-shell` (`P G`) does it now.
+
+Do not try to fix this with `pane.release_agent` or `pane.clear_agent_authority`. Detection binds
+when an agent starts and does not re-run, so releasing leaves the pane with *no* agent rather than
+the one plainly running in it, and the only way back is restarting the agent.
+
 The visible cost is one row in herdr's own sidebar, in its agents section, labelled `shell`. That
 section's membership rule is simply "has a reported agent", and herdr's sidebar does not list
 non-agent panes at all — so there is no "plain shell" row for it to be instead.

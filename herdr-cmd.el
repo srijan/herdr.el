@@ -62,7 +62,8 @@
     (herdr-agent-focus           "agent.focus"          "target")
     (herdr-notification-show     "notification.show"    "title" "body" "sound")
     (herdr-adopt-shell           "pane.report_agent"    "pane_id" "source" "agent" "state")
-    (herdr-release-shell         "pane.release_agent"   "pane_id" "source" "agent"))
+    (herdr-release-shell         "pane.release_agent"   "pane_id" "source" "agent")
+    (herdr-promote-shell         "pane.report_agent"    "pane_id" "source" "agent" "state"))
   "Every curated command, with the method and parameters it uses.
 Each entry is (COMMAND METHOD PARAM...).  Verified against the live
 schema by the drift test.")
@@ -495,6 +496,26 @@ lifecycle.  Reverse it with `herdr-release-shell'."
     ;; stream, so settle the cache rather than waiting for news.
     (herdr-state-resync)
     (message "herdr: adopted %s; it will get a buffer under agent-windows" pane)))
+
+(defun herdr-promote-shell (&optional pane-id)
+  "Relabel PANE-ID with whatever agent herdr has detected running in it.
+
+Use after starting an agent inside an adopted shell.  This happens
+automatically on the next poll; the command is for not waiting."
+  (interactive)
+  (let* ((pane (or pane-id (herdr-select-target-pane "Promote pane: ")))
+         (detected (herdr-state-detected-agent pane)))
+    (cond
+     ((null detected)
+      (message "herdr: no agent detected in %s" pane))
+     ((equal detected herdr-shell-agent-name)
+      (message "herdr: %s is still just a shell" pane))
+     (t
+      (herdr-rpc-call "pane.report_agent"
+                      `((pane_id . ,pane) (source . ,herdr-cmd-adopt-source)
+                        (agent . ,detected) (state . "idle")))
+      (herdr-state-resync)
+      (message "herdr: %s promoted to %s" pane detected)))))
 
 (defun herdr-release-shell (&optional pane-id)
   "Undo `herdr-adopt-shell' for PANE-ID, dropping its buffer.

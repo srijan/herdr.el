@@ -465,6 +465,51 @@ A vector, because `subscriptions' is a JSON array."
                   herdr-state-global-subscriptions))))
   (herdr-state--open-pane-stream))
 
+(defun herdr-state-detected-agent (pane-id)
+  "Return the agent herdr's detector recognises in PANE-ID, or nil.
+
+This is not the same as the pane's reported agent.  `agent.explain'
+exposes what detection concluded, which stays visible even while another
+source holds the label."
+  (let ((explain (ignore-errors
+                   (alist-get 'explain
+                              (herdr-rpc-call "agent.explain"
+                                              `((target . ,pane-id)))))))
+    (alist-get 'agent explain)))
+
+(defun herdr-state-promote-shell-panes ()
+  "Relabel adopted shells in which a real agent has since started.
+
+Adopting a pane means reporting an agent for it, and reporting takes
+lifecycle authority — which suppresses herdr's own detection for that
+pane.  So starting Claude in an adopted shell leaves it labelled
+`herdr-shell-agent-name' forever, and it never appears as an agent.
+
+Releasing authority does not help: detection binds when an agent starts
+and does not re-run, so a released pane goes to no agent at all rather
+than to the one that is plainly running.
+
+What does work is reading the detector's own conclusion through
+`agent.explain', which remains available while we hold the label, and
+re-reporting under that name.  Returns non-nil if anything was promoted."
+  (let ((promoted nil))
+    (dolist (pane (herdr-state-panes herdr-state--current))
+      (when (herdr-state-shell-pane-p pane)
+        (let* ((id (alist-get 'pane_id pane))
+               (detected (herdr-state-detected-agent id)))
+          (when (and detected
+                     (not (equal detected herdr-shell-agent-name)))
+            (ignore-errors
+              (herdr-rpc-call "pane.report_agent"
+                              `((pane_id . ,id)
+                                (source . "herdr.el")
+                                (agent . ,detected)
+                                (state . "idle")))
+              (setq promoted t)
+              (message "herdr: %s is running %s; promoted from %s"
+                       id detected herdr-shell-agent-name))))))
+    promoted))
+
 (defun herdr-state-reconcile-panes ()
   "Make the cached pane set match the server, and refresh directories.
 
