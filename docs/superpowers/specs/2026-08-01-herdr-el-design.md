@@ -6,10 +6,17 @@ Status: Approved, not yet implemented
 ## Summary
 
 An Emacs package that controls [herdr](https://herdr.dev) — a terminal workspace manager for AI
-coding agents — through its local unix-socket JSON API. herdr's TUI runs inside a
-[ghostel](https://github.com/dakra/ghostel) buffer, so Emacs is the only herdr client and the
-whole loop closes inside Emacs. A [transient](https://github.com/magit/transient) menu drives the
-session; a live event stream feeds a modeline segment and a status buffer.
+coding agents — through its local unix-socket JSON API. herdr's terminals are hosted inside Emacs
+via [ghostel](https://github.com/dakra/ghostel); Emacs is the only herdr frontend. A
+[transient](https://github.com/magit/transient) menu drives the session, and a live event stream
+feeds a modeline segment and a status buffer.
+
+herdr never runs outside Emacs. Two terminal backends are supported, sharing everything except
+how terminals are hosted:
+
+- **`session`** — one ghostel buffer running the herdr TUI client. herdr owns layout.
+- **`agent-windows`** — one ghostel buffer per agent, each running `herdr agent attach`. Emacs
+  owns layout; herdr is a headless process and session manager.
 
 Target environment: Emacs 30.2, herdr 0.7.5 (protocol 17), macOS.
 
@@ -24,7 +31,7 @@ small.
 3. **Output into Emacs.** Pane and agent output as real buffers — greppable, yankable.
 4. **Navigation.** Jump to any pane, workspace, or agent by name via `completing-read`.
 
-## Non-goals for v1
+## Non-goals
 
 Reachable through the generic `herdr-call` escape hatch, but not given curated commands:
 `plugin.*`, `pane.graphics.*`, `integration.*`, `server.stop`, remote sessions (`--remote`),
@@ -32,23 +39,49 @@ named sessions.
 
 Excluded entirely:
 
-- **Mirror model** (Emacs windows mirroring herdr panes 1:1). Spiked after v1 ships. See below.
+- **Running herdr outside Emacs.** Explicitly rejected. There is no "control a terminal-hosted
+  herdr from Emacs" fallback; if a backend does not work, the other backend is the answer.
 - **Multi-session.** One global herdr session; herdr workspaces are the per-project unit.
+- **Mirroring herdr's layout tree into Emacs windows.** See the `agent-windows` section — Emacs
+  owns layout under that backend, so the layout tree is simply unused. This is a deliberate
+  simplification, not an omission.
 - **herdr-plugin-pushes-into-Emacs.** herdr's plugin API could call into Emacs, and
   `ghostel-eval-cmds` already provides the hook. Interesting, but a separate package.
 
 ## Decisions and rationale
 
-### Emacs is the only herdr client (not a second client alongside Ghostty)
+### Emacs is the only herdr frontend
 
-herdr.el owns one ghostel buffer running the `herdr` client. Rejected alternatives:
+herdr's TUI is never displayed outside Emacs. Rejected alternatives:
 
-- **Second client alongside a terminal herdr.** Focus is server-side state, so focusing a pane
-  from Emacs would move focus in the other client too. Combines the problems of the other two
-  options.
-- **Pure socket controller, TUI stays in Ghostty.** Smallest v1, defers all terminal-embedding
-  risk. Retained as the **fallback** if the phase-0 throughput spike fails: only phase 2 changes,
-  phases 1 and 3-7 are identical.
+- **Emacs as a second client alongside a terminal herdr.** Focus is server-side state, so
+  focusing a pane from Emacs would move focus in the other client too.
+- **Pure socket controller with the TUI left in a standalone terminal.** Rejected by the user
+  outright. This removes what would otherwise have been the natural fallback if terminal hosting
+  performed badly, which is why two backends exist instead.
+
+### Two terminal backends rather than one
+
+Phases 1 and 3–7 of this design are identical under both backends: the socket core, state cache,
+transient, pickers, agents buffer, and escape hatch do not care how terminals are hosted. Only the
+terminal layer differs. Making it an interface costs little and avoids betting the package on an
+unmeasured performance question.
+
+`session` ships first because it is roughly 60 lines and certainly works. `agent-windows` is the
+better endgame and is a planned second backend, not a speculative one — its mechanism has been
+verified against a live server (see Protocol facts).
+
+**`session`.** One ghostel buffer runs the `herdr` client. Simple, and plain non-agent shell panes
+work. Costs: **two VT layers** (pane output → herdr's VT compositor → PTY → libghostty-vt), a
+26-column herdr sidebar consuming Emacs width, and herdr's keybindings competing with Emacs.
+
+**`agent-windows`.** One ghostel buffer per agent pane, each running `herdr agent attach <pane>`.
+Buffers are created and reaped from `pane_agent_detected` and `pane_closed` events. Benefits: a
+**single VT layer**, native Emacs windows and keybindings, no sidebar overhead, and — the thing
+plain ghostel cannot do — **agents survive Emacs exiting**, because the herdr server is a daemon.
+Cost: only panes with a detected agent are attachable, so plain shells fall outside it. That is
+an acceptable division of labor; herdr is an agent manager, and `ghostel-project` already covers
+shells.
 
 ### One global session; herdr workspaces are projects
 
@@ -79,19 +112,31 @@ herdr exposes 89 methods with a complete, typed JSON Schema. Three options were 
 
 Established by probing herdr 0.7.5 directly, not from documentation.
 
+### Socket and RPC
+
 | Fact | Consequence for the design |
 |---|---|
 | **One request per connection.** Server writes the response, then EOF. | No id-correlation table, no multiplexing, no reconnect logic on the command path. Fresh socket per call; unix-socket connect cost is negligible, so no pooling. |
 | `events.subscribe` holds the connection open. Acks with `{"id":…,"result":{"type":"subscription_started"}}`, then streams NDJSON event envelopes. | One dedicated long-lived connection, with reconnect-on-EOF. |
 | Global subscriptions require no `pane_id`. `pane_created` and `pane_updated` carry full `PaneInfo`, including `agent_status`. | No per-pane subscription bookkeeping — subject to the open question below. |
 | `pane.agent_status_changed` and `pane.scroll_changed` subscriptions **require** `pane_id`; `pane.output_matched` requires `pane_id`, `source`, and `match`. | Per-pane subscriptions are the fallback path, not the default. |
-| `layout_updated` carries the full layout: pane rects (`x`, `y`, `width`, `height`) and splits. | The mirror model has a data source when we get to it. |
-| `pane.current` works with no environment variables — returns the focused pane. | Emacs does not need to inherit herdr pane env. Transient scope can always default correctly. |
+| `layout_updated` carries the full layout: pane rects and splits. | Used by `session` backend only incidentally; unused by `agent-windows`. |
+| `pane.current` works with no environment variables — returns the focused pane. | Emacs does not need to inherit herdr pane env. Transient scope always defaults correctly. |
 | Errors: `{"id":"…","error":{"code":"invalid_request","message":"…"}}`. | Structured; map `code` onto an Emacs condition. |
 | `ping` returns `{"version","protocol","capabilities":{"live_handoff":true,"detached_server_daemon":true}}`. | Feature-detect via capabilities rather than version-sniffing. |
 | Enums: `ReadSource` = `visible｜recent｜recent_unwrapped｜detection`; `ReadFormat` = `text｜ansi`; `SplitDirection` = `right｜down`; `AgentStatus` = `idle｜working｜blocked｜done｜unknown`. | Drive infix `:choices` from the schema. |
 | 25 event kinds; 89 methods; 104 request param definitions. | Schema is complete enough for generic param prompting. |
 | CLI's `herdr pane run` has no API method. | Implement as `pane.send_text` with a trailing newline. |
+
+### `herdr agent attach` — the `agent-windows` mechanism
+
+| Question | Verified answer |
+|---|---|
+| Streams a single pane full-screen? | **Yes.** Enters altscreen (`?1049h`), enables mouse tracking (1000/1002/1003/1006), clears and drives its own render loop. Exactly the stream a ghostel buffer wants. |
+| Coexists with a session-level client? | **Yes.** Attaching to a pane while a session client was attached worked and left session state unchanged. |
+| Two attaches to the *same* pane? | **No.** Exclusive — the second exits rc=1 with no output. This matches the intended one-buffer-per-pane model; `--takeover` exists for stealing. |
+| Plain shell pane (no detected agent)? | **No.** Returns `{"error":{"code":"agent_not_found"}}`. Only detected agents are attachable. |
+| Agents survive the client exiting? | **Yes.** Server is a daemon (`detached_server_daemon: true`). |
 
 ### Open question, to be settled by spike, not by assumption
 
@@ -105,15 +150,17 @@ before `herdr-agents.el` is written.
 
 ```
 Emacs
-├── *herdr* ghostel buffer ── PTY ── herdr client (renders TUI)
-│                                         │
-├── herdr-rpc  ── one-shot unix socket ───┤
-└── herdr-state ── long-lived socket ─────┴── herdr server
+├── terminal backend (one of)
+│   ├─ session:       *herdr* ghostel buffer ── PTY ── herdr TUI client
+│   └─ agent-windows: *herdr: <agent>* buffer ── PTY ── herdr agent attach   (one per agent)
+│
+├── herdr-rpc   ── one-shot unix socket ──┐
+└── herdr-state ── long-lived socket ─────┴── herdr server (daemon)
                     (events.subscribe)
 ```
 
 Two independent channels to the same server. Transient issues an RPC, the server mutates state,
-the client repaints inside the ghostel buffer, and the event stream tells Emacs what changed.
+the terminal backend repaints, and the event stream tells Emacs what changed.
 
 ### Modules
 
@@ -124,7 +171,8 @@ Each file has one purpose and a stated dependency direction. Nothing depends upw
 | `herdr-rpc.el` | Socket transport, NDJSON framing, one-shot call (sync + async), error mapping | — |
 | `herdr-schema.el` | Load and cache `herdr api schema --json`; generic param prompting; drift-test support | `herdr-rpc` |
 | `herdr-state.el` | Snapshot cache, event connection, reducer, change hook | `herdr-rpc` |
-| `herdr.el` | Entry point, ghostel buffer and session lifecycle, autoloads | all |
+| `herdr-term.el` | Backend interface; `session` and `agent-windows` implementations | `herdr-state`, ghostel |
+| `herdr.el` | Entry point, session lifecycle, autoloads | all |
 | `herdr-cmd.el` | The ~26 curated command wrappers | `herdr-rpc`, `herdr-state` |
 | `herdr-select.el` | `completing-read` pickers, marginalia annotators, embark keymaps, consult source | `herdr-state` |
 | `herdr-transient.el` | Transient prefixes | `herdr-cmd`, `herdr-select` |
@@ -143,12 +191,50 @@ Holds one snapshot — workspaces, tabs, panes, agents, layouts — hydrated by 
 connect and then mutated incrementally by the event stream. Exposes a single
 `herdr-state-change-hook`, called with the event kind.
 
-Everything downstream (modeline, agents buffer, pickers) reads the cache and never issues its own
-RPC. `herdr-state-resync` forces a fresh snapshot; the event reader calls it automatically after
-any reconnect, because events missed during a gap cannot be replayed and incremental state is
-untrustworthy afterward.
+Everything downstream (modeline, agents buffer, pickers, terminal backends) reads the cache and
+never issues its own RPC. `herdr-state-resync` forces a fresh snapshot; the event reader calls it
+automatically after any reconnect, because events missed during a gap cannot be replayed and
+incremental state is untrustworthy afterward.
 
 The reducer is a pure function of (state, event) so it can be tested without a socket.
+
+## Terminal backends
+
+`herdr-terminal-backend` is a defcustom, either `session` or `agent-windows`. The interface is
+four functions: ensure, teardown, buffer-for-pane, and display.
+
+### `session`
+
+`M-x herdr` is idempotent and, in order: pings the socket; starts the server if dead; ensures a
+`*herdr*` ghostel buffer is running the `herdr` client; connects the event stream; displays the
+buffer.
+
+**Window policy.** herdr renders a 26-column sidebar plus panes, so a narrow window leaves it
+very little room. `herdr-display-action` defaults to `(display-buffer-full-frame)` and can be
+rebound to a side window or dedicated frame. ghostel propagates resize to the PTY so herdr
+reflows, but the sidebar width does not shrink.
+
+**Detach** is killing the ghostel buffer. The server survives. Reattach with `M-x herdr`.
+
+**Handoff.** `live_handoff: true` is advertised and a `server.live_handoff` method exists. What
+happens when a second session-level client attaches is a phase-0 spike, deliberately unspecified
+here.
+
+### `agent-windows`
+
+One ghostel buffer per agent pane, named `*herdr: <label>*`, running `herdr agent attach <pane_id>`.
+
+- **Lifecycle is event-driven.** `pane_agent_detected` creates a buffer; `pane_closed` and
+  `pane_exited` reap it. Reconciliation against the state cache runs after every resync, so a
+  reconnect gap cannot leave orphans or gaps.
+- **Attach is exclusive per pane.** If attach fails because another client holds the pane, prompt
+  before retrying with `--takeover` rather than stealing silently.
+- **Emacs owns layout.** herdr's layout tree is not consulted. No geometry sync, no window churn.
+- **Plain shell panes are not represented.** They remain reachable through `pane.read`,
+  `pane.send_text`, and the transient, but have no buffer. `ghostel-project` covers interactive
+  shells.
+- **Restart recovery.** On `M-x herdr`, reconcile: every agent in the snapshot gets a buffer.
+  Agents started before Emacs launched are picked up automatically.
 
 ## Command surface
 
@@ -192,27 +278,8 @@ renders label, cwd, agent, and status, so `orderless` makes `web claude blocked`
 An `embark` keymap on the `herdr-pane` category makes `embark-act` open the pane transient scoped
 to that candidate. A `consult-herdr` source is added to `consult-buffer-sources`.
 
-No bespoke UI: roughly 80 lines of annotator and keymap over the user's existing
+No bespoke UI: roughly 80 lines of annotator and keymap over the existing
 vertico/consult/embark/marginalia/orderless stack.
-
-## ghostel integration
-
-`M-x herdr` is idempotent and, in order: pings the socket; starts the server if dead; ensures a
-`*herdr*` ghostel buffer is running the `herdr` client; connects the event stream; displays the
-buffer.
-
-**Window policy.** herdr renders a 26-column sidebar plus panes, so a narrow window leaves it
-very little room. `herdr-display-action` defaults to `(display-buffer-full-frame)` and can be
-rebound to a side window or dedicated frame. ghostel propagates resize to the PTY so herdr reflows, but the
-sidebar width does not shrink.
-
-**Detach** is killing the ghostel buffer. The server survives (`detached_server_daemon: true`).
-Reattach with `M-x herdr`.
-
-**Handoff is unresolved.** `live_handoff: true` is advertised, and both a `server.live_handoff`
-method and `herdr agent attach --takeover` exist. What happens when Emacs attaches while another
-client is already attached — takeover, coexistence, or refusal — is a phase-0 spike, deliberately
-not specified here.
 
 ## Notifications
 
@@ -220,8 +287,8 @@ not specified here.
   `global-mode-string`. No RPC; updates on `herdr-state-change-hook`. Clicking opens the agents
   buffer.
 - **`*herdr-agents*` buffer**, the thing you open. `magit-section` tree: workspaces → tabs →
-  panes, with agent and status per row. `RET` focuses the pane, `p` prompts it, `r` reads it.
-  Event-driven refresh, no timer.
+  panes, with agent and status per row. `RET` focuses the pane (and selects its buffer under
+  `agent-windows`), `p` prompts it, `r` reads it. Event-driven refresh, no timer.
 - **Desktop banner**, opt-in via `herdr-notify-statuses`, default `nil`. Soft-depends on
   `alert.el` when present, otherwise a small `notifications-notify` fallback. No hard dependency.
 - Echo-area messages and sound are off by default and configurable.
@@ -240,8 +307,10 @@ versus `invalid_request` rather than parsing message strings.
 | Protocol version ≠ 17 | Warn once per session with both versions and continue. Refusing to run on a minor bump is worse than one broken command. |
 | `{"error":{…}}` response | Signal `herdr-error` with code and message. |
 | `not_found` on a cached pane id | Auto-resync once and retry. A stale cache is expected, not user-facing. |
-| Event stream EOF | Reconnect with backoff (1s → 30s), then full resync. |
-| ghostel buffer killed | Detached state, not an error. Reflected in the segment; server keeps running. |
+| `agent_not_found` on attach | Under `agent-windows`, means the pane has no detected agent — skip it, do not error. |
+| Attach refused (pane already held) | Prompt before retrying with `--takeover`. Never steal silently. |
+| Event stream EOF | Reconnect with backoff (1s → 30s), then full resync, then backend reconciliation. |
+| Terminal buffer killed | Detached state, not an error. Reflected in the segment; server keeps running. |
 | Schema cache stale | Keyed on the version reported by `ping`; a version change invalidates it. |
 
 ## Testing
@@ -257,6 +326,9 @@ response (missing required `pane_id` on a `pane.agent_status_changed` subscripti
 across a split/rename/send-text/close cycle) into the pure reducer and assert the resulting cache
 equals the `session.snapshot` taken afterward.
 
+**Backend reconciliation test.** Pure function: given a state cache and a set of live buffers,
+compute buffers to create and reap. Tested without ghostel or a server.
+
 **Live tests, tagged `:live`, skipped by default:**
 
 - **Drift test** — every curated command's method and params still exist in
@@ -267,41 +339,30 @@ equals the `session.snapshot` taken afterward.
 
 ## Phases
 
-Phase 0 gates everything else.
+Phase 0 informs the default backend but no longer gates the architecture, since neither outcome
+sends herdr outside Emacs.
 
 | # | Phase | Gate |
 |---|---|---|
-| 0 | Spikes: VT throughput; handoff semantics; whether `pane_updated` carries agent-status transitions | Answers recorded before any code |
+| 0 | Spikes: VT throughput under `session`; session-level handoff semantics; whether `pane_updated` carries agent-status transitions | Answers recorded before any code |
 | 1 | `herdr-rpc`, `herdr-schema`, `herdr-state`, hermetic tests | Reducer test green |
-| 2 | `herdr.el` entry point, ghostel buffer, lifecycle | `M-x herdr` attaches |
+| 2 | `herdr-term` interface + `session` backend; `herdr.el` entry and lifecycle | `M-x herdr` attaches |
 | 3 | `herdr-cmd`, `herdr-select` | Pickers work with marginalia and embark — goals 3 and 4 complete |
 | 4 | `herdr-transient` | Daily-usable — goal 1 complete |
 | 5 | `herdr-agents`, modeline segment | Goal 2 complete |
 | 6 | `herdr-call`, drift test | All 89 methods reachable |
-| 7 | README, package headers, autoloads | Publishable |
+| 7 | `agent-windows` backend | Both backends selectable; reconciliation test green |
+| 8 | README, package headers, autoloads | Publishable |
 
 ### Phase 0 spike detail
 
-1. **VT throughput.** Dump a large build log into a herdr pane with herdr running inside ghostel.
-   Two VT layers (herdr's VT → PTY → libghostty-vt) are on the critical path. Failure here means
-   falling back to the socket-only controller; only phase 2 changes.
-2. **Handoff.** Attach from Emacs while the Ghostty client is attached. Determine whether it takes
-   over, coexists, or is refused, and what `server.live_handoff` and `--takeover` actually do.
+1. **VT throughput under `session`.** Dump a large build log into a herdr pane with the herdr TUI
+   running inside ghostel. Two VT layers are on that path. A poor result makes `agent-windows`
+   the recommended default rather than invalidating anything.
+2. **Session-level handoff.** Determine what `server.live_handoff` does and what happens when a
+   second session client attaches.
 3. **Agent status events.** Run a real agent, watch the global stream, determine whether
    `pane_updated` carries status transitions or whether per-pane subscriptions are required.
-
-## Mirror model — deferred spike
-
-Deferred until after phase 7. `herdr agent attach <TARGET> [--takeover]` exists, and
-`layout_updated` publishes pane rects and splits, so the necessary inputs are present. The spike
-must answer:
-
-- Does `agent attach <target>` render a single pane standalone, or the whole session?
-- Can N ghostel buffers attach simultaneously to one server?
-- Does `--takeover` steal the pane or share it?
-- Is driving Emacs window splits from `layout_updated` tolerable, or visually chaotic?
-
-Design happens after those answers, not before.
 
 ## Packaging
 
@@ -310,5 +371,6 @@ package headers, multi-file layout, ERT tests, README. No CI or MELPA recipe unt
 Path: `~/src/herdr.el/`.
 
 Runtime dependencies: Emacs 28.1+ (floor set by ghostel's dynamic-module requirement; `transient`
-and `json-parse-string` are both available by then), `transient`, `ghostel`. Soft: `magit-section`, `marginalia`,
-`embark`, `consult`, `alert`. No hard dependency on anything not already installed.
+and `json-parse-string` are both available by then), `transient`, `ghostel`. Soft:
+`magit-section`, `marginalia`, `embark`, `consult`, `alert`. No hard dependency on anything not
+already installed in the target environment.
