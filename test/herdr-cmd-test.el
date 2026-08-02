@@ -204,5 +204,107 @@ looking unanswered."
         (herdr-workspace-focus "w1")
         (should (equal "w1:p4" offered))))))
 
+;;; Value-shaping wrappers: the transform is the behaviour worth locking
+
+;; The pure passthrough commands are covered by the drift test, which
+;; checks their parameters against the schema.  These few do something to
+;; a value on the way through — add a newline, drop an empty field, derive
+;; a default — and that transform is where a silent regression hides, so
+;; it is asserted against the payload the fake server actually receives.
+
+(defmacro herdr-cmd-test--capturing-params (var &rest body)
+  "Run BODY against a fake server, binding VAR to the last request params."
+  (declare (indent 1) (debug t))
+  `(let (,var)
+     (herdr-test-with-server
+         (lambda (req)
+           (setq ,var (alist-get 'params req))
+           (cons (herdr-test-ok req '((type . "ok"))) nil))
+       ,@body)))
+
+(ert-deftest herdr-pane-run-sends-a-trailing-newline ()
+  "There is no pane.run method: running a command is send_text plus the
+newline that submits it.  Drop the newline and the command sits at the
+prompt unentered."
+  (herdr-cmd-test--capturing-params params
+    (herdr-pane-run "make test" "w1:p1")
+    (should (equal "make test\n" (alist-get 'text params)))))
+
+(ert-deftest herdr-pane-send-text-sends-verbatim ()
+  "The counterpart to `herdr-pane-run': text goes as typed, with no
+newline, so it can fill a prompt without submitting it."
+  (herdr-cmd-test--capturing-params params
+    (herdr-pane-send-text "make test" "w1:p1")
+    (should (equal "make test" (alist-get 'text params)))))
+
+(ert-deftest herdr-worktree-create-omits-an-empty-base ()
+  "An empty base means \"off the current ref\"; a blank string is a
+different request, and nil is dropped from the payload entirely."
+  (dolist (case '(("" . nil) ("main" . "main")))
+    (herdr-cmd-test--capturing-params params
+      (herdr-worktree-create "feature" (car case))
+      (should (equal "feature" (alist-get 'branch params)))
+      (should (equal (cdr case) (alist-get 'base params))))))
+
+(ert-deftest herdr-workspace-create-defaults-the-label-to-the-directory ()
+  "An unnamed workspace should still read as something, so it borrows the
+directory's own name."
+  (let ((herdr-terminal-backend 'session))
+    (herdr-cmd-test--capturing-params params
+      (herdr-workspace-create "/tmp/herdr-example/" nil)
+      (should (equal "herdr-example" (alist-get 'label params))))))
+
+(ert-deftest herdr-notification-show-omits-an-empty-body ()
+  "A blank body is absence, not an empty line; only title and sound go."
+  (herdr-cmd-test--capturing-params params
+    (herdr-notification-show "Done" "")
+    (should (equal "Done" (alist-get 'title params)))
+    (should (null (alist-get 'body params)))
+    (should (equal "none" (alist-get 'sound params)))))
+
+;;; Promoting an adopted shell branches on what is detected
+
+(ert-deftest herdr-promote-shell-reports-the-detected-agent ()
+  "Once a real agent is running in an adopted shell, relabel the pane
+with it so it stops reading as a bare shell."
+  (let (resynced said)
+    (cl-letf (((symbol-function 'herdr-state-detected-agent)
+               (lambda (_) "claude"))
+              ((symbol-function 'herdr-state-resync)
+               (lambda (&rest _) (setq resynced t)))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+      (herdr-cmd-test--capturing-params params
+        (herdr-promote-shell "w1:p1")
+        (should (equal "claude" (alist-get 'agent params)))
+        (should resynced)
+        (should (string-match-p "promoted" (or said "")))))))
+
+(ert-deftest herdr-promote-shell-does-nothing-without-a-detected-agent ()
+  (let (called said)
+    (cl-letf (((symbol-function 'herdr-state-detected-agent) (lambda (_) nil))
+              ((symbol-function 'herdr-rpc-call)
+               (lambda (&rest _) (setq called t)))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+      (herdr-promote-shell "w1:p1")
+      (should-not called)
+      (should (string-match-p "no agent detected" (or said ""))))))
+
+(ert-deftest herdr-promote-shell-leaves-a-plain-shell-alone ()
+  "A pane still wearing only the adopted-shell label has nothing to be
+promoted to, so it must not report anything."
+  (let ((herdr-shell-agent-name "herdr-shell")
+        called said)
+    (cl-letf (((symbol-function 'herdr-state-detected-agent)
+               (lambda (_) "herdr-shell"))
+              ((symbol-function 'herdr-rpc-call)
+               (lambda (&rest _) (setq called t)))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+      (herdr-promote-shell "w1:p1")
+      (should-not called)
+      (should (string-match-p "still just a shell" (or said ""))))))
+
 (provide 'herdr-cmd-test)
 ;;; herdr-cmd-test.el ends here
