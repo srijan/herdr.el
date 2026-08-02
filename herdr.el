@@ -107,8 +107,14 @@ The herdr server keeps running; agents are unaffected."
   (interactive)
   (herdr-start)
   (herdr-term-display)
-  (require 'herdr-transient)
   (call-interactively 'herdr-transient))
+
+;; Loaded last: herdr-transient autoloads `herdr-project', which is
+;; defined above, so requiring it here rather than at the top avoids a
+;; circular load while still making the whole command surface available
+;; as soon as this file is loaded.  A lazy require inside `herdr' would
+;; leave `M-x herdr-transient' broken until `M-x herdr' had run once.
+(require 'herdr-transient)
 
 (provide 'herdr)
 ;;; herdr.el ends here
