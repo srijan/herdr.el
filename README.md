@@ -20,9 +20,9 @@ M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
                    % worktree…
 ```
 
-**Tabs are hidden under `agent-windows`.** A tab is a grouping inside a workspace whose only
-visual form is the TUI's tab bar, so renaming one changes nothing and focusing one is a
-roundabout way to reach a pane. Closing a tab still destroys its panes, so that stays.
+**Tabs are hidden entirely under `agent-windows`.** A tab is a grouping inside a workspace whose
+only visual form is the TUI's tab bar, so where nothing renders a tab, nothing tab-shaped is
+offered — `herdr-call` still reaches the methods if you want them.
 Workspaces are *not* hidden: they are keyed by cwd, persist across restarts, group the agents
 buffer, and back `herdr-project`. Going to one shows that workspace's active pane — one buffer,
 in the current window, not all of them.

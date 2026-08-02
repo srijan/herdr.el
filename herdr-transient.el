@@ -33,10 +33,12 @@
   "Return non-nil when herdr's own layout is on screen.
 
 Tabs are a grouping inside a workspace whose only visual form is the
-TUI's tab bar.  Under `agent-windows\=' Emacs owns the layout, so
-renaming a tab changes nothing visible and focusing one is a roundabout
-way to reach a pane that `p\=' reaches directly.  Closing a tab still
-destroys its panes, so that stays available.
+TUI's tab bar.  Under `agent-windows\=' Emacs owns the layout, so nothing
+renders a tab: renaming one changes nothing observable, focusing one is
+a roundabout way to reach a pane that `p\=' reaches directly, and closing
+one is a confusing way to destroy panes you would close individually.
+The whole tab surface is hidden there rather than half of it, which was
+worse than either — `herdr-call\=' still reaches the methods.
 
 Workspaces are not filtered: they are keyed by cwd, persist across
 restarts, group the agents buffer, and back `herdr-project\=' — they are
@@ -94,7 +96,7 @@ where magit puts the same two ideas."
     ("P" "pane…"      herdr-transient-pane)
     ("A" "agent…"     herdr-transient-agent)
     ("W" "workspace…" herdr-transient-workspace)
-    ("T" "tab…"       herdr-transient-tab)
+    ("T" "tab…"       herdr-transient-tab :if herdr-transient-tui-p)
     ("%" "worktree…"  herdr-transient-worktree)]
    ["Session"
     ("g" "resync"      herdr-state-resync)
@@ -141,7 +143,7 @@ where magit puts the same two ideas."
    ("c" "create" herdr-tab-create :if herdr-transient-tui-p)
    ("f" "focus"  herdr-tab-focus  :if herdr-transient-tui-p)
    ("R" "rename" herdr-tab-rename :if herdr-transient-tui-p)
-   ("k" "close"  herdr-tab-close)])
+   ("k" "close"  herdr-tab-close  :if herdr-transient-tui-p)])
 
 (transient-define-prefix herdr-transient-workspace ()
   "Act on a workspace."

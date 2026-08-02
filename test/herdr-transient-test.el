@@ -170,15 +170,23 @@ what the commands target."
   (let ((herdr-terminal-backend 'agent-windows))
     (should-not (herdr-transient-tui-p))))
 
-(ert-deftest herdr-transient-tab-close-is-always-available ()
-  "Closing a tab destroys its panes, which is real under either backend."
-  (let ((entries (herdr-transient-test--suffixes 'herdr-transient-tab)))
-    (should (equal 'herdr-tab-close (cdr (assoc "k" entries))))))
+(ert-deftest herdr-transient-hides-every-tab-entry-under-agent-windows ()
+  "Half a tab menu was more confusing than none.  Nothing tab-shaped is
+offered where nothing renders a tab."
+  (let ((tab-commands '(herdr-tab-create herdr-tab-focus herdr-tab-rename
+                        herdr-tab-close herdr-transient-tab)))
+    (dolist (prefix '(herdr-transient herdr-transient-tab))
+      (dolist (node (herdr-transient-test--all-suffix-plists prefix))
+        (when (memq (plist-get node :command) tab-commands)
+          (should (equal (list (plist-get node :command) 'herdr-transient-tui-p)
+                         (list (plist-get node :command)
+                               (plist-get node :if)))))))))
 
 (ert-deftest herdr-transient-tab-entries-are-guarded-by-the-backend ()
   "Rename changes nothing visible without a tab bar, and focus is a
 roundabout way to reach a pane."
-  (let ((guarded '(herdr-tab-create herdr-tab-focus herdr-tab-rename)))
+  (let ((guarded '(herdr-tab-create herdr-tab-focus herdr-tab-rename
+                   herdr-tab-close)))
     (dolist (prefix '(herdr-transient herdr-transient-tab))
       (dolist (node (herdr-transient-test--all-suffix-plists prefix))
         (when (memq (plist-get node :command) guarded)
