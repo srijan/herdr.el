@@ -1,7 +1,7 @@
 # herdr.el — Design
 
 Date: 2026-08-01
-Status: Approved, not yet implemented
+Status: Implemented (2026-08-01). Spike results folded in; see Protocol facts.
 
 ## Summary
 
@@ -137,6 +137,9 @@ Established by probing herdr 0.7.5 directly, not from documentation.
 | Two attaches to the *same* pane? | **No.** Exclusive — the second exits rc=1 with no output. This matches the intended one-buffer-per-pane model; `--takeover` exists for stealing. |
 | Plain shell pane (no detected agent)? | **No.** Returns `{"error":{"code":"agent_not_found"}}`. Only detected agents are attachable. |
 | Agents survive the client exiting? | **Yes.** Server is a daemon (`detached_server_daemon: true`). |
+| Does `pane.report_agent` make a shell pane attachable? | **Yes.** Reporting any agent name on a plain shell pane makes `agent attach` accept it, and the resulting ghostel buffer renders and updates live. Verified twice. |
+| Do OSC 7 / OSC 133 survive herdr's VT? | **No.** herdr consumes them, as a multiplexer should. An earlier probe appeared to show otherwise; it was matching the shell's own echo of the `printf` command line, not a forwarded escape. Re-run from a script file and matching the real `ESC ]7;` byte: not forwarded. |
+| Does herdr track cwd itself? | **Yes, live.** `pane.cwd` and `pane.foreground_cwd` follow `cd` within about a second and are published per pane. |
 
 ### Open question, to be settled by spike, not by assumption
 
@@ -238,32 +241,35 @@ One ghostel buffer per agent pane, named `*herdr: <label>*`, running `herdr agen
 
 #### Why plain shells stay in ghostel
 
-Hosting shells in herdr would buy: survival across an Emacs restart (a plain ghostel shell is a
-child of Emacs and dies with it, a herdr pane does not); one uniform model instead of two kinds of
-terminal buffer; `pane.wait_for_output` and `pane.read` on shells; workspace grouping alongside
-agents; and remote shells later via `herdr --remote`.
+Hosting shells in herdr **is possible**, contrary to the first version of this section.
+`pane.report_agent` marks any pane as having an agent, after which `agent attach` accepts it and
+ghostel renders it live; the `agent-windows` verification was in fact performed against a plain
+shell pane treated this way.  So the question is not feasibility but cost.
 
-It is rejected for two reasons.
+What hosting shells in herdr would buy: survival across an Emacs restart (a plain ghostel shell is
+a child of Emacs and dies with it); one uniform model instead of two kinds of terminal buffer;
+`pane.wait_for_output` and `pane.read` on shells; workspace grouping alongside agents; and remote
+shells later via `herdr --remote`.
 
-**It is not currently possible.** `agent attach` refuses panes with no detected agent and there is
-no `pane attach`. Every workaround is bad: `pane.report_agent` would fake an agent and pollute the
-modeline counter and agents tree — the exact feature that motivates the package; mixed backends
-would run two herdr frontends at once; polling `pane.read` into a read-only buffer is not a
-terminal at all, with no input and no TUI programs.
+What it costs, now that the OSC question is settled:
 
-**It would trade away ghostel's shell integration.** Directory tracking, prompt navigation, and
-`ghostel-eval-cmds` are driven by OSC sequences that ghostel intercepts because ghostel owns the
-PTY. With herdr in between, herdr's VT consumes them. In the target environment
-`ghostel-eval-cmds` is configured to launch `magit-status-setup-buffer` from a shell command, so
-this is a concrete loss, not a theoretical one.
+- **Directory tracking: no loss.**  herdr consumes OSC 7, but it also tracks cwd itself and
+  publishes `cwd` and `foreground_cwd` per pane, updated live.  Setting `default-directory` from
+  the cache replaces the OSC path and works under both backends.
+- **Prompt navigation (OSC 133): lost.**  herdr exposes no prompt marks, so there is nothing to
+  reconstruct them from.
+- **`ghostel-eval-cmds`: lost.**  Its OSC trigger does not survive herdr's VT.  In the target
+  environment this is configured to launch `magit-status-setup-buffer` from a shell command, so
+  it is a concrete loss.  herdr's plugin API could serve a similar role, but through a different
+  mechanism.
+- **Agent-list pollution:** a reported shell appears as an agent in herdr's own sidebar.  Choosing
+  a distinct agent name — `shell` was accepted and round-tripped — lets herdr.el filter it out of
+  the modeline count and agents buffer, but herdr's own UI still shows it.
 
-The trade is herdr persistence against ghostel shell integration. For agents, persistence clearly
-wins. For shells it inverts: the integration is the reason to use ghostel, and most shells are
-short-lived commands where persistence buys nothing.
-
-This decision is revisitable. Phase 0 spike 4 measures whether OSC sequences survive herdr's VT
-out to an attach client. If they do, the second objection disappears and shells-in-herdr becomes
-attractive as soon as upstream provides `pane attach`.
+The v1 decision stands: shells stay in ghostel, and `agent-windows` represents agents only.  The
+trade is now concrete rather than assumed — persistence and uniformity against OSC 133 prompt
+navigation and `ghostel-eval-cmds` — and it is a preference call rather than a technical
+limitation.
 
 ## Command surface
 
@@ -398,13 +404,12 @@ sends herdr outside Emacs.
    second session client attaches.
 3. **Agent status events.** Run a real agent, watch the global stream, determine whether
    `pane_updated` carries status transitions or whether per-pane subscriptions are required.
-4. **OSC survival.** Emit OSC 7 (cwd) and OSC 133 (prompt marks) from inside a herdr pane and
-   check whether they reach an `agent attach` client's stream. Determines whether ghostel's
-   directory tracking, prompt navigation, and `ghostel-eval-cmds` work through herdr, which in
-   turn governs whether shells-in-herdr is worth revisiting. Cheap: capture the attach PTY stream
-   and grep for the sequences. Note this also affects **agent** buffers under `agent-windows` —
-   if OSC does not survive, those buffers lose directory tracking too, which is a smaller loss
-   but should be a known one rather than a surprise.
+4. **OSC survival.** *Answered: they do not survive.* herdr consumes OSC 7 and OSC 133.
+   Beware the trap this spike fell into first: sending the escapes inline makes the shell echo
+   the command text, which contains the same characters and reads as a false positive.  Emit
+   from a script file and match the real `ESC ]7;` byte.  Consequence: `agent-windows` buffers
+   have no OSC-derived directory tracking either — but herdr publishes `cwd` per pane and
+   updates it live, so `default-directory` can be driven from the cache instead.
 
 ## Packaging
 

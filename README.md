@@ -63,7 +63,8 @@ Quit Emacs, restart, `M-x herdr`, and every agent is still there and reattached.
 shell cannot do that — it is a child of Emacs and dies with it.
 
 The cost: `herdr agent attach` refuses a pane with no detected agent, so plain shell panes have no
-buffer under this backend. They stay reachable through `pane.read`, `pane.send_text`,
+buffer under this backend by default. (`pane.report_agent` can override that — see the design doc
+for why v1 does not.) They stay reachable through `pane.read`, `pane.send_text`,
 `pane.wait_for_output` and the menu. Use `ghostel-project` for interactive shells.
 
 ## What was measured
@@ -80,7 +81,9 @@ Recorded here because most of it is not written down anywhere else.
 | Throughput | Not a concern for either backend. A **12.2 MB** pane dump reached Emacs as **17 KB** (`session`) / **24 KB** (`agent-windows`), completing in 0.2s. herdr's VT only emits visible-frame diffs. |
 | `agent attach` | Streams one pane full-screen; coexists with a session client; **exclusive per pane**; refuses panes without a detected agent. |
 | PTY size | A zero-sized PTY renders nothing. Buffers are displayed before the process starts so ghostel can size the terminal. |
-| OSC | OSC 7 and OSC 133 **are** forwarded through herdr's VT to an attach client. |
+| OSC | **Not** forwarded — herdr's VT consumes OSC 7 and OSC 133. Beware the false positive: sending the escapes inline makes the shell echo the command text, which contains the same characters. |
+| cwd tracking | herdr tracks it **itself**, live — `pane.cwd` / `pane.foreground_cwd` follow `cd` and are published per pane. This replaces OSC 7 directory tracking. |
+| Shell panes | `pane.report_agent` makes a plain shell pane attachable, so ghostel *can* front a herdr shell. Kept out of v1 by preference, not by limitation — see the design doc. |
 | `pane.read` shape | Text is nested under a `read` object, not a top-level field. |
 | JSON arrays | Emacs's `json-serialize` cannot distinguish a list of alists from one alist. Array parameters must be vectors or `events.subscribe` is rejected. |
 
