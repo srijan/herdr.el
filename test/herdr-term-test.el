@@ -222,5 +222,23 @@ would mean `M-x herdr' takes a window before being asked to."
           (should (herdr-term-display)))
       (kill-buffer buffer))))
 
+(ert-deftest herdr-term-select-pane-does-not-split-the-frame ()
+  "Going to a pane reuses the current window; splitting is the user's
+business, not a side effect of navigation."
+  (let* ((herdr-terminal-backend 'agent-windows)
+         (target (generate-new-buffer " *target*"))
+         (herdr-term--agent-buffers (list (cons "w1:p1" target)))
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((panes . (((pane_id . "w1:p1") (agent . "claude"))))))))
+    (unwind-protect
+        (save-window-excursion
+          (delete-other-windows)
+          (let ((before (length (window-list))))
+            (herdr-term-select-pane "w1:p1")
+            (should (eq target (current-buffer)))
+            (should (= before (length (window-list))))))
+      (kill-buffer target))))
+
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here

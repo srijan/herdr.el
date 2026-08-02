@@ -202,7 +202,7 @@ pane shares the one herdr buffer, so all of them qualify."
 (defun herdr-select--consult-visit (pane-id)
   "Switch to PANE-ID's buffer and focus the pane in herdr."
   (when-let* ((buffer (herdr-term-buffer-for-pane pane-id)))
-    (switch-to-buffer buffer))
+    (pop-to-buffer-same-window buffer))
   (ignore-errors (herdr-rpc-call "pane.focus" `((pane_id . ,pane-id)))))
 
 (defun herdr-select--consult-source ()

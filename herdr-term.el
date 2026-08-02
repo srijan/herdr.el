@@ -162,15 +162,17 @@ change is visible.  Under `agent-windows' nothing repaints: each pane is
 its own Emacs buffer, so focusing a pane has no visible effect unless
 Emacs also selects that buffer.
 
-Attaching happens here rather than in reconciliation because an attached
-buffer has to stay displayed to survive — so attaching every agent up
-front would mean `M-x herdr\=' seizing a window per agent before being
-asked for anything.  Returns the buffer when it showed one."
+Attaching happens here rather than in reconciliation because the client
+needs a window at startup, so attaching every agent up front would mean
+`M-x herdr\=' seizing a window per agent before being asked for anything.
+Returns the buffer when it showed one."
   (let ((buffer (herdr-term-buffer-for-pane pane-id)))
     (unless (buffer-live-p buffer)
       (setq buffer (herdr-term--attach-if-possible pane-id)))
     (when (buffer-live-p buffer)
-      (pop-to-buffer buffer)
+      ;; Reuse the current window.  Splitting is the user's business —
+      ;; `C-x 2\=' and friends — not something going to a pane should do.
+      (pop-to-buffer-same-window buffer)
       buffer)))
 
 (defun herdr-term--attach-if-possible (pane-id)
@@ -223,12 +225,13 @@ steals the first one's terminal."
   "Create and start a ghostel buffer attached to PANE, named for PANE-ID."
   (let ((buffer (get-buffer-create (herdr-term-agent-buffer-name pane))))
     (with-current-buffer buffer (ghostel-mode))
-    ;; The buffer must be displayed, and must stay displayed: without a
-    ;; persistent window the attach client exits and ghostel then kills
-    ;; the buffer.  Tried and rejected — never displaying, displaying and
-    ;; restoring the layout, displaying and deleting the window — all
-    ;; die.  That is why attaching is lazy: see `herdr-term-select-pane'.
-    (display-buffer buffer)
+    ;; The buffer needs a window when the client starts: attaching without
+    ;; displaying, or with a window that is deleted straight afterwards,
+    ;; kills the client and ghostel then kills the buffer.  Being merely
+    ;; hidden later is fine — a buried terminal keeps running — so the
+    ;; window only has to exist, not persist.  Same window rather than
+    ;; `display-buffer\=': going to a pane should not split the frame.
+    (pop-to-buffer-same-window buffer)
     (condition-case err
         (ghostel-exec buffer herdr-executable
                       (herdr-term-attach-args pane-id nil))
