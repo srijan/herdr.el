@@ -11,6 +11,7 @@
 
 (require 'ert)
 (require 'herdr-transient)
+(require 'herdr-cmd)
 
 (defconst herdr-transient-test--prefixes
   '(herdr-transient
@@ -197,6 +198,51 @@ roundabout way to reach a pane."
   (dolist (node (herdr-transient-test--all-suffix-plists 'herdr-transient))
     (when (eq 'herdr-workspace-focus (plist-get node :command))
       (should-not (plist-get node :if)))))
+
+(ert-deftest herdr-transient-adoption-is-offered-and-hidden-under-session ()
+  "Adoption exists to make a pane attachable under `agent-windows'.
+The session TUI already shows every pane, so adopting there only adds a
+fake agent row to herdr's own sidebar.
+
+Also guards a silent omission: `herdr-promote-shell' was documented as
+being on the menu while never actually having been added to it."
+  (let ((commands (mapcar (lambda (n) (plist-get n :command))
+                          (herdr-transient-test--all-suffix-plists
+                           'herdr-transient-pane))))
+    (dolist (want '(herdr-adopt-shell herdr-release-shell herdr-promote-shell))
+      (should (equal (list want t) (list want (and (memq want commands) t)))))))
+
+(ert-deftest herdr-transient-every-curated-command-is-reachable ()
+  "Every command in the registry should be on a menu or deliberately
+listed here as reachable only through `herdr-call'.  Catches entries
+that were meant to be added and silently were not."
+  (let* ((prefixes '(herdr-transient herdr-transient-pane herdr-transient-agent
+                     herdr-transient-tab herdr-transient-workspace
+                     herdr-transient-worktree))
+         (on-menu (apply #'append
+                         (mapcar (lambda (p)
+                                   (mapcar #'cdr
+                                           (herdr-transient-test--suffixes p)))
+                                 prefixes)))
+         ;; Reachable only via `herdr-call', by choice.
+         (deliberately-absent '(herdr-pane-send-text herdr-agent-start
+                                herdr-notification-show herdr-pane-swap))
+         (missing nil))
+    (dolist (entry herdr-cmd-methods)
+      (let ((command (car entry)))
+        (unless (or (memq command on-menu)
+                    (memq command deliberately-absent))
+          (push command missing))))
+    (should (equal nil missing))))
+
+(ert-deftest herdr-transient-pane-basics-are-never-hidden ()
+  "Splitting, reading and closing a pane mean the same under either backend."
+  (dolist (node (herdr-transient-test--all-suffix-plists 'herdr-transient-pane))
+    (when (memq (plist-get node :command)
+                '(herdr-pane-split-right herdr-pane-read herdr-pane-close
+                  herdr-pane-focus herdr-pane-run))
+      (should-not (plist-get node :if))
+      (should-not (plist-get node :if-not)))))
 
 (provide 'herdr-transient-test)
 ;;; herdr-transient-test.el ends here
