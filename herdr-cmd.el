@@ -472,12 +472,16 @@ about.  TIMEOUT is in seconds."
     (message "herdr: watching agent %s" agent)))
 
 (defun herdr-agent-start (name kind &optional pane-id)
-  "Start agent NAME of KIND in PANE-ID."
+  "Start agent NAME of KIND in PANE-ID.
+Interactively, PANE-ID is chosen from the panes not already running an
+agent: `agent.start' can only take over a shell sitting idle, so
+offering a busy pane would just earn a server rejection.  When every
+pane is occupied there is nothing to pick, so split a new shell first."
   (interactive
    (list (read-string "Agent name: ")
          (completing-read "Agent kind: " herdr-agent-kinds nil nil)))
   (herdr-rpc-call "agent.start"
-                  `((pane_id . ,(or pane-id (herdr-select-target-pane)))
+                  `((pane_id . ,(or pane-id (herdr-select-available-shell)))
                     (name . ,name)
                     (kind . ,kind))))
 

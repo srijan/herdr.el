@@ -105,6 +105,34 @@ than one extra round trip, and the cache can drift."
                               (herdr-state-agents (herdr-state-current)))
                       'herdr-pane #'herdr-select--annotate-pane))
 
+(defun herdr-select--available-shell-ids (state)
+  "Return the ids of panes in STATE that `agent.start' can take over.
+A pane is available when nothing real is running in it: it has no agent
+at all, or only the adopted-shell label.  Panes hosting a real agent are
+occupied, which is what `agent.start' rejects as \"not an available
+shell\"."
+  (mapcar (lambda (pane) (alist-get 'pane_id pane))
+          (seq-filter (lambda (pane)
+                        (or (null (alist-get 'agent pane))
+                            (herdr-state-shell-pane-p pane)))
+                      (herdr-state-panes state))))
+
+(defun herdr-select-available-shell (&optional prompt)
+  "Read the id of a pane `agent.start' can start an agent in.
+Only panes not already running an agent are offered, so the choice
+cannot land on a busy pane.  Signals a `user-error' when there are none:
+starting an agent needs a shell sitting idle, so split a fresh one with
+`herdr-pane-split-right' first, then try again."
+  (herdr-state-refresh)
+  (let ((candidates (herdr-select--available-shell-ids (herdr-state-current))))
+    (unless candidates
+      (user-error
+       "herdr: no available shell pane; split a new shell (%s) first"
+       "herdr-pane-split-right"))
+    (herdr-select--read (or prompt "Start agent in shell pane: ")
+                        candidates
+                        'herdr-pane #'herdr-select--annotate-pane)))
+
 (defun herdr-select-workspace (&optional prompt)
   "Read a workspace id, defaulting the prompt to PROMPT."
   (herdr-state-refresh)

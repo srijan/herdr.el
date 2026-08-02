@@ -183,5 +183,35 @@ follow Emacs."
           (should (equal "w1:pA" (herdr-select-target-pane))))
       (kill-buffer buffer))))
 
+;;; Available-shell selection for agent.start
+
+(ert-deftest herdr-select-available-shell-lists-only-unoccupied-panes ()
+  "Panes running a real agent are occupied and must not be offered."
+  (herdr-select-test-with-state
+      '(((pane_id . "w1:p1") (agent . "claude"))
+        ((pane_id . "w1:p2") (agent . nil))
+        ((pane_id . "w1:p3")))
+    (should (equal '("w1:p2" "w1:p3")
+                   (herdr-select--available-shell-ids (herdr-state-current))))))
+
+(ert-deftest herdr-select-available-shell-counts-adopted-shells-as-free ()
+  "An adopted shell wears a label but runs no agent, so it stays available."
+  (let ((herdr-shell-agent-name "herdr-shell"))
+    (herdr-select-test-with-state
+        `(((pane_id . "w1:p1") (agent . ,herdr-shell-agent-name))
+          ((pane_id . "w1:p2") (agent . "codex")))
+      (should (equal '("w1:p1")
+                     (herdr-select--available-shell-ids
+                      (herdr-state-current)))))))
+
+(ert-deftest herdr-select-available-shell-errors-when-everything-is-busy ()
+  "With no idle shell to take over there is nothing to pick, so say so
+rather than firing a request the server will reject."
+  (herdr-select-test-with-state
+      '(((pane_id . "w1:p1") (agent . "claude"))
+        ((pane_id . "w1:p2") (agent . "codex")))
+    (cl-letf (((symbol-function 'herdr-state-refresh) (lambda (&rest _) nil)))
+      (should-error (herdr-select-available-shell) :type 'user-error))))
+
 (provide 'herdr-select-test)
 ;;; herdr-select-test.el ends here
