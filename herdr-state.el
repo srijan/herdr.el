@@ -325,10 +325,15 @@ and finally announces."
     (herdr-state--defer-prime-end)))
 
 (defun herdr-state--finish-priming ()
-  "Leave the priming window and notify listeners once."
+  "Leave the priming window and notify listeners once.
+
+Reconciles first: the replay this window exists to absorb is exactly
+what leaves ghost panes behind, so waiting for the next poll would mean
+the first pickers of the session show panes that no longer exist."
   (setq herdr-state--prime-timer nil
         herdr-state--priming nil)
   (when herdr-state--running
+    (herdr-state-reconcile-panes)
     (run-hook-with-args 'herdr-state-change-hook "resync" nil)))
 
 (defun herdr-state--handle-line (line)
@@ -510,6 +515,19 @@ re-reporting under that name.  Returns non-nil if anything was promoted."
                        id detected herdr-shell-agent-name))))))
     promoted))
 
+(defconst herdr-state-pane-significant-fields
+  '(agent agent_status cwd foreground_cwd workspace_id tab_id
+          terminal_title_stripped)
+  "Pane fields worth reacting to.
+Deliberately excludes volatile ones such as revision and scroll, which
+change constantly and would make every poll look like a change.")
+
+(defun herdr-state--pane-differs-p (known fresh)
+  "Return non-nil when FRESH differs from KNOWN in a field worth noticing."
+  (seq-some (lambda (field)
+              (not (equal (alist-get field known) (alist-get field fresh))))
+            herdr-state-pane-significant-fields))
+
 (defun herdr-state-reconcile-panes ()
   "Make the cached pane set match the server, and refresh directories.
 
@@ -549,15 +567,15 @@ are refreshed in the same pass.  Returns non-nil when anything changed."
             (setq herdr-state--current
                   (herdr-state-reduce herdr-state--current "pane_created"
                                       `((pane . ,pane)))))
-           ((not (equal (alist-get 'cwd known) (alist-get 'cwd pane)))
+           ((herdr-state--pane-differs-p known pane)
+            ;; Replace the record rather than patching cwd alone: an
+            ;; agent label can change under us — a shell promoted to a
+            ;; real agent is the common case — and a cache that only ever
+            ;; refreshed directories kept reporting the old label.
             (setq changed t)
             (setq herdr-state--current
-                  (herdr-state--merge-pane
-                   herdr-state--current id
-                   (seq-filter #'cdr
-                               (list (cons 'cwd (alist-get 'cwd pane))
-                                     (cons 'foreground_cwd
-                                           (alist-get 'foreground_cwd pane))))))))))
+                  (herdr-state-reduce herdr-state--current "pane_updated"
+                                      `((pane . ,pane))))))))
       (when changed
         (run-hook-with-args 'herdr-state-change-hook "reconcile" nil))
       changed)))

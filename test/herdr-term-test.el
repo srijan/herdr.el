@@ -198,5 +198,29 @@ still valid — so the name has to be corrected in place."
           (should (equal "*herdr: claude w1:p1*" (buffer-name buffer))))
       (kill-buffer buffer))))
 
+;;; Starting herdr must not rearrange windows
+
+(ert-deftest herdr-term-display-does-nothing-under-agent-windows ()
+  "There is no primary buffer to show, and popping an arbitrary agent
+would mean `M-x herdr' takes a window before being asked to."
+  (let* ((herdr-terminal-backend 'agent-windows)
+         (buffer (generate-new-buffer " *an-agent*"))
+         (herdr-term--agent-buffers (list (cons "w1:p1" buffer))))
+    (unwind-protect
+        (save-window-excursion
+          (let ((before (current-window-configuration)))
+            (should-not (herdr-term-display))
+            (should (compare-window-configurations
+                     before (current-window-configuration)))))
+      (kill-buffer buffer))))
+
+(ert-deftest herdr-term-display-shows-the-tui-under-session ()
+  (let* ((herdr-terminal-backend 'session)
+         (buffer (get-buffer-create herdr-term-session-buffer-name)))
+    (unwind-protect
+        (save-window-excursion
+          (should (herdr-term-display)))
+      (kill-buffer buffer))))
+
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here

@@ -129,7 +129,11 @@ Under `agent-windows' it is only a bootstrap: the server is a daemon
 and outlives it, so the buffer is discarded once ping succeeds."
   (let ((buffer (get-buffer-create herdr-term-session-buffer-name)))
     (with-current-buffer buffer (ghostel-mode))
-    (display-buffer buffer herdr-display-action)
+    ;; Under `agent-windows' this client only exists to start the daemon
+    ;; and is killed straight after, so showing it would be a flash of a
+    ;; window the user never asked for.
+    (when (eq herdr-terminal-backend 'session)
+      (display-buffer buffer herdr-display-action))
     (ghostel-exec buffer herdr-executable (herdr-term-session-args))
     (let ((deadline (+ (float-time) herdr-server-start-timeout)))
       (while (and (< (float-time) deadline) (not (herdr-server-live-p)))
@@ -151,17 +155,30 @@ and outlives it, so the buffer is discarded once ping succeeds."
                     herdr-term--agent-buffers)))
 
 (defun herdr-term-select-pane (pane-id)
-  "Select the Emacs buffer showing PANE-ID, if this backend has one.
+  "Show PANE-ID, attaching to it first if it is not attached yet.
 
 Focus is server-side state, and under `session' the TUI repaints so the
 change is visible.  Under `agent-windows' nothing repaints: each pane is
-a separate Emacs buffer, so focusing a pane server-side has no visible
-effect at all unless Emacs also selects that buffer.  Returns the buffer
-when it selected one."
-  (when-let* ((buffer (herdr-term-buffer-for-pane pane-id))
-              ((buffer-live-p buffer)))
-    (pop-to-buffer buffer)
-    buffer))
+its own Emacs buffer, so focusing a pane has no visible effect unless
+Emacs also selects that buffer.
+
+Attaching happens here rather than in reconciliation because an attached
+buffer has to stay displayed to survive — so attaching every agent up
+front would mean `M-x herdr\=' seizing a window per agent before being
+asked for anything.  Returns the buffer when it showed one."
+  (let ((buffer (herdr-term-buffer-for-pane pane-id)))
+    (unless (buffer-live-p buffer)
+      (setq buffer (herdr-term--attach-if-possible pane-id)))
+    (when (buffer-live-p buffer)
+      (pop-to-buffer buffer)
+      buffer)))
+
+(defun herdr-term--attach-if-possible (pane-id)
+  "Attach to PANE-ID now, if this backend attaches and herdr will allow it."
+  (when (eq herdr-terminal-backend 'agent-windows)
+    (when-let* ((pane (herdr-state-pane (herdr-state-current) pane-id))
+                ((alist-get 'agent pane)))
+      (herdr-term--attach pane))))
 
 (defun herdr-term-select-focused ()
   "Select the buffer for whichever pane herdr now considers focused.
@@ -192,11 +209,12 @@ steals the first one's terminal."
 (defun herdr-term--attach-1 (pane pane-id)
   "Create and start a ghostel buffer attached to PANE, named for PANE-ID."
   (let ((buffer (get-buffer-create (herdr-term-agent-buffer-name pane))))
-    ;; Set the mode before displaying so `display-buffer-alist' rules can
-    ;; match on it, the way ghostel's own buffer creation does.
     (with-current-buffer buffer (ghostel-mode))
-    ;; Display before starting: ghostel sizes the PTY from the window,
-    ;; and herdr paints nothing into a zero-sized terminal.
+    ;; The buffer must be displayed, and must stay displayed: without a
+    ;; persistent window the attach client exits and ghostel then kills
+    ;; the buffer.  Tried and rejected — never displaying, displaying and
+    ;; restoring the layout, displaying and deleting the window — all
+    ;; die.  That is why attaching is lazy: see `herdr-term-select-pane'.
     (display-buffer buffer)
     (condition-case err
         (ghostel-exec buffer herdr-executable
@@ -229,11 +247,14 @@ same buffer — attachment is still valid, so there is nothing to recreate
         (rename-buffer wanted t)))))
 
 (defun herdr-term--sync-agent-windows ()
-  "Bring the set of agent buffers in line with the cache."
+  "Reap buffers whose pane is gone and correct stale names.
+
+Deliberately does not attach.  Attaching requires displaying the buffer
+and keeping it displayed, so attaching on every `pane_agent_detected\='
+would take a window each time an agent appears.  `herdr-term-select-pane\='
+attaches on demand instead."
   (let* ((plan (herdr-term-reconcile (herdr-state-current)
                                      (herdr-term--live-agent-buffers))))
-    (dolist (pane (car plan))
-      (herdr-term--attach pane))
     (dolist (buffer (cdr plan))
       (when (buffer-live-p buffer) (kill-buffer buffer)))
     (herdr-term--rename-stale-buffers)
@@ -281,10 +302,12 @@ on each one would mean two dozen round trips for one directory change."
 
 (defun herdr-term--poll-directories ()
   "Refresh pane directories, then point buffers at them."
-  (when (and herdr-term-track-directory
-             (herdr-state-running-p)
-             (or (herdr-term--live-agent-buffers)
-                 (get-buffer herdr-term-session-buffer-name)))
+  ;; Guarded only on the stream being up.  It used to also require a
+  ;; herdr buffer to exist, which silently disabled the whole poll under
+  ;; `agent-windows\=' once attaching became lazy — and with it the pruning
+  ;; of panes the server no longer has.  Pruning matters most exactly when
+  ;; no buffers are open yet, because that is when the pickers are used.
+  (when (herdr-state-running-p)
     (herdr-state-promote-shell-panes)
     (when (herdr-state-reconcile-panes)
       (herdr-term--sync-directories))))
@@ -378,14 +401,17 @@ is changing directories."
       (herdr-term--start-directory-timer))))
 
 (defun herdr-term-display ()
-  "Show this backend's primary buffer."
-  (pcase herdr-terminal-backend
-    ('session
-     (when-let* ((buffer (get-buffer herdr-term-session-buffer-name)))
-       (display-buffer buffer herdr-display-action)))
-    ('agent-windows
-     (when-let* ((cell (car (herdr-term--live-agent-buffers))))
-       (display-buffer (cdr cell))))))
+  "Show this backend's primary buffer, if it has one.
+
+Under `session' that is the herdr TUI, which is the whole interface and
+so is worth showing.  Under `agent-windows' there is no primary buffer —
+picking one arbitrarily and popping it would mean `M-x herdr' rearranges
+your windows before you have asked for anything.  Buffers are reached
+deliberately instead, through the menu, the agents list, or
+`consult-buffer'."
+  (when (eq herdr-terminal-backend 'session)
+    (when-let* ((buffer (get-buffer herdr-term-session-buffer-name)))
+      (display-buffer buffer herdr-display-action))))
 
 (defun herdr-term-teardown ()
   "Kill this backend's buffers.  The herdr server is left running."

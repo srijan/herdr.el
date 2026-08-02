@@ -298,5 +298,34 @@ would stay labelled `shell' forever without this."
         (should-not (herdr-state-promote-shell-panes))
         (should-not reported)))))
 
+(ert-deftest herdr-state-reconcile-refreshes-a-changed-agent-label ()
+  "A shell promoted to a real agent must not keep its old label.
+Refreshing only cwd left the cache reporting `shell' indefinitely."
+  (herdr-test-with-server
+      (herdr-state-live-test--pane-list-server
+       [((pane_id . "w1:p1") (agent . "claude") (agent_status . "working")
+         (cwd . "/tmp"))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((panes . (((pane_id . "w1:p1") (agent . "shell")
+                         (agent_status . "idle") (cwd . "/tmp"))))))))
+      (should (herdr-state-reconcile-panes))
+      (let ((pane (herdr-state-pane herdr-state--current "w1:p1")))
+        (should (equal "claude" (alist-get 'agent pane)))
+        (should (equal "working" (alist-get 'agent_status pane))))
+      (should (= 1 (length (herdr-state-agents herdr-state--current)))))))
+
+(ert-deftest herdr-state-reconcile-ignores-volatile-fields ()
+  "Revision and scroll churn constantly; reacting to them would make
+every poll report a change and refresh every consumer."
+  (herdr-test-with-server
+      (herdr-state-live-test--pane-list-server
+       [((pane_id . "w1:p1") (cwd . "/tmp") (revision . 99)
+         (scroll . ((offset_from_bottom . 5))))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp") (revision . 1))))))))
+      (should-not (herdr-state-reconcile-panes)))))
+
 (provide 'herdr-state-live-test)
 ;;; herdr-state-live-test.el ends here

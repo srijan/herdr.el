@@ -69,7 +69,12 @@ herdr draws a 26-column sidebar beside its panes and a narrow window leaves it v
 
 One ghostel buffer per agent — `*herdr: claude w1:p1*` — each running `herdr agent attach`.
 Emacs owns the layout; herdr's own layout tree goes unused, so there is no geometry to keep in
-sync. Buffers are created and reaped from the event stream.
+sync.
+
+**Attaching is lazy.** `M-x herdr` takes no windows and opens no buffers; a pane is attached the
+first time you go to it. That is not only politeness: an attached buffer has to *stay* displayed
+or the attach client exits and ghostel kills the buffer, so attaching every agent up front would
+mean seizing a window per agent before you had asked for anything.
 
 The reason to want it: **agents survive Emacs exiting**, because the herdr server is a daemon.
 Quit Emacs, restart, `M-x herdr`, and every agent is still there and reattached. A plain ghostel
