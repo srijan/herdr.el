@@ -108,5 +108,65 @@
                                '((cwd . "/no/such/place/anywhere")))
     (should (equal "/" default-directory))))
 
+;;; Directory sync differs per backend
+
+(ert-deftest herdr-term-sync-directories-follows-the-focused-pane-under-session ()
+  "One buffer serves the whole session, so it tracks whatever is focused."
+  (let* ((herdr-terminal-backend 'session)
+         (herdr-term-track-directory t)
+         (buffer (get-buffer-create herdr-term-session-buffer-name))
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((focused_pane_id . "w1:p2")
+             (panes . (((pane_id . "w1:p1") (cwd . "/"))
+                       ((pane_id . "w1:p2") (cwd . "/tmp"))))))))
+    (unwind-protect
+        (progn
+          (with-current-buffer buffer (setq default-directory "/"))
+          (herdr-term--sync-directories)
+          (should (equal "/tmp/" (buffer-local-value 'default-directory buffer))))
+      (kill-buffer buffer))))
+
+(ert-deftest herdr-term-sync-directories-is-per-buffer-under-agent-windows ()
+  (let* ((herdr-terminal-backend 'agent-windows)
+         (herdr-term-track-directory t)
+         (one (generate-new-buffer " *pane1*"))
+         (two (generate-new-buffer " *pane2*"))
+         (herdr-term--agent-buffers (list (cons "w1:p1" one) (cons "w1:p2" two)))
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((panes . (((pane_id . "w1:p1") (agent . "claude") (cwd . "/tmp"))
+                       ((pane_id . "w1:p2") (agent . "codex") (cwd . "/usr"))))))))
+    (unwind-protect
+        (progn
+          (herdr-term--sync-directories)
+          (should (equal "/tmp/" (buffer-local-value 'default-directory one)))
+          (should (equal "/usr/" (buffer-local-value 'default-directory two))))
+      (kill-buffer one) (kill-buffer two))))
+
+(ert-deftest herdr-term-sync-directories-respects-the-off-switch ()
+  (let* ((herdr-terminal-backend 'session)
+         (herdr-term-track-directory nil)
+         (buffer (get-buffer-create herdr-term-session-buffer-name))
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((focused_pane_id . "w1:p1")
+             (panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))))))
+    (unwind-protect
+        (progn
+          (with-current-buffer buffer (setq default-directory "/"))
+          (herdr-term--sync-directories)
+          (should (equal "/" (buffer-local-value 'default-directory buffer))))
+      (kill-buffer buffer))))
+
+(ert-deftest herdr-term-select-pane-under-session-uses-the-one-buffer ()
+  "Under `session' every pane lives in the same buffer, so any pane id
+resolves to it — that is what makes Go to work there too."
+  (let* ((herdr-terminal-backend 'session)
+         (buffer (get-buffer-create herdr-term-session-buffer-name)))
+    (unwind-protect
+        (should (eq buffer (herdr-term-buffer-for-pane "w9:p9")))
+      (kill-buffer buffer))))
+
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here
