@@ -25,6 +25,7 @@
 
 (require 'subr-x)
 (require 'herdr-state)
+(require 'herdr-rpc)
 
 (defun herdr-select--status-glyph (status)
   "Return a short glyph for agent STATUS."
@@ -167,14 +168,37 @@ With a prefix argument, always prompt."
     (add-to-list 'embark-keymap-alist
                  '(herdr-pane . herdr-select-pane-embark-map))))
 
+(defun herdr-select-panes-with-buffers ()
+  "Return pane ids that currently have an Emacs buffer.
+
+Under `agent-windows' a pane without an agent has no buffer, so it is
+not something a buffer switcher can switch to.  Under `session' every
+pane shares the one herdr buffer, so all of them qualify."
+  (seq-filter (lambda (id)
+                (let ((buffer (and (fboundp 'herdr-term-buffer-for-pane)
+                                   (herdr-term-buffer-for-pane id))))
+                  (buffer-live-p buffer)))
+              (herdr-state-pane-ids (herdr-state-current))))
+
+(defun herdr-select--consult-visit (pane-id)
+  "Switch to PANE-ID's buffer and focus the pane in herdr."
+  (when-let* ((buffer (herdr-term-buffer-for-pane pane-id)))
+    (switch-to-buffer buffer))
+  (ignore-errors (herdr-rpc-call "pane.focus" `((pane_id . ,pane-id)))))
+
 (defun herdr-select--consult-source ()
-  "Return a `consult-buffer' source listing herdr panes."
+  "Return a `consult-buffer' source listing herdr panes that have buffers.
+
+Listing panes with no buffer would put entries in a buffer switcher that
+it cannot switch to — they appear in the list, and selecting one leaves
+you where you were.  Panes without buffers stay reachable through the
+transient, which can offer to adopt them."
   `(:name "herdr pane"
     :narrow ?h
     :category herdr-pane
     :annotate ,#'herdr-select--annotate-pane
-    :action ,#'herdr-pane-focus
-    :items ,(lambda () (herdr-state-pane-ids (herdr-state-current)))))
+    :action ,#'herdr-select--consult-visit
+    :items ,#'herdr-select-panes-with-buffers))
 
 (with-eval-after-load 'consult
   (when (boundp 'consult-buffer-sources)

@@ -194,8 +194,26 @@ nothing repaints — so Emacs is moved to match."
   (interactive)
   (let ((pane (or pane-id (herdr-select-pane "Focus pane: "))))
     (herdr-rpc-call "pane.focus" `((pane_id . ,pane)))
-    (herdr-term-select-pane pane)
+    (or (herdr-term-select-pane pane)
+        (herdr-cmd--offer-to-adopt pane))
     pane))
+
+(defun herdr-cmd--offer-to-adopt (pane-id)
+  "Offer to adopt PANE-ID when it cannot be shown as it stands.
+
+Going to a pane and having nothing happen is the worst outcome: the
+command looks broken when the real situation is that herdr will not
+attach to a pane without an agent."
+  (when (eq herdr-terminal-backend 'agent-windows)
+    (let ((pane (herdr-state-pane (herdr-state-current) pane-id)))
+      (cond
+       ((and pane (null (alist-get 'agent pane))
+             (y-or-n-p
+              (format "Pane %s is a plain shell with no buffer.  Adopt it? "
+                      pane-id)))
+        (herdr-adopt-shell pane-id)
+        (herdr-cmd--select-pane-when-ready pane-id))
+       (t (message "herdr: focused %s, but it has no buffer to show" pane-id))))))
 
 (defun herdr-cmd-read-text (result)
   "Return the terminal text carried by a read RESULT.
