@@ -195,6 +195,19 @@ moved as a side effect of the command that just ran."
     ('session (get-buffer herdr-term-session-buffer-name))
     ('agent-windows (cdr (assoc pane-id (herdr-term--live-agent-buffers))))))
 
+(defun herdr-term-pane-for-buffer (&optional buffer)
+  "Return the pane id BUFFER is showing, or nil if it is not a herdr terminal.
+
+Only meaningful under `agent-windows\=', where the mapping is one buffer
+per pane.  Under `session\=' every pane shares one buffer, so the current
+buffer says nothing about which pane is meant."
+  (when (eq herdr-terminal-backend 'agent-windows)
+    (let* ((buffer (or buffer (current-buffer)))
+           (id (car (rassq buffer (herdr-term--live-agent-buffers)))))
+      ;; Ignore a buffer whose pane has since gone away.
+      (when (and id (herdr-state-pane (herdr-state-current) id))
+        id))))
+
 (defun herdr-term--attach (pane)
   "Create and start a ghostel buffer attached to PANE.
 Returns an existing buffer untouched rather than attaching twice:

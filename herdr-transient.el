@@ -29,10 +29,20 @@
 (declare-function herdr-project "herdr" ())
 (autoload 'herdr-project "herdr" nil t)
 
+(defun herdr-transient--origin-buffer ()
+  "Return the buffer the menu was opened from.
+Descriptions are rendered with the transient\='s own buffer current, so
+asking `current-buffer\=' here would lose the pane the user is sitting in
+and make the header disagree with what the commands actually target."
+  (or (and (boundp 'transient--original-buffer)
+           (buffer-live-p transient--original-buffer)
+           transient--original-buffer)
+      (current-buffer)))
+
 (defun herdr-transient--target ()
   "Return a short description of the pane commands will act on."
   (let* ((state (herdr-state-current))
-         (id (herdr-state-focused-pane-id state))
+         (id (herdr-select-current-target (herdr-transient--origin-buffer)))
          (pane (and id (herdr-state-pane state id))))
     (if (not pane)
         "no pane"

@@ -20,6 +20,10 @@ M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
                    % worktree…
 ```
 
+**Targeting.** Commands act on the pane of the buffer you are in, if that is a herdr terminal;
+otherwise on the pane herdr has focused. `C-u` on any command prompts instead. The header names
+the pane that will be acted on, so it is never a guess.
+
 **Key scheme.** A lowercase noun jumps to that kind of thing; the same letter uppercased opens
 its menu. Inside a menu, verbs are constant: `c` create, `f` focus, `r` read, `R` rename, `k`
 close/remove, `l` list. `?` and `C-h` are left to transient's own help, so status is `s`.

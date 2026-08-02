@@ -126,5 +126,62 @@ where you were."
           (should (equal "w1:p1" focused)))
       (kill-buffer target))))
 
+;;; Which pane a command acts on
+
+(ert-deftest herdr-select-target-prefers-the-buffer-you-are-in ()
+  "Acting from inside one agent's buffer used to target whichever pane
+you last went to, because herdr's focus is server-side and does not
+follow Emacs."
+  (let* ((herdr-terminal-backend 'agent-windows)
+         (mine (generate-new-buffer " *pane-b*"))
+         (herdr-term--agent-buffers (list (cons "w1:pB" mine)))
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((focused_pane_id . "w1:pA")
+             (panes . (((pane_id . "w1:pA")) ((pane_id . "w1:pB")))))))
+         (current-prefix-arg nil))
+    (unwind-protect
+        (with-current-buffer mine
+          (should (equal "w1:pB" (herdr-select-target-pane))))
+      (kill-buffer mine))))
+
+(ert-deftest herdr-select-target-falls-back-to-herdr-focus ()
+  "Outside a herdr buffer there is no local answer, so use the server's."
+  (let* ((herdr-terminal-backend 'agent-windows)
+         (herdr-term--agent-buffers nil)
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))
+         (current-prefix-arg nil))
+    (with-temp-buffer
+      (should (equal "w1:pA" (herdr-select-target-pane))))))
+
+(ert-deftest herdr-select-target-ignores-a-buffer-whose-pane-is-gone ()
+  (let* ((herdr-terminal-backend 'agent-windows)
+         (orphan (generate-new-buffer " *orphan*"))
+         (herdr-term--agent-buffers (list (cons "w1:gone" orphan)))
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))
+         (current-prefix-arg nil))
+    (unwind-protect
+        (with-current-buffer orphan
+          (should (equal "w1:pA" (herdr-select-target-pane))))
+      (kill-buffer orphan))))
+
+(ert-deftest herdr-select-target-under-session-uses-herdr-focus ()
+  "One buffer serves every pane there, so it cannot disambiguate."
+  (let* ((herdr-terminal-backend 'session)
+         (buffer (get-buffer-create herdr-term-session-buffer-name))
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))
+         (current-prefix-arg nil))
+    (unwind-protect
+        (with-current-buffer buffer
+          (should-not (herdr-term-pane-for-buffer))
+          (should (equal "w1:pA" (herdr-select-target-pane))))
+      (kill-buffer buffer))))
+
 (provide 'herdr-select-test)
 ;;; herdr-select-test.el ends here

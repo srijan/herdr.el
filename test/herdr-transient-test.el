@@ -116,5 +116,38 @@ asserts it separately.")
         (should (equal (list noun 'menu (intern (format "herdr-transient-%s" noun)))
                        (list noun 'menu menu)))))))
 
+;;; The header must name the pane the commands will actually act on
+
+(ert-deftest herdr-transient-header-follows-the-buffer-you-opened-it-from ()
+  "Descriptions render with the transient's buffer current, so the
+header has to consult the originating buffer or it will disagree with
+what the commands target."
+  (let* ((herdr-terminal-backend 'agent-windows)
+         (mine (generate-new-buffer " *pane-b*"))
+         (herdr-term--agent-buffers (list (cons "w1:pB" mine)))
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((focused_pane_id . "w1:pA")
+             (panes . (((pane_id . "w1:pA") (agent . "codex"))
+                       ((pane_id . "w1:pB") (agent . "claude")))))))
+         (transient--original-buffer mine))
+    (unwind-protect
+        (with-temp-buffer            ; pretend we are rendering elsewhere
+          (let ((heading (herdr-transient--target)))
+            (should (string-match-p "w1:pB" heading))
+            (should (string-match-p "claude" heading))))
+      (kill-buffer mine))))
+
+(ert-deftest herdr-transient-header-falls-back-to-herdr-focus ()
+  (let* ((herdr-terminal-backend 'agent-windows)
+         (herdr-term--agent-buffers nil)
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((focused_pane_id . "w1:pA")
+             (panes . (((pane_id . "w1:pA") (agent . "codex")))))))
+         (transient--original-buffer nil))
+    (with-temp-buffer
+      (should (string-match-p "w1:pA" (herdr-transient--target))))))
+
 (provide 'herdr-transient-test)
 ;;; herdr-transient-test.el ends here

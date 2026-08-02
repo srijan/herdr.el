@@ -26,6 +26,7 @@
 (require 'subr-x)
 (require 'herdr-state)
 (require 'herdr-rpc)
+(require 'herdr-term)
 
 (defun herdr-select--status-glyph (status)
   "Return a short glyph for agent STATUS."
@@ -120,13 +121,27 @@ than one extra round trip, and the cache can drift."
                               (herdr-state-tabs (herdr-state-current)))
                       'herdr-tab #'herdr-select--annotate-tab))
 
+(defun herdr-select-current-target (&optional buffer)
+  "Return the pane a command would act on from BUFFER, or nil.
+Never prompts, so it is safe to call while rendering a menu."
+  (or (herdr-term-pane-for-buffer (or buffer (current-buffer)))
+      (herdr-state-focused-pane-id (herdr-state-current))))
+
 (defun herdr-select-target-pane (&optional prompt)
-  "Return the pane to act on: the focused one, or a prompted choice.
-With a prefix argument, always prompt."
-  (if current-prefix-arg
-      (herdr-select-pane prompt)
-    (or (herdr-state-focused-pane-id (herdr-state-current))
-        (herdr-select-pane prompt))))
+  "Return the pane to act on, preferring the one you are looking at.
+
+In order: a prefix argument always prompts; otherwise the pane of the
+current buffer if it is a herdr terminal; otherwise the pane herdr has
+focused; otherwise a prompt.
+
+The buffer comes first because it is the more local answer.  herdr\='s
+focus is server-side and only moves when something explicitly moves it,
+so acting from inside one agent\='s buffer used to target whichever pane
+you last went to — which could be a different agent entirely."
+  (cond
+   (current-prefix-arg (herdr-select-pane prompt))
+   ((herdr-select-current-target))
+   (t (herdr-select-pane prompt))))
 
 ;;; Optional integrations, registered only when the package is loaded
 
@@ -181,9 +196,7 @@ Under `agent-windows' a pane without an agent has no buffer, so it is
 not something a buffer switcher can switch to.  Under `session' every
 pane shares the one herdr buffer, so all of them qualify."
   (seq-filter (lambda (id)
-                (let ((buffer (and (fboundp 'herdr-term-buffer-for-pane)
-                                   (herdr-term-buffer-for-pane id))))
-                  (buffer-live-p buffer)))
+                (buffer-live-p (herdr-term-buffer-for-pane id)))
               (herdr-state-pane-ids (herdr-state-current))))
 
 (defun herdr-select--consult-visit (pane-id)
