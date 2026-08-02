@@ -306,5 +306,36 @@ promoted to, so it must not report anything."
       (should-not called)
       (should (string-match-p "still just a shell" (or said ""))))))
 
+;;; Starting an agent must surface it
+
+(ert-deftest herdr-agent-start-focuses-and-shows-the-new-agent ()
+  "Starting an agent that goes nowhere on screen reads as a no-op: the
+pane it runs in must be focused server-side and its buffer selected, or
+you only learn it worked on the next reload."
+  (let (selected focused)
+    (cl-letf (((symbol-function 'herdr-term-select-pane)
+               (lambda (pane) (setq selected pane) t)))
+      (herdr-test-with-server
+          (lambda (req)
+            (when (equal (alist-get 'method req) "pane.focus")
+              (setq focused (alist-get 'pane_id (alist-get 'params req))))
+            (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-agent-start "web" "claude" "w1:p1")
+        (should (equal "w1:p1" selected))
+        (should (equal "w1:p1" focused))))))
+
+(ert-deftest herdr-agent-start-waits-for-a-buffer-that-is-not-ready ()
+  "Under `agent-windows' the buffer is built off the event stream, so it
+may not exist the instant `agent.start' returns.  When select cannot
+show it yet the command schedules a retry rather than giving up."
+  (let (deferred)
+    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) nil))
+              ((symbol-function 'herdr-cmd--select-pane-when-ready)
+               (lambda (pane) (setq deferred pane))))
+      (herdr-test-with-server
+          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-agent-start "web" "claude" "w1:p1")
+        (should (equal "w1:p1" deferred))))))
+
 (provide 'herdr-cmd-test)
 ;;; herdr-cmd-test.el ends here

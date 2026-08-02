@@ -480,10 +480,18 @@ pane is occupied there is nothing to pick, so split a new shell first."
   (interactive
    (list (read-string "Agent name: ")
          (completing-read "Agent kind: " herdr-agent-kinds nil nil)))
-  (herdr-rpc-call "agent.start"
-                  `((pane_id . ,(or pane-id (herdr-select-available-shell)))
-                    (name . ,name)
-                    (kind . ,kind))))
+  (let ((pane (or pane-id (herdr-select-available-shell))))
+    (herdr-rpc-call "agent.start"
+                    `((pane_id . ,pane) (name . ,name) (kind . ,kind)))
+    ;; Surface the agent that was just started.  Focusing is server-side,
+    ;; so under `session' the TUI repaints to it; under `agent-windows'
+    ;; the pane only just gained an agent, so its buffer is built off the
+    ;; event stream and may not exist yet — select it now if it does, and
+    ;; otherwise wait for reconciliation rather than looking like a no-op.
+    (herdr-rpc-call "pane.focus" `((pane_id . ,pane)))
+    (unless (herdr-term-select-pane pane)
+      (herdr-cmd--select-pane-when-ready pane))
+    pane))
 
 (defun herdr-agent-explain (&optional target)
   "Explain how herdr detected the agent in TARGET."
