@@ -50,24 +50,33 @@
 
 ;;;###autoload (autoload 'herdr-transient "herdr-transient" nil t)
 (transient-define-prefix herdr-transient ()
-  "Control the herdr session."
+  "Control the herdr session.
+
+Key scheme, applied throughout: a lowercase noun jumps to that kind of
+thing, the same letter uppercased opens its menu.  Verbs are consistent
+across every menu — c create, f focus, r read, R rename, k close or
+remove, l list.
+
+`?' and `C-h' belong to transient's own help, so status is on `s'.
+Worktrees are on `%' and the raw-method escape hatch on `:', matching
+where magit puts the same two ideas."
   [:description herdr-transient--heading
-   ["Navigate"
-    ("j" "pane"       herdr-pane-focus)
-    ("J" "agent"      herdr-agent-focus)
+   ["Go to"
+    ("p" "pane"       herdr-pane-focus)
+    ("a" "agent"      herdr-agent-focus)
     ("w" "workspace"  herdr-workspace-focus)
     ("t" "tab"        herdr-tab-focus)]
-   ["Act on"
-    ("p" "pane…"      herdr-transient-pane)
-    ("a" "agent…"     herdr-transient-agent)
-    ("T" "tab…"       herdr-transient-tab)
+   ["Menus"
+    ("P" "pane…"      herdr-transient-pane)
+    ("A" "agent…"     herdr-transient-agent)
     ("W" "workspace…" herdr-transient-workspace)
-    ("k" "worktree…"  herdr-transient-worktree)]
+    ("T" "tab…"       herdr-transient-tab)
+    ("%" "worktree…"  herdr-transient-worktree)]
    ["Session"
-    ("g" "resync"     herdr-state-resync)
-    ("G" "agents"     herdr-agents)
-    ("?" "status"     herdr-transient-status)
-    ("x" "any method…" herdr-call)]])
+    ("g" "resync"      herdr-state-resync)
+    ("l" "agents"      herdr-agents)
+    ("s" "status"      herdr-transient-status)
+    (":" "any method…" herdr-call)]])
 
 (transient-define-prefix herdr-transient-pane ()
   "Act on a pane."
@@ -84,10 +93,11 @@
     ("i" "send text"     herdr-pane-send-text)
     ("o" "wait output…"  herdr-pane-wait-for-output)]
    ["Manage"
-    ("R" "rename"        herdr-pane-rename)
-    ("k" "close"         herdr-pane-close)
-    ("A" "adopt shell"   herdr-adopt-shell)
-    ("D" "release shell" herdr-release-shell)]])
+    ("f" "focus"          herdr-pane-focus)
+    ("R" "rename"         herdr-pane-rename)
+    ("k" "close"          herdr-pane-close)
+    ("A" "adopt shell"    herdr-adopt-shell)
+    ("U" "unadopt shell"  herdr-release-shell)]])
 
 (transient-define-prefix herdr-transient-agent ()
   "Act on an agent."
@@ -112,11 +122,11 @@
 (transient-define-prefix herdr-transient-workspace ()
   "Act on a workspace."
   ["Workspace"
-   ("c" "create"          herdr-workspace-create)
-   ("p" "for project"     herdr-project)
-   ("f" "focus"           herdr-workspace-focus)
-   ("R" "rename"          herdr-workspace-rename)
-   ("k" "close"           herdr-workspace-close)])
+   ("c" "create"      herdr-workspace-create)
+   ("p" "for project" herdr-project)
+   ("f" "focus"       herdr-workspace-focus)
+   ("R" "rename"      herdr-workspace-rename)
+   ("k" "close"       herdr-workspace-close)])
 
 (transient-define-prefix herdr-transient-worktree ()
   "Act on git worktrees."

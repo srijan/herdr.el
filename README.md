@@ -10,14 +10,21 @@ event stream keeps a cache of the session, and that cache feeds a
 and completion pickers.
 
 ```
-M-x herdr        [w1:p1  claude:idle]   C-u on any command retargets
- Navigate            Act on              Session
-  j pane              p pane…             g resync
-  J agent             a agent…            G agents
-  w workspace         T tab…              ? status
-  t tab               W workspace…        x any method…
-                      k worktree…
+M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
+
+ Go to            Menus             Session
+  p pane           P pane…           g resync
+  a agent          A agent…          l agents
+  w workspace      W workspace…      s status
+  t tab            T tab…            : any method…
+                   % worktree…
 ```
+
+**Key scheme.** A lowercase noun jumps to that kind of thing; the same letter uppercased opens
+its menu. Inside a menu, verbs are constant: `c` create, `f` focus, `r` read, `R` rename, `k`
+close/remove, `l` list. `?` and `C-h` are left to transient's own help, so status is `s`.
+Worktrees are on `%` and the raw-method escape hatch on `:`, matching where magit puts those two
+ideas. Asserted by tests, not just by review.
 
 ## Requirements
 
