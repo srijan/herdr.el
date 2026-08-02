@@ -101,7 +101,7 @@ herdr exposes 89 methods with a complete, typed JSON Schema. Three options were 
   directory listing, not a UI. Generated infixes cannot know that `pane_id` should default to the
   focused pane or offer a labeled picker. Curation would end up layered on top anyway, leaving
   both to maintain.
-- **Curated transient + runtime schema** (chosen). ~26 hand-written commands with real
+- **Curated transient + runtime schema** (chosen). ~27 hand-written commands with real
   ergonomics, plus the schema loaded at runtime for two purposes:
   1. `M-x herdr-call` — `completing-read` over all 89 methods, params prompted generically from
      their schema. Full coverage, no generated menus, roughly 120 LOC.
@@ -173,7 +173,7 @@ Each file has one purpose and a stated dependency direction. Nothing depends upw
 | `herdr-state.el` | Snapshot cache, event connection, reducer, change hook | `herdr-rpc` |
 | `herdr-term.el` | Backend interface; `session` and `agent-windows` implementations | `herdr-state`, ghostel |
 | `herdr.el` | Entry point, session lifecycle, autoloads | all |
-| `herdr-cmd.el` | The ~26 curated command wrappers | `herdr-rpc`, `herdr-state` |
+| `herdr-cmd.el` | The ~27 curated command wrappers | `herdr-rpc`, `herdr-state` |
 | `herdr-select.el` | `completing-read` pickers, marginalia annotators, embark keymaps, consult source | `herdr-state` |
 | `herdr-transient.el` | Transient prefixes | `herdr-cmd`, `herdr-select` |
 | `herdr-agents.el` | `*herdr-agents*` buffer and modeline segment | `herdr-state` |
@@ -231,10 +231,39 @@ One ghostel buffer per agent pane, named `*herdr: <label>*`, running `herdr agen
   before retrying with `--takeover` rather than stealing silently.
 - **Emacs owns layout.** herdr's layout tree is not consulted. No geometry sync, no window churn.
 - **Plain shell panes are not represented.** They remain reachable through `pane.read`,
-  `pane.send_text`, and the transient, but have no buffer. `ghostel-project` covers interactive
-  shells.
+  `pane.send_text`, `pane.wait_for_output`, and the transient, but have no buffer.
+  `ghostel-project` covers interactive shells. Rationale below.
 - **Restart recovery.** On `M-x herdr`, reconcile: every agent in the snapshot gets a buffer.
   Agents started before Emacs launched are picked up automatically.
+
+#### Why plain shells stay in ghostel
+
+Hosting shells in herdr would buy: survival across an Emacs restart (a plain ghostel shell is a
+child of Emacs and dies with it, a herdr pane does not); one uniform model instead of two kinds of
+terminal buffer; `pane.wait_for_output` and `pane.read` on shells; workspace grouping alongside
+agents; and remote shells later via `herdr --remote`.
+
+It is rejected for two reasons.
+
+**It is not currently possible.** `agent attach` refuses panes with no detected agent and there is
+no `pane attach`. Every workaround is bad: `pane.report_agent` would fake an agent and pollute the
+modeline counter and agents tree — the exact feature that motivates the package; mixed backends
+would run two herdr frontends at once; polling `pane.read` into a read-only buffer is not a
+terminal at all, with no input and no TUI programs.
+
+**It would trade away ghostel's shell integration.** Directory tracking, prompt navigation, and
+`ghostel-eval-cmds` are driven by OSC sequences that ghostel intercepts because ghostel owns the
+PTY. With herdr in between, herdr's VT consumes them. In the target environment
+`ghostel-eval-cmds` is configured to launch `magit-status-setup-buffer` from a shell command, so
+this is a concrete loss, not a theoretical one.
+
+The trade is herdr persistence against ghostel shell integration. For agents, persistence clearly
+wins. For shells it inverts: the integration is the reason to use ghostel, and most shells are
+short-lived commands where persistence buys nothing.
+
+This decision is revisitable. Phase 0 spike 4 measures whether OSC sequences survive herdr's VT
+out to an attach client. If they do, the second objection disappears and shells-in-herdr becomes
+attractive as soon as upstream provides `pane attach`.
 
 ## Command surface
 
@@ -253,6 +282,7 @@ M-x herdr        [w1:p1  web/1  claude:idle]
   w workspace         k close          w wait until…
   t tab               z zoom           s start
                       = resize         e explain
+                      o wait output…
  Session             Tab   (t)        Workspace (w)
   g resync            c create         c create
   a attach/detach     k close          k close
@@ -261,7 +291,7 @@ M-x herdr        [w1:p1  web/1  claude:idle]
  x  any method…  (herdr-call, all 89)
 ```
 
-Roughly 26 curated commands. Three worth calling out:
+Roughly 27 curated commands. Four worth calling out:
 
 - **`worktree.*`** — herdr has native git-worktree support (`list`, `create`, `open`, `remove`).
   Creating a worktree and its herdr workspace in one command is expected to be the highest-value
@@ -270,6 +300,11 @@ Roughly 26 curated commands. Three worth calling out:
   `ansi-color-apply-on-region` when `format` is `ansi`.
 - **`agent.wait`** — async and callback-driven, so it does not block Emacs. Notification fires on
   transition.
+- **`pane.wait_for_output`** — wait for a regex match in any pane, async, with a callback.
+  "Notify me when the dev server prints `Listening on`" becomes one command. Curated for **any**
+  pane, not just agents, so it already works on shell panes and will keep working if shells ever
+  gain buffers. Requires `pane_id`, `source`, and `match`; `lines`, `strip_ansi`, and `timeout_ms`
+  optional.
 
 ### Pickers
 
@@ -332,7 +367,7 @@ compute buffers to create and reap. Tested without ghostel or a server.
 **Live tests, tagged `:live`, skipped by default:**
 
 - **Drift test** — every curated command's method and params still exist in
-  `herdr api schema --json`. This is what keeps 26 hand-written wrappers honest across herdr
+  `herdr api schema --json`. This is what keeps 27 hand-written wrappers honest across herdr
   releases.
 - **Round-trip** — split, rename, send text, read it back, close; assert the session is left
   exactly as found.
@@ -344,7 +379,7 @@ sends herdr outside Emacs.
 
 | # | Phase | Gate |
 |---|---|---|
-| 0 | Spikes: VT throughput under `session`; session-level handoff semantics; whether `pane_updated` carries agent-status transitions | Answers recorded before any code |
+| 0 | Spikes: VT throughput under `session`; session-level handoff semantics; whether `pane_updated` carries agent-status transitions; whether OSC survives herdr's VT | Answers recorded before any code |
 | 1 | `herdr-rpc`, `herdr-schema`, `herdr-state`, hermetic tests | Reducer test green |
 | 2 | `herdr-term` interface + `session` backend; `herdr.el` entry and lifecycle | `M-x herdr` attaches |
 | 3 | `herdr-cmd`, `herdr-select` | Pickers work with marginalia and embark — goals 3 and 4 complete |
@@ -363,6 +398,13 @@ sends herdr outside Emacs.
    second session client attaches.
 3. **Agent status events.** Run a real agent, watch the global stream, determine whether
    `pane_updated` carries status transitions or whether per-pane subscriptions are required.
+4. **OSC survival.** Emit OSC 7 (cwd) and OSC 133 (prompt marks) from inside a herdr pane and
+   check whether they reach an `agent attach` client's stream. Determines whether ghostel's
+   directory tracking, prompt navigation, and `ghostel-eval-cmds` work through herdr, which in
+   turn governs whether shells-in-herdr is worth revisiting. Cheap: capture the attach PTY stream
+   and grep for the sequences. Note this also affects **agent** buffers under `agent-windows` —
+   if OSC does not survive, those buffers lose directory tracking too, which is a smaller loss
+   but should be a known one rather than a surprise.
 
 ## Packaging
 
