@@ -428,3 +428,44 @@ Runtime dependencies: Emacs 28.1+ (floor set by ghostel's dynamic-module require
 and `json-parse-string` are both available by then), `transient`, `ghostel`. Soft:
 `magit-section`, `marginalia`, `embark`, `consult`, `alert`. No hard dependency on anything not
 already installed in the target environment.
+
+---
+
+## Implementation notes and corrections
+
+This document is the design as agreed before the code existed.  It is kept as the record of why
+things are shaped the way they are, but several of its assumptions did not survive contact with a
+running herdr.  **`README.md` describes current behaviour; where the two disagree, the README is
+right.**
+
+What changed:
+
+- **Attaching is lazy.**  The design had reconciliation attach every agent as it appeared.  The
+  attach client needs a window when it starts, so that meant `M-x herdr` taking a window per agent
+  before being asked for anything.  Panes are attached the first time they are visited instead.
+  (The client survives being *hidden* — only a deleted window kills it.)
+- **Replay leaves ghost panes.**  Priming absorbs the subscription replay, but it ends after a
+  fixed quiet period, so a bursty replay can end it early and later `pane_created` events
+  resurrect long-closed panes.  Nothing in the event stream removes them, so the pane set is
+  reconciled against `pane.list` on a poll.
+- **Directory changes are never announced.**  herdr tracks cwd accurately but publishes no event
+  for it, so tracking polls rather than subscribes.
+- **Adoption is implemented, and it outranks detection.**  The design listed shells-in-herdr as
+  out of scope.  `herdr-adopt-shell` makes it a per-pane choice — but reporting an agent takes
+  lifecycle authority, so an adopted pane keeps its label even once a real agent starts in it.
+  Promotion reads the detector's own conclusion via `agent.explain` and relabels.  Releasing
+  authority does not restore detection: it binds at agent start and does not re-run.
+- **OSC is not forwarded.**  Corrected in Protocol facts above; the original spike was a false
+  positive from the shell echoing the command text.
+- **One display setting.**  `herdr-display-action` defaulted to taking the whole frame and applied
+  only to `M-x herdr`, so the same buffer appeared two ways.  It now defaults to reusing the
+  current window and governs every path that shows a herdr buffer.
+- **Tabs and adoption are filtered by backend.**  Tabs render nowhere under `agent-windows`;
+  adoption buys nothing under `session`.  Neither is offered where it means nothing.
+- **Targeting prefers the current buffer.**  The design assumed herdr's focus was the right
+  target.  It is server-side and does not follow Emacs, so acting from inside one agent's buffer
+  targeted whichever pane was last visited.
+
+Testing gap worth recording: both suites run in batch, which has no frame.  A mode line rendering
+`*invalid*`, a command splitting a window, and a menu entry that was never added all passed a
+green suite and were found only by driving a real Emacs under a PTY.
