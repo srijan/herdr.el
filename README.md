@@ -186,11 +186,6 @@ Worth knowing about:
 - **`herdr-agent-start`** — starts an agent in an idle pane. The picker also offers a trailing
   **＋ new shell pane** entry that splits the current pane and starts there, so a session with no
   free pane is never a dead end.
-- **`herdr-send-escape`** (`C-c e`) — sends a properly encoded Escape to the agent. Under **TTY
-  Emacs** a lone Esc is claimed as the Meta prefix and never reaches the terminal, which breaks
-  "Esc to close" in agents like Claude Code that enable the Kitty keyboard protocol (they want
-  `\e[27u`, not a bare `\e`). This routes through ghostel's mode-aware encoder, so it is correct
-  either way. Under GUI Emacs the Esc key already works and you will not need it.
 - **`herdr-worktree-create`** — herdr has native git-worktree support, so one command takes a
   branch name to a worktree with its own herdr workspace.
 - **`herdr-pane-read`** / **`herdr-agent-read`** — terminal output into a real Emacs buffer.

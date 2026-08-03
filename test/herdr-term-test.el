@@ -274,29 +274,5 @@ way from Go to."
   (should (equal '((display-buffer-reuse-window display-buffer-same-window))
                  (default-value 'herdr-display-action))))
 
-;;; Sending Escape into a Kitty-protocol agent under TTY Emacs
-
-;; Declared, deliberately unbound: ghostel is not loaded in the suite, so
-;; `let' can bind this as a dynamic variable the install function writes.
-(defvar ghostel-mode-map)
-
-(ert-deftest herdr-send-escape-routes-through-ghostels-encoder ()
-  "Escape must go through ghostel's key encoder, which encodes it as
-\\e[27u under the Kitty keyboard protocol and \\e otherwise — a raw byte
-would be wrong for an agent that enabled the protocol."
-  (let (sent)
-    (cl-letf (((symbol-function 'ghostel-send-key)
-               (lambda (key &rest _) (setq sent key))))
-      (herdr-send-escape)
-      (should (equal "escape" sent)))))
-
-(ert-deftest herdr-escape-binding-lands-on-ghostel-mode-map ()
-  "TTY Emacs eats a lone Esc before ghostel sees it, so herdr offers a
-reachable `C-c e' instead."
-  (let ((ghostel-mode-map (make-sparse-keymap)))
-    (herdr-term--install-escape-binding)
-    (should (eq 'herdr-send-escape
-                (lookup-key ghostel-mode-map (kbd "C-c e"))))))
-
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here
