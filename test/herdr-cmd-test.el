@@ -119,6 +119,16 @@ Emacs has to be moved to match or the command looks like a no-op."
 
 ;;; Panes created from Emacs must become visible
 
+(ert-deftest herdr-cmd-created-pane-id-reads-pane-or-root-pane ()
+  "pane.split answers with `pane'; tab/workspace create with `root_pane'.
+Either shape names the pane just made."
+  (should (equal "w1:p9"
+                 (herdr-cmd--created-pane-id
+                  '((type . "pane_info") (pane . ((pane_id . "w1:p9")))))))
+  (should (equal "w2:p0"
+                 (herdr-cmd--created-pane-id
+                  '((type . "tab_created") (root_pane . ((pane_id . "w2:p0"))))))))
+
 (ert-deftest herdr-cmd-created-pane-is-adopted-so-it-gets-a-buffer ()
   "Under `agent-windows' a new pane is a plain shell, which herdr will
 not attach to.  A pane the user asked herdr.el to create should still
@@ -126,12 +136,12 @@ appear, so it is adopted."
   (let ((herdr-terminal-backend 'agent-windows)
         (herdr-adopt-created-shells t)
         adopted selected)
-    (cl-letf (((symbol-function 'herdr-term-select-focused) (lambda () nil))
-              ((symbol-function 'herdr-cmd--current-pane-id) (lambda () "w1:p9"))
-              ((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p)))
+    ;; select-pane fails until adoption has run, then succeeds — the shell
+    ;; is not attachable until it wears an agent label.
+    (cl-letf (((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p)))
               ((symbol-function 'herdr-term-select-pane)
-               (lambda (p) (setq selected p) t)))
-      (herdr-cmd--follow-new-pane)
+               (lambda (p) (setq selected p) adopted)))
+      (herdr-cmd--follow-new-pane "w1:p9")
       (should (equal "w1:p9" adopted))
       (should (equal "w1:p9" selected)))))
 
@@ -139,10 +149,9 @@ appear, so it is adopted."
   (let ((herdr-terminal-backend 'agent-windows)
         (herdr-adopt-created-shells nil)
         adopted)
-    (cl-letf (((symbol-function 'herdr-term-select-focused) (lambda () nil))
-              ((symbol-function 'herdr-cmd--current-pane-id) (lambda () "w1:p9"))
+    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) nil))
               ((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p))))
-      (herdr-cmd--follow-new-pane)
+      (herdr-cmd--follow-new-pane "w1:p9")
       (should-not adopted))))
 
 (ert-deftest herdr-cmd-created-pane-is-left-alone-under-session ()
@@ -152,7 +161,7 @@ add a spurious row to herdr's own agents list."
         (herdr-adopt-created-shells t)
         adopted)
     (cl-letf (((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p))))
-      (herdr-cmd--follow-new-pane)
+      (herdr-cmd--follow-new-pane "w1:p9")
       (should-not adopted))))
 
 (ert-deftest herdr-cmd-existing-agent-pane-is-selected-not-adopted ()
@@ -160,10 +169,46 @@ add a spurious row to herdr's own agents list."
   (let ((herdr-terminal-backend 'agent-windows)
         (herdr-adopt-created-shells t)
         adopted)
-    (cl-letf (((symbol-function 'herdr-term-select-focused) (lambda () t))
+    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) t))
               ((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p))))
-      (herdr-cmd--follow-new-pane)
+      (herdr-cmd--follow-new-pane "w1:p9")
       (should-not adopted))))
+
+(ert-deftest herdr-pane-split-follows-the-pane-from-the-split-response ()
+  "The pane to show comes from `pane.split''s own answer, not a follow-up
+`pane.current': for a paneless client the latter is the server's global
+focus and can name a different pane entirely."
+  (let (followed)
+    (cl-letf (((symbol-function 'herdr-select-target-pane) (lambda (&rest _) "w1:p1"))
+              ((symbol-function 'herdr-cmd--follow-new-pane)
+               (lambda (pane) (setq followed pane))))
+      (herdr-test-with-server
+          (lambda (req)
+            (pcase (alist-get 'method req)
+              ("pane.split"
+               (cons (herdr-test-ok req '((type . "pane_info")
+                                          (pane . ((pane_id . "w1:p9"))))) nil))
+              ;; Would-be trap: consulting this instead is the old bug.
+              ("pane.current"
+               (cons (herdr-test-ok req '((type . "pane_current")
+                                          (pane . ((pane_id . "w1:pWRONG"))))) nil))
+              (_ (cons (herdr-test-ok req '((type . "ok"))) nil))))
+        (herdr-pane-split-right)
+        (should (equal "w1:p9" followed))))))
+
+(ert-deftest herdr-tab-create-follows-its-root-pane ()
+  "A new tab's pane is its `root_pane', carried in tab.create's answer."
+  (let (followed)
+    (cl-letf (((symbol-function 'herdr-cmd--follow-new-pane)
+               (lambda (pane) (setq followed pane))))
+      (herdr-test-with-server
+          (lambda (req)
+            (if (equal (alist-get 'method req) "tab.create")
+                (cons (herdr-test-ok req '((type . "tab_created")
+                                           (root_pane . ((pane_id . "w1:p5"))))) nil)
+              (cons (herdr-test-ok req '((type . "ok"))) nil)))
+        (herdr-tab-create "")
+        (should (equal "w1:p5" followed))))))
 
 ;;; Confirmations must not be left on screen
 

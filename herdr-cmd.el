@@ -88,22 +88,35 @@ for those.  Set this to nil to be told instead of followed."
   (ignore-errors
     (alist-get 'pane_id (alist-get 'pane (herdr-rpc-call "pane.current")))))
 
-(defun herdr-cmd--follow-new-pane ()
-  "Show the pane just created, adopting it first if that is what it takes.
+(defun herdr-cmd--created-pane-id (result)
+  "Return the id of the pane a create-style RESULT reports.
+`pane.split' answers with `pane'; `tab.create' and `workspace.create'
+answer with `root_pane'.  Either shape names the pane just made."
+  (alist-get 'pane_id (or (alist-get 'pane result)
+                          (alist-get 'root_pane result))))
+
+(defun herdr-cmd--follow-new-pane (pane-id)
+  "Show PANE-ID, the pane a create command just made, adopting it first
+if that is what it takes.
+
+PANE-ID comes from the creating call's own response rather than a
+follow-up `pane.current': herdr.el reaches the socket as a paneless
+client, for which `pane.current' answers with the server's global focus
+— which need not be the pane just created, so trusting it named the
+wrong pane whenever focus sat elsewhere.
 
 Under `agent-windows' a fresh pane is a plain shell and herdr will not
 attach to a pane without an agent, so nothing appears on its own."
-  (when (eq herdr-terminal-backend 'agent-windows)
-    (unless (herdr-term-select-focused)
-      (if-let* ((created herdr-adopt-created-shells)
-                (pane (herdr-cmd--current-pane-id)))
+  (when (and pane-id (eq herdr-terminal-backend 'agent-windows))
+    (unless (herdr-term-select-pane pane-id)
+      (if herdr-adopt-created-shells
           (progn
-            (herdr-adopt-shell pane)
-            (unless (herdr-term-select-pane pane)
+            (herdr-adopt-shell pane-id)
+            (unless (herdr-term-select-pane pane-id)
               ;; Reconciliation builds the buffer off the event stream, so
               ;; it may not exist yet; take the next change hook instead of
               ;; blocking here.
-              (herdr-cmd--select-pane-when-ready pane)))
+              (herdr-cmd--select-pane-when-ready pane-id)))
         (message "herdr: new pane is a plain shell, so it has no buffer under \
 agent-windows; adopt it with M-x herdr-adopt-shell (P A in the menu)")))))
 
@@ -132,20 +145,22 @@ result greppable."
 (defun herdr-pane-split-right (&optional target)
   "Split TARGET, or the focused pane, to the right."
   (interactive)
-  (herdr-rpc-call "pane.split"
-                  `((direction . "right")
-                    (target_pane_id . ,(or target (herdr-select-target-pane)))
-                    (focus . t)))
-  (herdr-cmd--follow-new-pane))
+  (herdr-cmd--follow-new-pane
+   (herdr-cmd--created-pane-id
+    (herdr-rpc-call "pane.split"
+                    `((direction . "right")
+                      (target_pane_id . ,(or target (herdr-select-target-pane)))
+                      (focus . t))))))
 
 (defun herdr-pane-split-down (&optional target)
   "Split TARGET, or the focused pane, downward."
   (interactive)
-  (herdr-rpc-call "pane.split"
-                  `((direction . "down")
-                    (target_pane_id . ,(or target (herdr-select-target-pane)))
-                    (focus . t)))
-  (herdr-cmd--follow-new-pane))
+  (herdr-cmd--follow-new-pane
+   (herdr-cmd--created-pane-id
+    (herdr-rpc-call "pane.split"
+                    `((direction . "down")
+                      (target_pane_id . ,(or target (herdr-select-target-pane)))
+                      (focus . t))))))
 
 (defun herdr-pane-close (&optional pane-id)
   "Close PANE-ID, or the pane being acted on."
@@ -310,10 +325,11 @@ TIMEOUT is in seconds.  PATTERN is treated as a regular expression."
 (defun herdr-tab-create (&optional label)
   "Create a tab called LABEL."
   (interactive (list (read-string "Tab label (optional): ")))
-  (herdr-rpc-call "tab.create"
-                  `((label . ,(unless (string-empty-p (or label "")) label))
-                    (focus . t)))
-  (herdr-cmd--follow-new-pane))
+  (herdr-cmd--follow-new-pane
+   (herdr-cmd--created-pane-id
+    (herdr-rpc-call "tab.create"
+                    `((label . ,(unless (string-empty-p (or label "")) label))
+                      (focus . t))))))
 
 (defun herdr-tab-close (&optional tab-id)
   "Close TAB-ID, prompting when not given."
@@ -341,12 +357,13 @@ TIMEOUT is in seconds.  PATTERN is treated as a regular expression."
 (defun herdr-workspace-create (cwd &optional label)
   "Create a workspace rooted at CWD called LABEL."
   (interactive (list (read-directory-name "Workspace directory: ")))
-  (herdr-rpc-call "workspace.create"
-                  `((cwd . ,(expand-file-name cwd))
-                    (label . ,(or label (file-name-nondirectory
-                                         (directory-file-name cwd))))
-                    (focus . t)))
-  (herdr-cmd--follow-new-pane))
+  (herdr-cmd--follow-new-pane
+   (herdr-cmd--created-pane-id
+    (herdr-rpc-call "workspace.create"
+                    `((cwd . ,(expand-file-name cwd))
+                      (label . ,(or label (file-name-nondirectory
+                                           (directory-file-name cwd))))
+                      (focus . t))))))
 
 (defun herdr-workspace-close (&optional workspace-id)
   "Close WORKSPACE-ID, prompting when not given."
@@ -479,12 +496,11 @@ purpose: the interactive command would adopt the new pane as a shell and
 flash its buffer, but `agent.start' is about to turn it into an agent, so
 that buffer would only be replaced.  Starting the agent and then focusing
 it shows the pane once, correctly labelled."
-  (let ((result (herdr-rpc-call
-                 "pane.split"
-                 `((direction . "right")
-                   (target_pane_id . ,(herdr-select-current-target))
-                   (focus . t)))))
-    (alist-get 'pane_id (alist-get 'pane result))))
+  (herdr-cmd--created-pane-id
+   (herdr-rpc-call "pane.split"
+                   `((direction . "right")
+                     (target_pane_id . ,(herdr-select-current-target))
+                     (focus . t)))))
 
 (defun herdr-agent-start (name kind &optional pane-id)
   "Start agent NAME of KIND in PANE-ID.
