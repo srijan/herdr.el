@@ -123,6 +123,68 @@
     (let ((s (herdr-state-reduce s "workspace_closed" '((workspace_id . "w2")))))
       (should (= 1 (length (herdr-state-workspaces s)))))))
 
+(defun herdr-state-test--ws-seed ()
+  "State with four workspaces w1..w4 in order, for reorder tests."
+  (herdr-state-from-snapshot
+   `((focused_workspace_id . "w1")
+     (panes . ())
+     (tabs . ())
+     (workspaces . (((workspace_id . "w1") (label . "one"))
+                    ((workspace_id . "w2") (label . "two"))
+                    ((workspace_id . "w3") (label . "three"))
+                    ((workspace_id . "w4") (label . "four")))))))
+
+(defun herdr-state-test--ws-order (state)
+  "Return STATE's workspace ids in list order."
+  (mapcar (lambda (w) (alist-get 'workspace_id w))
+          (herdr-state-workspaces state)))
+
+(ert-deftest herdr-state-reduce-workspace-reordered-splices-a-block ()
+  "A worktree-group move relocates its block ahead of the anchor.
+The payload arrives with vector fields, as `json-parse-string' decodes
+arrays."
+  (let ((next (herdr-state-reduce
+               (herdr-state-test--ws-seed) "workspace_reordered"
+               `((workspace_ids . ["w3" "w4"])
+                 (before_workspace_id . "w2")
+                 (workspaces . [((workspace_id . "w3") (label . "three"))
+                                ((workspace_id . "w4") (label . "four"))])))))
+    (should (equal '("w1" "w3" "w4" "w2")
+                   (herdr-state-test--ws-order next)))))
+
+(ert-deftest herdr-state-reduce-workspace-reordered-appends-without-an-anchor ()
+  "A nil `before_workspace_id' drops the block at the end."
+  (let ((next (herdr-state-reduce
+               (herdr-state-test--ws-seed) "workspace_reordered"
+               `((workspace_ids . ["w1" "w2"])
+                 (before_workspace_id . nil)
+                 (workspaces . [((workspace_id . "w1") (label . "one"))
+                                ((workspace_id . "w2") (label . "two"))])))))
+    (should (equal '("w3" "w4" "w1" "w2")
+                   (herdr-state-test--ws-order next)))))
+
+(ert-deftest herdr-state-reduce-workspace-reordered-folds-updated-info ()
+  "The WorkspaceInfo the event carries refreshes fields across the move."
+  (let* ((next (herdr-state-reduce
+                (herdr-state-test--ws-seed) "workspace_reordered"
+                `((workspace_ids . ["w3"])
+                  (before_workspace_id . "w1")
+                  (workspaces . [((workspace_id . "w3") (label . "renamed"))]))))
+         (w3 (seq-find (lambda (w) (equal "w3" (alist-get 'workspace_id w)))
+                       (herdr-state-workspaces next))))
+    (should (equal '("w3" "w1" "w2" "w4") (herdr-state-test--ws-order next)))
+    (should (equal "renamed" (alist-get 'label w3)))))
+
+(ert-deftest herdr-state-reduce-workspace-reordered-is-pure ()
+  "Reordering must not mutate the state it was handed."
+  (let* ((state (herdr-state-test--ws-seed))
+         (_ (herdr-state-reduce
+             state "workspace_reordered"
+             `((workspace_ids . ["w4"])
+               (before_workspace_id . "w1")
+               (workspaces . [((workspace_id . "w4") (label . "four"))])))))
+    (should (equal '("w1" "w2" "w3" "w4") (herdr-state-test--ws-order state)))))
+
 (ert-deftest herdr-state-reduce-ignores-layout-and-unknown-kinds ()
   (let* ((state (herdr-state-test--seed))
          (a (herdr-state-reduce state "layout_updated" '((layout . ()))))

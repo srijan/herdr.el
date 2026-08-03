@@ -73,6 +73,16 @@
   (should (equal "flat" (herdr-cmd-read-text '((text . "flat")))))
   (should (equal "" (herdr-cmd-read-text '((type . "pane_read"))))))
 
+(ert-deftest herdr-cmd-read-truncated-reads-the-envelope-flag ()
+  "herdr 0.8.0 flags dropped rows as `truncated' on the read envelope."
+  (should (herdr-cmd-read-truncated-p
+           '((type . "pane_read") (read . ((text . "x") (truncated . t))))))
+  ;; Tolerate the flag arriving flat, mirroring `herdr-cmd-read-text'.
+  (should (herdr-cmd-read-truncated-p '((truncated . t))))
+  (should-not (herdr-cmd-read-truncated-p '((read . ((text . "x"))))))
+  ;; JSON `false' decodes to nil, so an untruncated read must read as nil.
+  (should-not (herdr-cmd-read-truncated-p '((read . ((truncated . nil)))))))
+
 ;;; Focus must move Emacs, not just the server
 
 (ert-deftest herdr-pane-focus-selects-the-buffer-for-that-pane ()

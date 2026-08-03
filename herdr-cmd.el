@@ -259,13 +259,26 @@ be unwrapped."
       (alist-get 'text result)
       ""))
 
+(defun herdr-cmd-read-truncated-p (result)
+  "Return non-nil when read RESULT reports older rows were omitted.
+herdr sets `truncated' on the read envelope (or, defensively, the
+top-level result) when the requested window dropped earlier terminal
+rows.  JSON `false' and `null' both decode to nil, so a plain non-nil
+test is enough."
+  (or (alist-get 'truncated (alist-get 'read result))
+      (alist-get 'truncated result)))
+
 (defun herdr-cmd--display-read (name result)
   "Show READ RESULT in a buffer called NAME and return that buffer."
   (let ((buffer (get-buffer-create name))
-        (text (herdr-cmd-read-text result)))
+        (text (herdr-cmd-read-text result))
+        (truncated (herdr-cmd-read-truncated-p result)))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
         (erase-buffer)
+        (when truncated
+          (insert (propertize "⋯ older rows omitted (read truncated) ⋯\n"
+                              'face 'font-lock-comment-face)))
         (insert text)
         (ansi-color-apply-on-region (point-min) (point-max))
         (goto-char (point-max)))
@@ -441,8 +454,9 @@ name to a worktree with its own herdr workspace."
 ;;; Agents
 
 (defcustom herdr-agent-kinds
-  '("pi" "omp" "claude" "codex" "copilot" "devin" "droid"
-    "kimi" "opencode" "kilo" "hermes" "qodercli" "cursor" "mastracode")
+  '("pi" "claude" "codex" "gemini" "cursor" "devin" "agy" "cline"
+    "omp" "mastracode" "opencode" "copilot" "kimi" "kiro" "droid"
+    "amp" "grok" "hermes" "kilo" "qodercli" "maki")
   "Known agent kinds offered when starting an agent.
 Completion candidates only, not a closed set: herdr types
 `agent.start''s `kind' parameter as a free string rather than an enum,

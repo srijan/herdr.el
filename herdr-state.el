@@ -53,8 +53,8 @@ is \"resync\" and DATA is nil.")
 
 (defconst herdr-state-global-subscriptions
   '("workspace.created" "workspace.updated" "workspace.metadata_updated"
-    "workspace.renamed" "workspace.moved" "workspace.closed"
-    "workspace.focused"
+    "workspace.renamed" "workspace.moved" "workspace.reordered"
+    "workspace.closed" "workspace.focused"
     "worktree.created" "worktree.opened" "worktree.removed"
     "tab.created" "tab.closed" "tab.renamed" "tab.moved" "tab.focused"
     "pane.created" "pane.closed" "pane.updated" "pane.focused"
@@ -153,6 +153,29 @@ matches, NEW is appended."
   "Return ITEMS without the entry whose KEY is ID."
   (seq-remove (lambda (item) (equal id (alist-get key item))) items))
 
+(defun herdr-state--reorder-block (items key ids before)
+  "Return ITEMS with the entries named in IDS moved as one block.
+KEY is the alist key holding each item's id.  IDS lists the moved
+entries in their new relative order; they are spliced in ahead of the
+entry whose id is BEFORE, or appended when BEFORE is nil or unknown.
+Entries not in IDS keep their relative order, and ids with no matching
+entry are skipped.  Like `herdr-state--upsert', ITEMS is not mutated."
+  (let ((moved (delq nil
+                     (mapcar (lambda (id)
+                               (seq-find (lambda (item)
+                                           (equal id (alist-get key item)))
+                                         items))
+                             ids)))
+        (rest (seq-remove (lambda (item) (member (alist-get key item) ids))
+                          items))
+        (result nil)
+        (spliced nil))
+    (dolist (item rest)
+      (when (and before (not spliced) (equal before (alist-get key item)))
+        (setq result (append result moved) spliced t))
+      (setq result (append result (list item))))
+    (if spliced result (append result moved))))
+
 (defun herdr-state--merge-pane (state pane-id changes)
   "Return STATE with CHANGES merged into the pane named PANE-ID.
 Absent panes are ignored.  Keys not present in CHANGES are left alone,
@@ -229,6 +252,26 @@ events use dots, so both spellings appear here deliberately."
       ("workspace_focused"
        (setf (herdr-state-focused-workspace-id next)
              (alist-get 'workspace_id data))
+       next)
+
+      ("workspace_reordered"
+       ;; A worktree-group move (herdr 0.8.0).  `workspace_ids' is the
+       ;; moved block in its new order, spliced before
+       ;; `before_workspace_id' (or the end when nil).  `workspaces'
+       ;; carries fresh WorkspaceInfo for the block, folded in first so
+       ;; labels and counts stay current across the move.  Both arrive as
+       ;; vectors, so coerce to lists.
+       (dolist (workspace (append (alist-get 'workspaces data) nil))
+         (setf (herdr-state-workspaces next)
+               (herdr-state--upsert (herdr-state-workspaces next)
+                                    'workspace_id
+                                    (alist-get 'workspace_id workspace)
+                                    workspace)))
+       (setf (herdr-state-workspaces next)
+             (herdr-state--reorder-block
+              (herdr-state-workspaces next) 'workspace_id
+              (append (alist-get 'workspace_ids data) nil)
+              (alist-get 'before_workspace_id data)))
        next)
 
       ((or "tab_created" "tab_renamed" "tab_moved")
