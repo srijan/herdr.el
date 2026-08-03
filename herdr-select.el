@@ -28,6 +28,12 @@
 (require 'herdr-rpc)
 (require 'herdr-term)
 
+(defconst herdr-select-create-new-shell "＋ new shell pane"
+  "Sentinel entry offered by `herdr-select-available-shell'.
+Choosing it means \"make a fresh shell for me\" rather than naming an
+existing pane; `herdr-agent-start' turns that into a split.  Its text is
+deliberately unlike a pane id so it cannot be confused for one.")
+
 (defun herdr-select--status-glyph (status)
   "Return a short glyph for agent STATUS."
   (pcase status
@@ -39,19 +45,21 @@
 
 (defun herdr-select--annotate-pane (pane-id)
   "Return the annotation string for PANE-ID."
-  (let ((pane (herdr-state-pane (herdr-state-current) pane-id)))
-    (if (not pane)
-        ""
-      (let ((agent (alist-get 'agent pane))
-            (status (alist-get 'agent_status pane))
-            (title (alist-get 'terminal_title_stripped pane))
-            (cwd (alist-get 'cwd pane)))
-        (concat "  "
-                (if agent
-                    (format "%s %-8s" (herdr-select--status-glyph status) agent)
-                  (format "%-10s" "shell"))
-                " " (or title "")
-                (if cwd (format "  %s" (abbreviate-file-name cwd)) ""))))))
+  (if (equal pane-id herdr-select-create-new-shell)
+      "  split the current pane and start the agent in it"
+    (let ((pane (herdr-state-pane (herdr-state-current) pane-id)))
+      (if (not pane)
+          ""
+        (let ((agent (alist-get 'agent pane))
+              (status (alist-get 'agent_status pane))
+              (title (alist-get 'terminal_title_stripped pane))
+              (cwd (alist-get 'cwd pane)))
+          (concat "  "
+                  (if agent
+                      (format "%s %-8s" (herdr-select--status-glyph status) agent)
+                    (format "%-10s" "shell"))
+                  " " (or title "")
+                  (if cwd (format "  %s" (abbreviate-file-name cwd)) "")))))))
 
 (defun herdr-select--annotate-workspace (workspace-id)
   "Return the annotation string for WORKSPACE-ID."
@@ -118,20 +126,21 @@ shell\"."
                       (herdr-state-panes state))))
 
 (defun herdr-select-available-shell (&optional prompt)
-  "Read the id of a pane `agent.start' can start an agent in.
-Only panes not already running an agent are offered, so the choice
-cannot land on a busy pane.  Signals a `user-error' when there are none:
-starting an agent needs a shell sitting idle, so split a fresh one with
-`herdr-pane-split-right' first, then try again."
+  "Read where `agent.start' should run: an idle pane, or a fresh shell.
+Panes already running an agent are omitted, so the choice cannot land on
+a busy pane.  A trailing `herdr-select-create-new-shell' entry is always
+offered, so the picker never dead-ends even when every pane is busy —
+where the old behaviour was to error and send you off to split by hand.
+
+Returns a pane id, or the symbol `:create-new' when that entry is chosen;
+the caller splits a pane for it."
   (herdr-state-refresh)
-  (let ((candidates (herdr-select--available-shell-ids (herdr-state-current))))
-    (unless candidates
-      (user-error
-       "herdr: no available shell pane; split a new shell (%s) first"
-       "herdr-pane-split-right"))
-    (herdr-select--read (or prompt "Start agent in shell pane: ")
-                        candidates
-                        'herdr-pane #'herdr-select--annotate-pane)))
+  (let* ((ids (herdr-select--available-shell-ids (herdr-state-current)))
+         (choice (herdr-select--read
+                  (or prompt "Start agent in shell pane: ")
+                  (append ids (list herdr-select-create-new-shell))
+                  'herdr-pane #'herdr-select--annotate-pane)))
+    (if (equal choice herdr-select-create-new-shell) :create-new choice)))
 
 (defun herdr-select-workspace (&optional prompt)
   "Read a workspace id, defaulting the prompt to PROMPT."

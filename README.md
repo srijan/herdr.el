@@ -84,6 +84,11 @@ It defaults to reusing the current window and leaving your splits alone. herdr's
 for its 26-column sidebar, so under `session` you may prefer
 `'(display-buffer-full-frame)` — which does delete your other windows — or a side window.
 
+The TUI is mouse-first — click panes, drag borders, right-click menus. ghostel forwards those
+clicks, but only under **GUI Emacs**: a TTY frame (`emacs -nw`) has no mouse events to forward, so
+there drive the TUI by keyboard (its `ctrl+b` prefix) or use `agent-windows`, which is
+keyboard-first and needs no TUI at all.
+
 ### `agent-windows`
 
 One ghostel buffer per agent — `*herdr: claude w1:p1*` — each running `herdr agent attach`.
@@ -178,6 +183,9 @@ there is no generated 89-entry menu.
 
 Worth knowing about:
 
+- **`herdr-agent-start`** — starts an agent in an idle pane. The picker also offers a trailing
+  **＋ new shell pane** entry that splits the current pane and starts there, so a session with no
+  free pane is never a dead end.
 - **`herdr-worktree-create`** — herdr has native git-worktree support, so one command takes a
   branch name to a worktree with its own herdr workspace.
 - **`herdr-pane-read`** / **`herdr-agent-read`** — terminal output into a real Emacs buffer.

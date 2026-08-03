@@ -204,14 +204,59 @@ follow Emacs."
                      (herdr-select--available-shell-ids
                       (herdr-state-current)))))))
 
-(ert-deftest herdr-select-available-shell-errors-when-everything-is-busy ()
-  "With no idle shell to take over there is nothing to pick, so say so
-rather than firing a request the server will reject."
+;;; A "create new" entry lets agent.start make its own shell
+
+(ert-deftest herdr-select-available-shell-offers-create-new-last ()
+  "The picker always ends with a create-new entry, so a fresh shell can
+be made without leaving the command."
+  (let (offered)
+    (herdr-select-test-with-state
+        '(((pane_id . "w1:p2") (agent . nil))
+          ((pane_id . "w1:p3")))
+      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates &rest _)
+                   (setq offered candidates) (car candidates))))
+        (herdr-select-available-shell)
+        (should (member herdr-select-create-new-shell offered))
+        (should (equal herdr-select-create-new-shell (car (last offered))))))))
+
+(ert-deftest herdr-select-available-shell-returns-create-new-when-chosen ()
+  "Choosing create-new yields a marker the caller acts on, not a pane id."
   (herdr-select-test-with-state
-      '(((pane_id . "w1:p1") (agent . "claude"))
-        ((pane_id . "w1:p2") (agent . "codex")))
-    (cl-letf (((symbol-function 'herdr-state-refresh) (lambda (&rest _) nil)))
-      (should-error (herdr-select-available-shell) :type 'user-error))))
+      '(((pane_id . "w1:p2") (agent . nil)))
+    (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+              ((symbol-function 'herdr-select--read)
+               (lambda (&rest _) herdr-select-create-new-shell)))
+      (should (eq :create-new (herdr-select-available-shell))))))
+
+(ert-deftest herdr-select-available-shell-returns-a-chosen-pane-id ()
+  "Choosing a real pane returns its id, exactly as before."
+  (herdr-select-test-with-state
+      '(((pane_id . "w1:p2") (agent . nil)))
+    (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+              ((symbol-function 'herdr-select--read)
+               (lambda (&rest _) "w1:p2")))
+      (should (equal "w1:p2" (herdr-select-available-shell))))))
+
+(ert-deftest herdr-select-available-shell-offers-create-new-when-none-free ()
+  "With every pane busy the create-new entry is the only choice, so the
+command no longer dead-ends with an error."
+  (let (offered)
+    (herdr-select-test-with-state
+        '(((pane_id . "w1:p1") (agent . "claude"))
+          ((pane_id . "w1:p2") (agent . "codex")))
+      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates &rest _)
+                   (setq offered candidates) (car candidates))))
+        (herdr-select-available-shell)
+        (should (equal (list herdr-select-create-new-shell) offered))))))
+
+(ert-deftest herdr-select-annotates-the-create-new-entry ()
+  "The create-new entry explains what picking it will do."
+  (should (string-match-p
+           "split" (herdr-select--annotate-pane herdr-select-create-new-shell))))
 
 (provide 'herdr-select-test)
 ;;; herdr-select-test.el ends here

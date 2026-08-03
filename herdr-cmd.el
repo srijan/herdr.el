@@ -471,16 +471,34 @@ about.  TIMEOUT is in seconds."
                   (or (alist-get 'agent_status result) "done")))))
     (message "herdr: watching agent %s" agent)))
 
+(defun herdr-cmd--split-new-shell ()
+  "Split the current pane to the right and return the new pane's id.
+
+Uses the raw `pane.split' rather than `herdr-pane-split-right' on
+purpose: the interactive command would adopt the new pane as a shell and
+flash its buffer, but `agent.start' is about to turn it into an agent, so
+that buffer would only be replaced.  Starting the agent and then focusing
+it shows the pane once, correctly labelled."
+  (let ((result (herdr-rpc-call
+                 "pane.split"
+                 `((direction . "right")
+                   (target_pane_id . ,(herdr-select-current-target))
+                   (focus . t)))))
+    (alist-get 'pane_id (alist-get 'pane result))))
+
 (defun herdr-agent-start (name kind &optional pane-id)
   "Start agent NAME of KIND in PANE-ID.
 Interactively, PANE-ID is chosen from the panes not already running an
 agent: `agent.start' can only take over a shell sitting idle, so
-offering a busy pane would just earn a server rejection.  When every
-pane is occupied there is nothing to pick, so split a new shell first."
+offering a busy pane would just earn a server rejection.  The picker also
+offers a create-new entry that splits a fresh shell to start in, so a
+full session is no longer a dead end."
   (interactive
    (list (read-string "Agent name: ")
          (completing-read "Agent kind: " herdr-agent-kinds nil nil)))
   (let ((pane (or pane-id (herdr-select-available-shell))))
+    (when (eq pane :create-new)
+      (setq pane (herdr-cmd--split-new-shell)))
     (herdr-rpc-call "agent.start"
                     `((pane_id . ,pane) (name . ,name) (kind . ,kind)))
     ;; Surface the agent that was just started.  Focusing is server-side,

@@ -337,5 +337,34 @@ show it yet the command schedules a retry rather than giving up."
         (herdr-agent-start "web" "claude" "w1:p1")
         (should (equal "w1:p1" deferred))))))
 
+(ert-deftest herdr-agent-start-create-new-splits-then-starts-on-the-new-pane ()
+  "Picking create-new splits the current pane and starts the agent in the
+pane the split returns, then shows it — no detour through a manual split."
+  (let (split-target started-in selected)
+    (cl-letf (((symbol-function 'herdr-select-available-shell)
+               (lambda (&rest _) :create-new))
+              ((symbol-function 'herdr-select-current-target)
+               (lambda (&rest _) "w1:p1"))
+              ((symbol-function 'herdr-term-select-pane)
+               (lambda (pane) (setq selected pane) t)))
+      (herdr-test-with-server
+          (lambda (req)
+            (let ((method (alist-get 'method req))
+                  (params (alist-get 'params req)))
+              (cond
+               ((equal method "pane.split")
+                (setq split-target (alist-get 'target_pane_id params))
+                (cons (herdr-test-ok req '((type . "pane_info")
+                                           (pane . ((pane_id . "w1:p9")))))
+                      nil))
+               ((equal method "agent.start")
+                (setq started-in (alist-get 'pane_id params))
+                (cons (herdr-test-ok req '((type . "ok"))) nil))
+               (t (cons (herdr-test-ok req '((type . "ok"))) nil)))))
+        (should (equal "w1:p9" (herdr-agent-start "web" "claude")))
+        (should (equal "w1:p1" split-target))
+        (should (equal "w1:p9" started-in))
+        (should (equal "w1:p9" selected))))))
+
 (provide 'herdr-cmd-test)
 ;;; herdr-cmd-test.el ends here
