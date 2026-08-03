@@ -42,7 +42,7 @@ ideas. Asserted by tests, not just by review.
 ## Requirements
 
 - Emacs 28.1+
-- [herdr](https://herdr.dev) 0.7.5 (protocol 17)
+- [herdr](https://herdr.dev) 0.8.0 (protocol 19)
 - `ghostel`, `transient`
 
 Optional, used when present, never required: `marginalia`, `embark`, `consult`, `alert`.
@@ -154,7 +154,7 @@ non-agent panes at all — so there is no "plain shell" row for it to be instead
 
 ## What was measured
 
-The design rests on behaviour probed from a live herdr 0.7.5 rather than from documentation.
+The design rests on behaviour probed from a live herdr 0.8.0 rather than from documentation.
 Recorded here because most of it is not written down anywhere else.
 
 | Behaviour | Finding |
