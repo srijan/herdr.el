@@ -45,6 +45,8 @@
 
 (declare-function ghostel-exec "ghostel" (buffer program &optional args))
 (declare-function ghostel-mode "ghostel" ())
+(declare-function ghostel-send-key "ghostel" (key-name &optional mods))
+(defvar ghostel-mode-map)
 
 (defcustom herdr-terminal-backend 'session
   "How herdr's terminals are hosted inside Emacs.
@@ -454,6 +456,36 @@ deliberately instead, through the menu, the agents list, or
      (dolist (cell (herdr-term--live-agent-buffers))
        (kill-buffer (cdr cell)))
      (setq herdr-term--agent-buffers nil))))
+
+;;; Sending Escape to an agent under TTY Emacs
+
+;; An agent like Claude Code enables the Kitty keyboard protocol on a
+;; ghostty-class terminal, after which it expects Escape as `\e[27u', not
+;; a bare `\e'.  Under GUI Emacs ghostel forwards the `<escape>' key
+;; through its mode-aware encoder and this is handled for free.  Under a
+;; TTY, though, Emacs claims a lone Esc as the Meta prefix and it never
+;; reaches ghostel at all — so the modal never closes.  There is nothing
+;; herdr can do to reclaim the bare Esc key without breaking Meta, so it
+;; offers a reachable `C-c e' that sends a properly encoded Escape.
+
+(defun herdr-send-escape ()
+  "Send an Escape keypress to the terminal in the current buffer.
+Routed through ghostel's key encoder, so it is `\\e[27u' when the agent
+has the Kitty keyboard protocol on and a bare `\\e' otherwise.  Meant for
+TTY Emacs, where a lone Esc is swallowed as the Meta prefix before
+ghostel can forward it; under GUI Emacs the Esc key already works."
+  (interactive)
+  (ghostel-send-key "escape"))
+
+(defun herdr-term--install-escape-binding ()
+  "Bind `C-c e' to `herdr-send-escape' in `ghostel-mode-map'.
+Under the C-c prefix because that is all Emacs still receives in
+ghostel's semi-char mode; the bare Esc key is exactly what a TTY cannot
+deliver."
+  (define-key ghostel-mode-map (kbd "C-c e") #'herdr-send-escape))
+
+(with-eval-after-load 'ghostel
+  (herdr-term--install-escape-binding))
 
 (provide 'herdr-term)
 ;;; herdr-term.el ends here
