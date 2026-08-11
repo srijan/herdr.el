@@ -178,10 +178,13 @@ New helper in `herdr-state`:
 herdr-state-workspace-directory (state workspace-id) => directory or nil
 ```
 
-Returns the `cwd` shared by every pane in the workspace. When panes disagree — one has `cd`-ed
-elsewhere — it returns the cwd of the workspace's lowest-numbered pane, which is the one the
-workspace was created in. Returns nil when no pane reports a cwd. Used by both the dispatcher and
-the fixed `herdr-project`.
+Returns the `cwd` of the workspace's first pane that reports one, and nil when none does.
+
+"First" means cache order, which is snapshot order with later arrivals appended
+(`herdr-state--upsert`) — so it is the oldest pane herdr told us about, the one the workspace was
+created in. An earlier draft said "lowest-numbered pane"; `PaneInfo` has no `number` field, and
+deriving one from the `w1:p1` id format would break at `p10`. Used by both the dispatcher and the
+fixed `herdr-project`.
 
 ### Section types
 
