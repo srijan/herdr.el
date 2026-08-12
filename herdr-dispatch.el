@@ -195,6 +195,35 @@ workspace."
     (herdr-dispatch-refresh))
   (call-interactively #'magit-section-toggle))
 
+(defun herdr-dispatch--worktree-at-point ()
+  "Return the cached WorktreeInfo for the worktree line at point.
+
+A worktree section carries only its path as its value; the branch, and
+whether herdr has already opened it as a workspace, live in the cached
+record.  Every worktree verb therefore has to resolve the row back to
+that record, and resolving it in one place is what stops two verbs on the
+same row from disagreeing about which worktree it names."
+  (let ((path (herdr-dispatch--require 'herdr-worktree "a worktree")))
+    (seq-find (lambda (candidate)
+                (equal path (alist-get 'path candidate)))
+              (apply #'append (mapcar #'cdr herdr-dispatch--worktrees)))))
+
+(defun herdr-dispatch--worktree-workspace ()
+  "Return the id of the workspace the worktree at point is open as.
+
+`worktree.remove\\=' and `workspace.focus\\=' both address a workspace, and a
+worktree that herdr has not opened as one has no such id.  The enclosing
+workspace is not a substitute: it is the repository whose worktree list
+this row was expanded from, a different object entirely — reaching for it
+is how `k\\=' came to remove the very workspace point was standing in.  So
+this refuses rather than guesses."
+  (let ((worktree (herdr-dispatch--worktree-at-point)))
+    (or (alist-get 'open_workspace_id worktree)
+        (user-error "herdr: worktree %s is not open as a workspace (RET opens it)"
+                    (or (alist-get 'branch worktree)
+                        (alist-get 'path worktree)
+                        "at point")))))
+
 (herdr-dispatch-defverb herdr-dispatch-open-worktree ()
   "Open the worktree at point as a workspace.
 
@@ -203,12 +232,8 @@ which derives its `cwd\\=' from the calling buffer's `default-directory\\=' —
 here that would be `*herdr-agents*\\=', not the worktree's own workspace,
 so the request would resolve against whatever directory the dispatcher
 buffer happened to hold rather than the workspace at point."
-  (let* ((path (herdr-dispatch--require 'herdr-worktree "a worktree"))
-         (workspace (herdr-dispatch--require 'herdr-workspace "a workspace"))
-         (worktree (seq-find (lambda (candidate)
-                               (equal path (alist-get 'path candidate)))
-                             (apply #'append
-                                    (mapcar #'cdr herdr-dispatch--worktrees)))))
+  (let* ((worktree (herdr-dispatch--worktree-at-point))
+         (workspace (herdr-dispatch--require 'herdr-workspace "a workspace")))
     (if-let* ((open (alist-get 'open_workspace_id worktree)))
         (herdr-workspace-focus open)
       (let ((dir (herdr-state-workspace-directory (herdr-state-current)
@@ -247,8 +272,13 @@ server\\='s choice rather than ours."
                    "recent_unwrapped"))
 
 (herdr-dispatch-defverb herdr-dispatch-focus ()
-  "Focus the thing at point server-side, without moving Emacs."
+  "Focus the thing at point server-side, without moving Emacs.
+A worktree is focused as the workspace herdr has opened it as; a worktree
+that is not open as one has nothing to focus and says so."
   (cond
+   ((herdr-dispatch--value-at-point 'herdr-worktree)
+    (herdr-rpc-call "workspace.focus"
+                    `((workspace_id . ,(herdr-dispatch--worktree-workspace)))))
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-rpc-call "pane.focus"
                     `((pane_id . ,(herdr-dispatch--value-at-point 'herdr-pane)))))
@@ -267,8 +297,13 @@ server\\='s choice rather than ours."
   "Rename the thing at point.
 Most specific section wins: a pane line inside a workspace renames the
 pane, which is the thing you are looking at, rather than its tab or
-workspace."
+workspace.  A worktree has no rename operation at all, so it is refused
+rather than allowed to fall through to the repository workspace whose
+list it was expanded from."
   (cond
+   ((herdr-dispatch--value-at-point 'herdr-worktree)
+    (user-error
+     "herdr: a worktree cannot be renamed; rename its branch with git"))
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-rename (read-string "Pane label: ")
                        (herdr-dispatch--value-at-point 'herdr-pane)))
@@ -282,13 +317,18 @@ workspace."
 
 (herdr-dispatch-defverb herdr-dispatch-close ()
   "Close or remove the thing at point.
-The underlying commands — `herdr-pane-close\\=', `herdr-workspace-close\\='
-and `herdr-worktree-remove\\=' — already prompt for confirmation, so this
-adds no second prompt.  `herdr-tab-close\\=' does not prompt; that
-asymmetry is left as it is rather than fixed here."
+The underlying commands — `herdr-pane-close\\=', `herdr-tab-close\\=',
+`herdr-workspace-close\\=' and `herdr-worktree-remove\\=' — all prompt for
+confirmation, so this adds no second prompt.
+
+A worktree is removed as the workspace herdr has opened it as, which is
+the only handle `worktree.remove\\=' has on it.  Not the enclosing
+workspace: that is the repository whose worktree list this row was
+expanded from, and removing it would destroy something other than the row
+under point."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-worktree)
-    (herdr-worktree-remove (herdr-dispatch--value-at-point 'herdr-workspace)))
+    (herdr-worktree-remove (herdr-dispatch--worktree-workspace)))
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-close (herdr-dispatch--value-at-point 'herdr-pane)))
    ((herdr-dispatch--value-at-point 'herdr-tab)

@@ -383,6 +383,36 @@ be implemented in terms of them."
                                      ((workspace_id . "w2"))))
                    (herdr-dispatch-test--focus-from "api")))))
 
+(ert-deftest herdr-dispatch-focus-on-a-worktree-focuses-its-own-workspace ()
+  "A worktree row has no `cond\\=' branch of its own unless one is written,
+and without it `f\\=' falls through to the workspace enclosing the row —
+silently focusing the repository the worktree list was expanded from
+rather than the worktree under point.  The fixture separates the two:
+the row sits inside `w1\\=' and is open as `w2\\='."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((herdr-dispatch--worktrees
+           '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (branch . "fix")
+                       (open_workspace_id . "w2")))))))
+      (should (equal '((herdr-rpc-call "workspace.focus"
+                                       ((workspace_id . "w2"))))
+                     (herdr-dispatch-test--focus-from "open as w2"))))))
+
+(ert-deftest herdr-dispatch-focus-refuses-a-worktree-that-is-not-open ()
+  "There is no workspace to focus, and the enclosing one is the wrong
+answer rather than an approximate one."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((herdr-dispatch--worktrees
+           '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (branch . "fix")
+                       (open_workspace_id . nil)))))))
+      (search-forward "open as w2")
+      (should (equal nil
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-rpc-call herdr-workspace-focus)
+                       (should-error (herdr-dispatch-focus)
+                                     :type 'user-error)))))))
+
 (ert-deftest herdr-dispatch-verbs-report-rather-than-raise ()
   "Every verb goes through the protection, not just the ones tested above."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
@@ -616,6 +646,20 @@ first."
                                             herdr-workspace-rename)
                        (herdr-dispatch-rename)))))))
 
+(ert-deftest herdr-dispatch-rename-refuses-a-worktree ()
+  "There is no rename-a-worktree operation, so `R\\=' on a worktree row must
+refuse rather than fall through to the workspace enclosing it — which
+would silently rename the repository the worktree list was expanded
+from, a different object under a name the user never aimed at."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "open as w2")
+    (should (equal nil
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-rename herdr-tab-rename
+                                          herdr-workspace-rename)
+                     (should-error (herdr-dispatch-rename)
+                                   :type 'user-error))))))
+
 (ert-deftest herdr-dispatch-rename-refuses-a-line-with-nothing-on-it ()
   (herdr-dispatch-test-with-buffer nil
     (should-error (herdr-dispatch-rename) :type 'user-error)))
@@ -649,19 +693,48 @@ first."
                                          herdr-worktree-remove)
                      (herdr-dispatch-close))))))
 
-(ert-deftest herdr-dispatch-close-on-a-worktree-removes-its-workspace ()
-  "A worktree line's close must reach `herdr-worktree-remove\\=' with the
-enclosing workspace id, not `herdr-workspace-close\\=' on the same id and
-not any pane close at all — the worktree line sits inside `w1\\='s
-worktrees section, so a `cond\\=' that checked the workspace branch first
-would still produce a plausible-looking single call."
+(ert-deftest herdr-dispatch-close-on-a-worktree-removes-that-worktree ()
+  "A worktree line's close must remove the worktree under point — the
+workspace it is open as — and not the workspace enclosing the row.
+
+Those are different objects and the difference is destructive.  The
+enclosing workspace is the repository whose worktree list was expanded;
+when that repository is itself a worktree, its section lists its
+siblings, so removing the enclosing workspace destroys the worktree you
+are standing in rather than the sibling you aimed at.
+
+The fixture is built so a resolver that reaches for the enclosing
+workspace cannot pass by luck: the row sits inside `w1\\=' but names the
+worktree open as `w2\\='."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "open as w2")
-    (should (equal '((herdr-worktree-remove "w1"))
-                   (herdr-dispatch-test-with-recorders
-                       (herdr-pane-close herdr-tab-close herdr-workspace-close
-                                         herdr-worktree-remove)
-                     (herdr-dispatch-close))))))
+    (let ((herdr-dispatch--worktrees
+           '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (branch . "fix")
+                       (open_workspace_id . "w2")))))))
+      (search-forward "open as w2")
+      (should (equal '((herdr-worktree-remove "w2"))
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-pane-close herdr-tab-close herdr-workspace-close
+                                           herdr-worktree-remove)
+                       (herdr-dispatch-close)))))))
+
+(ert-deftest herdr-dispatch-close-refuses-a-worktree-that-is-not-open ()
+  "`worktree.remove\\=' addresses a workspace, so a worktree herdr has not
+opened as one cannot be removed at all.  Guessing at the enclosing
+workspace is what made this destructive; refusing is the alternative, and
+nothing may reach the server on the way out."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((herdr-dispatch--worktrees
+           '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (branch . "fix")
+                       (open_workspace_id . nil)))))))
+      (search-forward "open as w2")
+      (should (equal nil
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-pane-close herdr-tab-close herdr-workspace-close
+                                           herdr-worktree-remove herdr-rpc-call)
+                       (should-error (herdr-dispatch-close)
+                                     :type 'user-error)))))))
 
 (ert-deftest herdr-dispatch-close-refuses-a-line-with-nothing-on-it ()
   (herdr-dispatch-test-with-buffer nil

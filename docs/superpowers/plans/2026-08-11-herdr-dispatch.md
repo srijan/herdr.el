@@ -1438,8 +1438,8 @@ expand and is invalidated by the worktree events already subscribed."
 - Consumes: `herdr-dispatch-defverb`, `herdr-dispatch--value-at-point` from Task 6.
 - Produces: `herdr-dispatch-rename`, `herdr-dispatch-close`.
 
-Confirmation is inherited: `herdr-pane-close`, `herdr-workspace-close` and `herdr-worktree-remove`
-already prompt. Do not add a second prompt.
+Confirmation is inherited: `herdr-pane-close`, `herdr-tab-close`, `herdr-workspace-close` and
+`herdr-worktree-remove` all prompt. Do not add a second prompt.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1496,7 +1496,11 @@ pane, which is the thing you are looking at."
 The underlying commands confirm; this adds no second prompt."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-worktree)
-    (herdr-worktree-remove (herdr-dispatch--value-at-point 'herdr-workspace)))
+    ;; The worktree at point, resolved the way `herdr-dispatch-open-worktree'
+    ;; resolves it — NOT `(herdr-dispatch--value-at-point 'herdr-workspace)',
+    ;; which walks up to the repository whose worktree list was expanded and
+    ;; would remove that instead.  See `herdr-dispatch--worktree-workspace'.
+    (herdr-worktree-remove (herdr-dispatch--worktree-workspace)))
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-close (herdr-dispatch--value-at-point 'herdr-pane)))
    ((herdr-dispatch--value-at-point 'herdr-tab)
