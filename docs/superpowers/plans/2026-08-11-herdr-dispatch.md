@@ -1015,7 +1015,13 @@ and do not need defending."
         ;; Point is restored by section identity rather than by line
         ;; number: a pane closing above point used to move you to a
         ;; different agent than the one you were reading.
-        (magit-section-cache-visibility)
+        ;; No `magit-section-cache-visibility' call here.  With no
+        ;; argument it defaults to `magit-insert-section--current', which
+        ;; is nil outside an insert, so it signals wrong-type-argument on
+        ;; every refresh -- verified.  It is also unnecessary: magit
+        ;; caches visibility on hide/show and restores through
+        ;; `magit-section-set-visibility-hook'.  Fold survival across a
+        ;; refresh was confirmed end to end.
         (let ((ident (and (magit-current-section)
                           (magit-section-ident (magit-current-section)))))
           (erase-buffer)
