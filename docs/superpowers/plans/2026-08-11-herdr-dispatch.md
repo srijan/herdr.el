@@ -47,6 +47,9 @@ Spec: `docs/superpowers/specs/2026-08-11-herdr-dispatch-design.md`
 - Tests needing a live herdr server are tagged `:live` and run only under `make test-live`.
 - Every new curated method must be added to `herdr-cmd-methods` in `herdr-cmd.el`.
 - Commit after every task. Work on branch `herdr-dispatch`.
+- **Run `make clean` before `make test`.** `.elc` files are git-ignored and persist between
+  tasks, so a stale one silently shadows your source edit and the suite tests the old code. This
+  cost Task 2 a confusing run.
 - **KNOWN-RED BASELINE — read before you run the suite.** Four tests in
   `test/herdr-transient-test.el` fail on pristine upstream `fe8bc41`, before any work on this
   branch, and they are not yours to fix:
