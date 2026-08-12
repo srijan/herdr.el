@@ -45,6 +45,34 @@ is always on screen stops being read.")
       (herdr-tree-glyph status)
     ""))
 
+(defun herdr-tree-status-counts (state)
+  "Return an alist of (STATUS . COUNT) over the real agents in STATE.
+Real agents only: `herdr-state-agents\\=' excludes adopted shells, which
+have no status lifecycle worth counting.  Shared by the modeline segment
+and the dispatcher header so the two surfaces cannot disagree."
+  (let ((counts nil))
+    (dolist (pane (herdr-state-agents state))
+      (let ((status (or (alist-get 'agent_status pane) "unknown")))
+        (setf (alist-get status counts nil nil #'equal)
+              (1+ (or (alist-get status counts nil nil #'equal) 0)))))
+    counts))
+
+(defun herdr-tree-status-summary (state)
+  "Return a compact status summary for STATE, such as \"2⏸1✓\", or \"\".
+Only `herdr-tree-noteworthy-statuses\\=' are shown, in that order; idle is
+omitted for the same reason the modeline omits it: a marker that is
+always on screen stops being read.  Empty when nothing is noteworthy."
+  (let* ((counts (herdr-tree-status-counts state))
+         (parts (delq nil
+                      (mapcar
+                       (lambda (status)
+                         (when-let* ((n (alist-get status counts
+                                                   nil nil #'equal)))
+                           (when (> n 0)
+                             (format "%d%s" n (herdr-tree-glyph status)))))
+                       herdr-tree-noteworthy-statuses))))
+    (if parts (string-join parts) "")))
+
 (defun herdr-tree--agent-label (state pane)
   "Return the agent column for PANE in STATE.
 Adopted shells are marked rather than named, since they have no agent
@@ -57,13 +85,28 @@ lifecycle.  A name set through `agent.rename\\=' is appended to the kind."
            (name (herdr-state-agent-name state (alist-get 'pane_id pane))))
       (if name (concat kind "/" name) kind))))
 
-(defun herdr-tree--pane-node (state pane)
-  "Return the node for PANE in STATE."
+(defconst herdr-tree-agent-column-min 10
+  "Minimum width of the agent column.
+Keeps a session of bare `claude\\=' panes, with no long `kind/name'
+labels among them, from producing a cramped column.")
+
+(defun herdr-tree--agent-column-width (state)
+  "Return the agent column width for STATE.
+Computed from the widest label `herdr-tree--agent-label\\=' produces over
+every pane in STATE, so a long `kind/name\\=' label is never truncated by
+a fixed column, and clamped to `herdr-tree-agent-column-min\\=' so a
+session of short labels does not look cramped either."
+  (apply #'max herdr-tree-agent-column-min
+         (mapcar (lambda (pane) (length (herdr-tree--agent-label state pane)))
+                 (herdr-state-panes state))))
+
+(defun herdr-tree--pane-node (state pane width)
+  "Return the node for PANE in STATE, its agent column WIDTH wide."
   (let ((id (alist-get 'pane_id pane))
         (shell (herdr-state-shell-pane-p pane)))
     (list 'herdr-pane id
           (string-trim-right
-           (format "%s %-14s %-8s %-8s %s"
+           (format (format "%%s %%-%ds %%-8s %%-8s %%s" width)
                    (if shell "~" (herdr-tree-glyph
                                   (alist-get 'agent_status pane)))
                    (herdr-tree--agent-label state pane)
@@ -72,14 +115,14 @@ lifecycle.  A name set through `agent.rename\\=' is appended to the kind."
                    (or (alist-get 'terminal_title_stripped pane) "")))
           nil)))
 
-(defun herdr-tree--panes-in-tab (state tab-id)
-  "Return the nodes for every pane of TAB-ID in STATE."
-  (mapcar (lambda (pane) (herdr-tree--pane-node state pane))
+(defun herdr-tree--panes-in-tab (state tab-id width)
+  "Return the nodes for every pane of TAB-ID in STATE, agent column WIDTH wide."
+  (mapcar (lambda (pane) (herdr-tree--pane-node state pane width))
           (seq-filter (lambda (pane)
                         (equal tab-id (alist-get 'tab_id pane)))
                       (herdr-state-panes state))))
 
-(defun herdr-tree--orphan-panes-in-workspace (state workspace-id)
+(defun herdr-tree--orphan-panes-in-workspace (state workspace-id width)
   "Return nodes for WORKSPACE-ID\\='s panes whose tab is not in STATE.
 
 Panes are drawn under their tab, so a pane naming a tab the cache does
@@ -93,15 +136,15 @@ tree replaced could not have.  Showing them directly under the workspace
 keeps every pane reachable no matter what the tab cache knows."
   (let ((known (mapcar (lambda (tab) (alist-get 'tab_id tab))
                        (herdr-state-tabs state))))
-    (mapcar (lambda (pane) (herdr-tree--pane-node state pane))
+    (mapcar (lambda (pane) (herdr-tree--pane-node state pane width))
             (seq-filter (lambda (pane)
                           (and (equal workspace-id
                                       (alist-get 'workspace_id pane))
                                (not (member (alist-get 'tab_id pane) known))))
                         (herdr-state-panes state)))))
 
-(defun herdr-tree--tab-node (state tab)
-  "Return the node for TAB in STATE."
+(defun herdr-tree--tab-node (state tab width)
+  "Return the node for TAB in STATE, its pane column WIDTH wide."
   (let ((id (alist-get 'tab_id tab)))
     (list 'herdr-tab id
           (string-trim-right
@@ -109,7 +152,7 @@ keeps every pane reachable no matter what the tab cache knows."
                    (or (alist-get 'label tab) id)
                    (format "%s panes" (or (alist-get 'pane_count tab) 0))
                    (herdr-tree--rollup (alist-get 'agent_status tab))))
-          (herdr-tree--panes-in-tab state id))))
+          (herdr-tree--panes-in-tab state id width))))
 
 (defun herdr-tree--tabs-in-workspace (state workspace-id)
   "Return TABs of WORKSPACE-ID in STATE, in cache order."
@@ -144,8 +187,10 @@ not here."
           (format "worktrees %s" (length found))
           (mapcar #'herdr-tree--worktree-node found))))
 
-(defun herdr-tree--workspace-node (state workspace worktrees)
-  "Return the node for WORKSPACE in STATE, including WORKTREES."
+(defun herdr-tree--workspace-node (state workspace worktrees width)
+  "Return the node for WORKSPACE in STATE, including WORKTREES.
+WIDTH is the agent column width, computed once in `herdr-tree-build\\='
+and threaded down to every pane in this workspace."
   (let* ((id (alist-get 'workspace_id workspace))
          (tabs (herdr-tree--tabs-in-workspace state id))
          ;; One tab is not structure.  Unnamed tabs are labelled by
@@ -155,11 +200,11 @@ not here."
          ;; nodes rather than being dropped with the tab they name.
          (children (append (if (= (length tabs) 1)
                                (herdr-tree--panes-in-tab
-                                state (alist-get 'tab_id (car tabs)))
+                                state (alist-get 'tab_id (car tabs)) width)
                              (mapcar (lambda (tab)
-                                       (herdr-tree--tab-node state tab))
+                                       (herdr-tree--tab-node state tab width))
                                      tabs))
-                           (herdr-tree--orphan-panes-in-workspace state id)))
+                           (herdr-tree--orphan-panes-in-workspace state id width)))
          (worktree-node (herdr-tree--worktrees-node id worktrees)))
     (list 'herdr-workspace id
           (string-trim-right
@@ -181,10 +226,16 @@ text; CHILDREN is a list of nodes.
 WORKTREES is an alist of (WORKSPACE-ID . LIST-OF-WORKTREEINFO) for the
 workspaces whose worktrees have been fetched.  A workspace missing from
 it simply gets no worktrees section — absence of knowledge, not absence
-of worktrees."
-  (mapcar (lambda (workspace)
-            (herdr-tree--workspace-node state workspace worktrees))
-          (herdr-state-workspaces state)))
+of worktrees.
+
+The agent column width is computed once here, from every pane in STATE,
+so it is consistent across every workspace rather than fitted separately
+per tab — a session with one long label in one workspace and only short
+ones in another would otherwise show two different column widths."
+  (let ((width (herdr-tree--agent-column-width state)))
+    (mapcar (lambda (workspace)
+              (herdr-tree--workspace-node state workspace worktrees width))
+            (herdr-state-workspaces state))))
 
 (provide 'herdr-tree)
 ;;; herdr-tree.el ends here

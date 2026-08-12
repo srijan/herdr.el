@@ -88,6 +88,31 @@ renderer consuming them, which is the seam such a typo would hide in."
     (search-forward "w2:p1")
     (should (eq 'herdr-tab (oref (oref (magit-current-section) parent) type)))))
 
+(defun herdr-dispatch-test--indent-at (text)
+  "Return the leading whitespace width of the line containing TEXT."
+  (goto-char (point-min))
+  (search-forward text)
+  (goto-char (line-beginning-position))
+  (skip-chars-forward " ")
+  (current-column))
+
+(ert-deftest herdr-dispatch-indents-a-pane-under-a-tab-deeper-than-one-under-a-workspace ()
+  "The hierarchy has to be visible, not just navigable.
+
+`w1:p1\\=' hangs directly off its workspace (the single-tab flattened
+case); `w2:p1\\=' hangs off a tab which hangs off its workspace.  The
+second must read one level deeper than the first, with no
+special-casing for the flattened shape."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((workspace-indent (herdr-dispatch-test--indent-at "herdr.el"))
+          (flattened-pane-indent (herdr-dispatch-test--indent-at "w1:p1"))
+          (tab-indent (herdr-dispatch-test--indent-at "main"))
+          (nested-pane-indent (herdr-dispatch-test--indent-at "w2:p1")))
+      (should (< workspace-indent flattened-pane-indent))
+      (should (= tab-indent flattened-pane-indent))
+      (should (< tab-indent nested-pane-indent))
+      (should (< flattened-pane-indent nested-pane-indent)))))
+
 ;;; Refresh
 
 (defconst herdr-dispatch-test--snapshot
@@ -121,7 +146,12 @@ real one rather than a temporary."
 (ert-deftest herdr-dispatch-refresh-draws-the-session ()
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh)
-    (should (string-match-p "1 workspaces  2 panes  2 agents" (buffer-string)))
+    (should (string-match-p
+             (regexp-quote
+              (format "1 workspaces  2 panes  1%s1%s"
+                      (herdr-tree-glyph "blocked")
+                      (herdr-tree-glyph "working")))
+             (buffer-string)))
     (should (string-match-p "web" (buffer-string)))
     (should (string-match-p "w1:p1" (buffer-string)))
     (should (string-match-p "w1:p2" (buffer-string)))))

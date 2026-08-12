@@ -74,38 +74,45 @@ line under point names, so no key needs a target of its own.")
   (setq-local revert-buffer-function
               (lambda (&rest _) (herdr-dispatch-refresh))))
 
-(defun herdr-dispatch--insert-nodes (nodes)
+(defun herdr-dispatch--insert-nodes (nodes &optional depth)
   "Insert NODES, each (TYPE VALUE LINE CHILDREN), as magit sections.
+
+DEPTH is the nesting level, defaulting to 0.  Each heading is prefixed
+with two spaces per DEPTH, so the hierarchy is visible on screen instead
+of every heading beginning at column 0 regardless of nesting — a pane
+parented directly to a workspace indents one level, a pane under a tab
+indents two, with no special-casing for either shape.
 
 `magit-insert-section\\=' takes its type as an unevaluated symbol, so the
 five types are spelled out rather than passed through.  A runtime `eval\\='
 would collapse these into one branch; five explicit branches byte-compile
 and do not need defending."
-  (dolist (node nodes)
-    (let ((value (nth 1 node))
-          (line (nth 2 node))
-          (children (nth 3 node)))
-      (pcase (nth 0 node)
-        ('herdr-workspace
-         (magit-insert-section (herdr-workspace value)
-           (magit-insert-heading line)
-           (herdr-dispatch--insert-nodes children)))
-        ('herdr-tab
-         (magit-insert-section (herdr-tab value)
-           (magit-insert-heading line)
-           (herdr-dispatch--insert-nodes children)))
-        ('herdr-pane
-         (magit-insert-section (herdr-pane value)
-           (magit-insert-heading line)
-           (herdr-dispatch--insert-nodes children)))
-        ('herdr-worktrees
-         (magit-insert-section (herdr-worktrees value)
-           (magit-insert-heading line)
-           (herdr-dispatch--insert-nodes children)))
-        ('herdr-worktree
-         (magit-insert-section (herdr-worktree value)
-           (magit-insert-heading line)
-           (herdr-dispatch--insert-nodes children)))))))
+  (let ((depth (or depth 0)))
+    (dolist (node nodes)
+      (let ((value (nth 1 node))
+            (line (concat (make-string (* 2 depth) ?\s) (nth 2 node)))
+            (children (nth 3 node)))
+        (pcase (nth 0 node)
+          ('herdr-workspace
+           (magit-insert-section (herdr-workspace value)
+             (magit-insert-heading line)
+             (herdr-dispatch--insert-nodes children (1+ depth))))
+          ('herdr-tab
+           (magit-insert-section (herdr-tab value)
+             (magit-insert-heading line)
+             (herdr-dispatch--insert-nodes children (1+ depth))))
+          ('herdr-pane
+           (magit-insert-section (herdr-pane value)
+             (magit-insert-heading line)
+             (herdr-dispatch--insert-nodes children (1+ depth))))
+          ('herdr-worktrees
+           (magit-insert-section (herdr-worktrees value)
+             (magit-insert-heading line)
+             (herdr-dispatch--insert-nodes children (1+ depth))))
+          ('herdr-worktree
+           (magit-insert-section (herdr-worktree value)
+             (magit-insert-heading line)
+             (herdr-dispatch--insert-nodes children (1+ depth)))))))))
 
 ;;; The object at point
 
@@ -454,11 +461,15 @@ not the workspace at point, matching the treatment already given to
     ("-d" "directory" "--directory=")]])
 
 (defun herdr-dispatch--header (state)
-  "Return the header line summarising STATE."
-  (format "herdr   %d workspaces  %d panes  %d agents"
-          (length (herdr-state-workspaces state))
-          (length (herdr-state-panes state))
-          (length (herdr-state-agents state))))
+  "Return the header line summarising STATE.
+Ends with `herdr-tree-status-summary\\=' rather than an agent count: a
+count that is always true stops being read, the same reasoning that
+already keeps idle out of the modeline segment."
+  (let ((summary (herdr-tree-status-summary state)))
+    (format "herdr   %d workspaces  %d panes%s"
+            (length (herdr-state-workspaces state))
+            (length (herdr-state-panes state))
+            (if (string-empty-p summary) "" (concat "  " summary)))))
 
 (defun herdr-dispatch-refresh ()
   "Redraw the dispatcher from the cache, keeping point and fold state."

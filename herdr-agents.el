@@ -39,28 +39,18 @@ Nil means never.  A sensible opt-in is (\"blocked\" \"done\")."
 ;;; Modeline segment
 
 (defun herdr-agents--counts (state)
-  "Return an alist of (STATUS . COUNT) for the agents in STATE."
-  (let ((counts nil))
-    (dolist (pane (herdr-state-agents state))
-      (let ((status (or (alist-get 'agent_status pane) "unknown")))
-        (setf (alist-get status counts nil nil #'equal)
-              (1+ (or (alist-get status counts nil nil #'equal) 0)))))
-    counts))
+  "Return an alist of (STATUS . COUNT) for the agents in STATE.
+Delegates to `herdr-tree-status-counts\\=', which the dispatcher header
+reads from too, so the modeline and the dispatcher cannot disagree."
+  (herdr-tree-status-counts state))
 
 (defun herdr-agents--segment (state)
   "Return the modeline string for STATE, or an empty string.
 Idle agents are omitted: a count that is always on screen stops being
-read.  Only the states worth acting on appear."
-  (let* ((counts (herdr-agents--counts state))
-         (parts (delq nil
-                      (mapcar
-                       (lambda (status)
-                         (when-let* ((n (alist-get status counts
-                                                   nil nil #'equal)))
-                           (when (> n 0)
-                             (format "%d%s" n (herdr-tree-glyph status)))))
-                       '("blocked" "working" "done")))))
-    (if parts (concat "herdr:" (string-join parts)) "")))
+read.  Only the states worth acting on appear, via
+`herdr-tree-status-summary\\='."
+  (let ((summary (herdr-tree-status-summary state)))
+    (if (string-empty-p summary) "" (concat "herdr:" summary))))
 
 (defvar herdr-agents-mode-line-string ""
   "Cached modeline segment, refreshed from the state change hook.")

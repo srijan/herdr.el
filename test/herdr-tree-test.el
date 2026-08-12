@@ -75,6 +75,43 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
     (should (string-match-p "w1:p1" pane))
     (should (string-match-p "fixing tests" pane))))
 
+(ert-deftest herdr-tree-agent-column-widens-to-fit-the-longest-label ()
+  "A fixed column truncates nothing — `%-Ns\\=' never cuts a longer
+string — but a label wider than the fixed width breaks alignment: every
+other row's status and pane_id columns drift out of place.  So the real
+assertion is that the status column starts at the same offset on every
+row, computed from the widest label actually present rather than a
+constant."
+  (let* ((state (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w1") (label . "w")
+                                   (pane_count . 2))))
+                   (agents . (((pane_id . "w1:p2") (name . "schema-pipeline"))))
+                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (tab_id . "w1:t1") (agent . "claude")
+                              (agent_status . "working"))
+                             ((pane_id . "w1:p2") (workspace_id . "w1")
+                              (tab_id . "w1:t1") (agent . "claude")
+                              (agent_status . "blocked")))))))
+         (children (nth 3 (car (herdr-tree-build state nil))))
+         (line1 (nth 2 (car children)))
+         (line2 (nth 2 (nth 1 children)))
+         (label-width (length "claude/schema-pipeline")))
+    (should (string-match-p "claude/schema-pipeline" line2))
+    (should (= (+ label-width 3) (string-match "working" line1)))
+    (should (= (+ label-width 3) (string-match "blocked" line2)))))
+
+(ert-deftest herdr-tree-agent-column-does-not-shrink-below-the-minimum ()
+  "Every label here is well under the minimum, so fitting the widest one
+present must not produce a cramped column."
+  (let* ((state (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w1") (label . "w")
+                                   (pane_count . 1))))
+                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (tab_id . "w1:t1") (agent . "claude")
+                              (agent_status . "working")))))))
+         (line (nth 2 (car (nth 3 (car (herdr-tree-build state nil)))))))
+    (should (= (+ herdr-tree-agent-column-min 3) (string-match "working" line)))))
+
 (ert-deftest herdr-tree-marks-adopted-shells ()
   (let* ((tabs (nth 3 (car (herdr-tree-build (herdr-tree-test--state) nil))))
          (pane (nth 2 (car (nth 3 (nth 1 tabs))))))
@@ -184,6 +221,42 @@ their own tab already renders.  Every pane appears exactly once."
          (worktree (car (nth 3 (car (last children))))))
     (should (equal 'herdr-worktree (nth 0 worktree)))
     (should (string-match-p "open" (nth 2 worktree)))))
+
+;;; Status summary
+
+(defun herdr-tree-test--status-state (&rest specs)
+  "Build a state from SPECS, each (ID AGENT STATUS)."
+  (herdr-state-from-snapshot
+   `((panes . ,(mapcar (lambda (spec)
+                         `((pane_id . ,(nth 0 spec))
+                           (agent . ,(nth 1 spec))
+                           (agent_status . ,(nth 2 spec))
+                           (workspace_id . "w1")))
+                       specs)))))
+
+(ert-deftest herdr-tree-status-summary-omits-idle ()
+  "An always-on marker stops being read; idle is not news."
+  (should (equal "" (herdr-tree-status-summary
+                     (herdr-tree-test--status-state
+                      '("w1:p1" "claude" "idle"))))))
+
+(ert-deftest herdr-tree-status-summary-uses-the-established-order ()
+  "Statuses appear in `herdr-tree-noteworthy-statuses\\=' order — blocked,
+then working, then done — regardless of the order agents were created in."
+  (should (equal (concat "1" (herdr-tree-glyph "blocked")
+                         "1" (herdr-tree-glyph "working")
+                         "1" (herdr-tree-glyph "done"))
+                 (herdr-tree-status-summary
+                  (herdr-tree-test--status-state
+                   '("w1:p1" "claude" "done")
+                   '("w1:p2" "codex" "working")
+                   '("w1:p3" "gemini" "blocked"))))))
+
+(ert-deftest herdr-tree-status-summary-is-empty-with-nothing-noteworthy ()
+  (should (equal "" (herdr-tree-status-summary (herdr-state-empty))))
+  (should (equal "" (herdr-tree-status-summary
+                     (herdr-tree-test--status-state
+                      '("w1:p1" "claude" "idle"))))))
 
 (provide 'herdr-tree-test)
 ;;; herdr-tree-test.el ends here
