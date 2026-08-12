@@ -59,11 +59,96 @@
     (should (null (car result)))
     (should (null (cdr result)))))
 
-(ert-deftest herdr-term-agent-buffer-name-is-derived-from-the-pane ()
-  (let ((name (herdr-term-agent-buffer-name
-               (herdr-term-test--pane "w1:p1" "claude"))))
-    (should (string-match-p "claude" name))
-    (should (string-match-p "w1:p1" name))))
+;;; Buffer naming: name first, workspace fallback
+
+(ert-deftest herdr-term-agent-buffer-name-prefers-the-agent-name ()
+  "A name set through `agent.rename' is used verbatim, kind and workspace
+notwithstanding — it is the one thing someone chose to call this pane."
+  (let* ((state (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w7") (label . ".emacs.d"))))
+                   (panes . (((pane_id . "w7:p5") (agent . "claude")
+                              (workspace_id . "w7"))))
+                   (agents . (((pane_id . "w7:p5") (agent . "claude")
+                               (name . "emacs-herdr")))))))
+         (pane (herdr-state-pane state "w7:p5")))
+    (should (equal "*herdr: emacs-herdr*"
+                   (herdr-term-agent-buffer-name state pane)))))
+
+(ert-deftest herdr-term-agent-buffer-name-falls-back-to-kind-at-workspace ()
+  "An unnamed agent reads as KIND@WORKSPACE, not an opaque pane id."
+  (let* ((state (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "wG") (label . "srijan.ch"))))
+                   (panes . (((pane_id . "wG:p3") (agent . "claude")
+                              (workspace_id . "wG")))))))
+         (pane (herdr-state-pane state "wG:p3")))
+    (should (equal "*herdr: claude@srijan.ch*"
+                   (herdr-term-agent-buffer-name state pane)))))
+
+(ert-deftest herdr-term-agent-buffer-name-reads-an-adopted-shell-naturally ()
+  "An adopted shell's agent field is already the shell placeholder name,
+so it needs no special case to read as `shell@WORKSPACE'."
+  (let* ((state (herdr-state-from-snapshot
+                 `((workspaces . (((workspace_id . "w7") (label . ".emacs.d"))))
+                   (panes . (((pane_id . "w7:p9")
+                              (agent . ,herdr-shell-agent-name)
+                              (workspace_id . "w7")))))))
+         (pane (herdr-state-pane state "w7:p9")))
+    (should (herdr-state-shell-pane-p pane))
+    (should (equal "*herdr: shell@.emacs.d*"
+                   (herdr-term-agent-buffer-name state pane)))))
+
+(ert-deftest herdr-term-agent-buffer-name-falls-back-to-the-workspace-id ()
+  "A workspace missing from STATE altogether — so its label is unknowable
+— still yields a readable name, not a bare `KIND@'."
+  (let* ((state (herdr-state-from-snapshot
+                 '((panes . (((pane_id . "w9:p1") (agent . "claude")
+                              (workspace_id . "w9")))))))
+         (pane (herdr-state-pane state "w9:p1")))
+    (should (equal "*herdr: claude@w9*"
+                   (herdr-term-agent-buffer-name state pane)))))
+
+(ert-deftest herdr-term-agent-buffer-name-has-a-sensible-floor ()
+  "Neither a kind nor a workspace must not produce `*herdr: @*'."
+  (should (equal "*herdr: agent*"
+                 (herdr-term-agent-buffer-name
+                  (herdr-state-empty) '((pane_id . "p1"))))))
+
+(ert-deftest herdr-term-agent-buffer-name-collides-for-two-unnamed-siblings ()
+  "This collision is the point, not a bug in this function: two unnamed
+same-kind panes in one workspace are expected to compute the same wanted
+name here.  Uniquifying it is `herdr-term--attach-1's job, tested below,
+not this pure naming function's."
+  (let* ((state (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w7") (label . ".emacs.d"))))
+                   (panes . (((pane_id . "w7:p2") (agent . "claude")
+                              (workspace_id . "w7"))
+                             ((pane_id . "w7:p5") (agent . "claude")
+                              (workspace_id . "w7")))))))
+         (one (herdr-state-pane state "w7:p2"))
+         (two (herdr-state-pane state "w7:p5")))
+    (should (equal (herdr-term-agent-buffer-name state one)
+                   (herdr-term-agent-buffer-name state two)))))
+
+(ert-deftest herdr-term-unique-agent-buffer-name-avoids-a-collision ()
+  "The hazard: `get-buffer-create' on a colliding wanted name returns a
+different pane's existing buffer.  `herdr-term--unique-agent-buffer-name'
+is what `herdr-term--attach-1' creates buffers under instead, precisely
+to make that impossible."
+  (let* ((existing (generate-new-buffer "*herdr: claude@.emacs.d*"))
+         (state (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w7") (label . ".emacs.d"))))
+                   (panes . (((pane_id . "w7:p5") (agent . "claude")
+                              (workspace_id . "w7")))))))
+         (pane (herdr-state-pane state "w7:p5")))
+    (unwind-protect
+        (let* ((name (herdr-term--unique-agent-buffer-name state pane))
+               (created (get-buffer-create name)))
+          (unwind-protect
+              (progn
+                (should-not (equal "*herdr: claude@.emacs.d*" name))
+                (should-not (eq existing created)))
+            (kill-buffer created)))
+      (kill-buffer existing))))
 
 (ert-deftest herdr-term-attach-args-target-the-pane ()
   (should (equal '("agent" "attach" "w1:p1")
@@ -174,29 +259,73 @@ resolves to it — that is what makes Go to work there too."
   "A shell adopted and later promoted keeps its buffer — attachment is
 still valid — so the name has to be corrected in place."
   (let* ((herdr-terminal-backend 'agent-windows)
-         (buffer (generate-new-buffer "*herdr: shell w1:p1*"))
+         (buffer (generate-new-buffer "*herdr: shell@.emacs.d*"))
          (herdr-term--agent-buffers (list (cons "w1:p1" buffer)))
          (herdr-state--current
           (herdr-state-from-snapshot
-           '((panes . (((pane_id . "w1:p1") (agent . "claude"))))))))
+           '((workspaces . (((workspace_id . "w1") (label . ".emacs.d"))))
+             (panes . (((pane_id . "w1:p1") (agent . "claude")
+                        (workspace_id . "w1"))))))))
     (unwind-protect
         (progn
           (herdr-term--rename-stale-buffers)
-          (should (equal "*herdr: claude w1:p1*" (buffer-name buffer))))
+          (should (equal "*herdr: claude@.emacs.d*" (buffer-name buffer))))
       (kill-buffer buffer))))
 
 (ert-deftest herdr-term-leaves-a-correctly-named-buffer-alone ()
   (let* ((herdr-terminal-backend 'agent-windows)
-         (buffer (generate-new-buffer "*herdr: claude w1:p1*"))
+         (buffer (generate-new-buffer "*herdr: claude@.emacs.d*"))
          (herdr-term--agent-buffers (list (cons "w1:p1" buffer)))
          (herdr-state--current
           (herdr-state-from-snapshot
-           '((panes . (((pane_id . "w1:p1") (agent . "claude"))))))))
+           '((workspaces . (((workspace_id . "w1") (label . ".emacs.d"))))
+             (panes . (((pane_id . "w1:p1") (agent . "claude")
+                        (workspace_id . "w1"))))))))
     (unwind-protect
         (progn
           (herdr-term--rename-stale-buffers)
-          (should (equal "*herdr: claude w1:p1*" (buffer-name buffer))))
+          (should (equal "*herdr: claude@.emacs.d*" (buffer-name buffer))))
       (kill-buffer buffer))))
+
+(ert-deftest herdr-term-rename-stale-buffers-does-not-thrash-a-collision ()
+  "The subtle failure mode: a buffer holding a uniquified name only
+because another pane's buffer already has its wanted base name must not
+be renamed on every sync.
+
+Checking the resulting name after one call is not enough to catch this:
+`rename-buffer' just hands the same `...<2>' suffix right back once the
+collision persists, so a thrashing implementation still looks stable
+that way.  What must not happen is `rename-buffer' being called at all
+for a buffer that already carries an acceptable name — repeating that
+from every `herdr-term--on-state-change' would be a rename loop hiding
+behind an unchanging buffer list."
+  (let* ((herdr-terminal-backend 'agent-windows)
+         ;; `generate-new-buffer' uniquifies on creation exactly like
+         ;; `herdr-term--unique-agent-buffer-name' does, so the second
+         ;; buffer starts life as `...<2>' here without any special-casing.
+         (first (generate-new-buffer "*herdr: claude@.emacs.d*"))
+         (second (generate-new-buffer "*herdr: claude@.emacs.d*"))
+         (herdr-term--agent-buffers (list (cons "w7:p2" first)
+                                          (cons "w7:p5" second)))
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((workspaces . (((workspace_id . "w7") (label . ".emacs.d"))))
+             (panes . (((pane_id . "w7:p2") (agent . "claude")
+                        (workspace_id . "w7"))
+                       ((pane_id . "w7:p5") (agent . "claude")
+                        (workspace_id . "w7"))))))))
+    (unwind-protect
+        (progn
+          (should (equal "*herdr: claude@.emacs.d*<2>" (buffer-name second)))
+          (let ((rename-calls 0))
+            (cl-letf* ((real-rename-buffer (symbol-function 'rename-buffer))
+                       ((symbol-function 'rename-buffer)
+                        (lambda (&rest args)
+                          (setq rename-calls (1+ rename-calls))
+                          (apply real-rename-buffer args))))
+              (dotimes (_ 3) (herdr-term--rename-stale-buffers)))
+            (should (= 0 rename-calls))))
+      (kill-buffer first) (kill-buffer second))))
 
 ;;; Starting herdr must not rearrange windows
 

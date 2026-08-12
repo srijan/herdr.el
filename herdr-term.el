@@ -91,11 +91,66 @@ the old behaviour of taking the whole frame:
 
 ;;; Naming and argument construction — pure, so they are testable
 
-(defun herdr-term-agent-buffer-name (pane)
-  "Return the buffer name for PANE under the `agent-windows' backend."
-  (format "*herdr: %s %s*"
-          (or (alist-get 'agent pane) "agent")
-          (alist-get 'pane_id pane)))
+(defun herdr-term--workspace-label (state pane)
+  "Return a display label for PANE\\='s workspace in STATE, or nil.
+
+Prefers the workspace\\='s own label; falls back to its id when the
+workspace carries no label, or when STATE does not have the workspace
+at all — its label is then unknowable, but PANE still carries its id.
+Nil only when PANE names no workspace to begin with."
+  (when-let* ((workspace-id (alist-get 'workspace_id pane)))
+    (or (alist-get 'label
+                    (seq-find (lambda (workspace)
+                                (equal workspace-id
+                                       (alist-get 'workspace_id workspace)))
+                              (herdr-state-workspaces state)))
+        workspace-id)))
+
+(defun herdr-term-agent-buffer-name (state pane)
+  "Return the wanted buffer name for PANE, read against STATE.
+
+Name first, workspace fallback: a name set through `agent.rename\\='
+\(`herdr-state-agent-name\\=') is used verbatim, since it is the one thing
+someone chose to call this pane.  An unnamed pane instead reads as
+KIND@WORKSPACE, built from its agent kind and `herdr-term--workspace-label\\='
+— this also covers an adopted shell (`herdr-state-shell-pane-p\\='),
+whose kind is already the shell placeholder agent name.  A pane with
+neither a kind nor a workspace falls back to a bare \"agent\" rather
+than an empty `*herdr: @*\\='.
+
+Not unique: two unnamed panes of the same kind in the same workspace
+compute the same name here.  Callers that create a buffer from it are
+responsible for uniquifying — see `herdr-term--attach-1\\='."
+  (let* ((pane-id (alist-get 'pane_id pane))
+         (name (and pane-id (herdr-state-agent-name state pane-id)))
+         (kind (or (alist-get 'display_agent pane)
+                   (alist-get 'agent pane)
+                   "agent"))
+         (label (herdr-term--workspace-label state pane)))
+    (format "*herdr: %s*"
+            (or name (if label (format "%s@%s" kind label) kind)))))
+
+(defun herdr-term--unique-agent-buffer-name (state pane)
+  "Return a unique buffer name for PANE, from `herdr-term-agent-buffer-name'.
+
+`herdr-term-agent-buffer-name\\=' is not guaranteed unique — two unnamed
+panes of the same kind in the same workspace compute the same wanted
+name — and `get-buffer-create\\=' on a colliding name returns a different
+pane\\='s existing buffer rather than a fresh one.  Uniquify before
+creating, not after."
+  (generate-new-buffer-name (herdr-term-agent-buffer-name state pane)))
+
+(defun herdr-term--buffer-name-sans-uniquify-suffix (name)
+  "Return NAME with a trailing `<N>\\=' uniquifying suffix stripped, if any.
+
+`generate-new-buffer-name\\=' and `rename-buffer\\=' both add this suffix
+when the wanted name collides with another live buffer.  Comparing a
+buffer\\='s actual name against a freshly computed wanted name without
+stripping this would treat such a buffer as permanently stale — see
+`herdr-term--rename-stale-buffers\\='."
+  (if (string-match "<[0-9]+>\\'" name)
+      (substring name 0 (match-beginning 0))
+    name))
 
 (defun herdr-term-attach-args (pane-id takeover)
   "Return argv tail for attaching to PANE-ID, stealing it when TAKEOVER."
@@ -191,9 +246,10 @@ Returns the buffer when it showed one."
 (defun herdr-term--attach-if-possible (pane-id)
   "Attach to PANE-ID now, if this backend attaches and herdr will allow it."
   (when (eq herdr-terminal-backend 'agent-windows)
-    (when-let* ((pane (herdr-state-pane (herdr-state-current) pane-id))
-                ((alist-get 'agent pane)))
-      (herdr-term--attach pane))))
+    (let ((state (herdr-state-current)))
+      (when-let* ((pane (herdr-state-pane state pane-id))
+                  ((alist-get 'agent pane)))
+        (herdr-term--attach state pane)))))
 
 (defun herdr-term-select-focused ()
   "Select the buffer for whichever pane herdr now considers focused.
@@ -223,8 +279,8 @@ buffer says nothing about which pane is meant."
       (when (and id (herdr-state-pane (herdr-state-current) id))
         id))))
 
-(defun herdr-term--attach (pane)
-  "Create and start a ghostel buffer attached to PANE.
+(defun herdr-term--attach (state pane)
+  "Create and start a ghostel buffer attached to PANE, named from STATE.
 Returns an existing buffer untouched rather than attaching twice:
 attachment is exclusive per pane, so a second attach either fails or
 steals the first one's terminal."
@@ -232,11 +288,18 @@ steals the first one's terminal."
          (existing (herdr-term-buffer-for-pane pane-id)))
     (if (buffer-live-p existing)
         existing
-      (herdr-term--attach-1 pane pane-id))))
+      (herdr-term--attach-1 state pane pane-id))))
 
-(defun herdr-term--attach-1 (pane pane-id)
-  "Create and start a ghostel buffer attached to PANE, named for PANE-ID."
-  (let ((buffer (get-buffer-create (herdr-term-agent-buffer-name pane))))
+(defun herdr-term--attach-1 (state pane pane-id)
+  "Create and start a ghostel buffer attached to PANE, named from STATE.
+
+Created under `herdr-term--unique-agent-buffer-name\\=' rather than the
+plain wanted name: that name is not guaranteed unique, and a collision
+would hand this pane's client a buffer `get-buffer-create\\=' found
+already live for a different pane, attaching two panes into one
+terminal."
+  (let ((buffer (get-buffer-create
+                 (herdr-term--unique-agent-buffer-name state pane))))
     (with-current-buffer buffer (ghostel-mode))
     ;; The buffer needs a window when the client starts: attaching without
     ;; displaying, or with a window that is deleted straight afterwards,
@@ -266,14 +329,25 @@ steals the first one's terminal."
 
 A pane adopted as a shell and later promoted to a real agent keeps the
 same buffer — attachment is still valid, so there is nothing to recreate
-— but its name would otherwise still read `shell' forever."
-  (dolist (cell (herdr-term--live-agent-buffers))
-    (when-let* ((pane (herdr-state-pane (herdr-state-current) (car cell)))
-                (wanted (herdr-term-agent-buffer-name pane))
-                ((not (equal wanted (buffer-name (cdr cell))))))
-      (with-current-buffer (cdr cell)
-        ;; Unique suffix rather than an error if the name is taken.
-        (rename-buffer wanted t)))))
+— but its name would otherwise still read `shell' forever.
+
+Compares against the buffer's name with any uniquifying suffix removed.
+Two unnamed panes of the same kind in one workspace share a wanted name,
+so one of their buffers keeps a `...<2>\\=' suffix for as long as that
+collision lasts — that is not staleness, and recomputing the bare
+`wanted\\=' every sync and renaming toward it each time would just have
+`rename-buffer\\=' hand the same suffix right back, forever, from inside
+the state-change hook."
+  (let ((state (herdr-state-current)))
+    (dolist (cell (herdr-term--live-agent-buffers))
+      (when-let* ((pane (herdr-state-pane state (car cell)))
+                  (wanted (herdr-term-agent-buffer-name state pane))
+                  ((not (equal wanted
+                               (herdr-term--buffer-name-sans-uniquify-suffix
+                                (buffer-name (cdr cell)))))))
+        (with-current-buffer (cdr cell)
+          ;; Unique suffix rather than an error if the name is taken.
+          (rename-buffer wanted t))))))
 
 (defun herdr-term--sync-agent-windows ()
   "Reap buffers whose pane is gone and correct stale names.
