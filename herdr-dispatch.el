@@ -22,6 +22,7 @@
 
 (require 'subr-x)
 (require 'seq)
+(require 'transient)
 (require 'magit-section)
 (require 'herdr-tree)
 (require 'herdr-state)
@@ -49,6 +50,12 @@ Filled lazily; see `herdr-dispatch--worktrees-for'.")
     (define-key map "R" #'herdr-dispatch-rename)
     (define-key map "k" #'herdr-dispatch-close)
     (define-key map (kbd "TAB") #'herdr-dispatch-toggle)
+    (define-key map "c" #'herdr-dispatch-create)
+    (define-key map "w" #'herdr-dispatch-create-workspace)
+    (define-key map "t" #'herdr-dispatch-create-tab)
+    (define-key map "n" #'herdr-dispatch-create-pane)
+    (define-key map "a" #'herdr-dispatch-create-agent)
+    (define-key map "%" #'herdr-dispatch-create-worktree)
     map)
   "Keymap for `herdr-dispatch-mode'.
 Lowercase letters are the read-only verbs; each acts on whatever the
@@ -281,6 +288,122 @@ asymmetry is left as it is rather than fixed here."
    ((herdr-dispatch--value-at-point 'herdr-workspace)
     (herdr-workspace-close (herdr-dispatch--value-at-point 'herdr-workspace)))
    (t (user-error "herdr: nothing at point to close"))))
+
+;;; The create transient
+
+(defun herdr-dispatch--arg (args flag)
+  "Return the value of FLAG in transient ARGS, or nil."
+  (when-let* ((hit (seq-find (lambda (arg)
+                               (string-prefix-p (concat flag "=") arg))
+                             args)))
+    (substring hit (1+ (length flag)))))
+
+(defun herdr-dispatch--args ()
+  "Return the create transient\\='s arguments, or nil outside it."
+  (when (and (boundp 'transient-current-command)
+             (eq transient-current-command 'herdr-dispatch-create))
+    (transient-args 'herdr-dispatch-create)))
+
+(herdr-dispatch-defverb herdr-dispatch-create-workspace ()
+  "Create a workspace.
+A workspace has no parent section to inherit from, so the directory
+comes from --directory when set, and otherwise from a prompt defaulting
+to the directory of the workspace at point."
+  (let* ((args (herdr-dispatch--args))
+         (default (or (herdr-dispatch--arg args "--directory")
+                      (when-let* ((id (herdr-dispatch--value-at-point
+                                       'herdr-workspace)))
+                        (herdr-state-workspace-directory
+                         (herdr-state-current) id))
+                      default-directory))
+         (dir (or (herdr-dispatch--arg args "--directory")
+                  (read-directory-name "Workspace directory: " default))))
+    (herdr-workspace-create dir (herdr-dispatch--arg args "--label"))))
+
+(herdr-dispatch-defverb herdr-dispatch-create-tab ()
+  "Create a tab in the workspace at point."
+  (let ((workspace (herdr-dispatch--require 'herdr-workspace "a workspace"))
+        (label (or (herdr-dispatch--arg (herdr-dispatch--args) "--label")
+                   (read-string "Tab label (optional): "))))
+    ;; tab.create has no workspace_id parameter: it creates in whatever
+    ;; workspace is focused, so focus first.
+    (herdr-rpc-call "workspace.focus" `((workspace_id . ,workspace)))
+    (herdr-cmd--follow-new-pane
+     (herdr-cmd--created-pane-id
+      (herdr-rpc-call "tab.create"
+                      `((label . ,(unless (string-empty-p label) label))
+                        (focus . t)))))))
+
+(herdr-dispatch-defverb herdr-dispatch-create-pane ()
+  "Split a pane in the tab at point.
+pane.split needs a pane to split, so a tab section splits its first."
+  (let ((target (or (herdr-dispatch--value-at-point 'herdr-pane)
+                    (when-let* ((tab (herdr-dispatch--value-at-point 'herdr-tab)))
+                      (alist-get 'pane_id
+                                 (seq-find (lambda (pane)
+                                             (equal tab (alist-get 'tab_id pane)))
+                                           (herdr-state-panes
+                                            (herdr-state-current))))))))
+    (unless target (user-error "herdr: no pane here to split"))
+    (herdr-cmd--follow-new-pane
+     (herdr-cmd--created-pane-id
+      (herdr-rpc-call "pane.split" `((direction . "right")
+                                     (target_pane_id . ,target)
+                                     (focus . t)))))))
+
+(herdr-dispatch-defverb herdr-dispatch-create-agent ()
+  "Start an agent in the pane at point."
+  (let* ((args (herdr-dispatch--args))
+         (pane (herdr-dispatch--require 'herdr-pane "a pane"))
+         (kind (or (herdr-dispatch--arg args "--kind")
+                   (completing-read "Agent kind: " herdr-agent-kinds nil nil)))
+         (name (or (herdr-dispatch--arg args "--label")
+                   (read-string "Agent name: "))))
+    (herdr-agent-start name kind pane)))
+
+(herdr-dispatch-defverb herdr-dispatch-create-worktree ()
+  "Create a git worktree from the workspace at point.
+
+Calls `herdr-rpc-call\\=' directly rather than through
+`herdr-worktree-create\\=', which derives its `cwd\\=' from the calling
+buffer's `default-directory\\=' — here that would be `*herdr-agents*\\=',
+not the workspace at point, matching the treatment already given to
+`herdr-dispatch-open-worktree\\='."
+  (let* ((args (herdr-dispatch--args))
+         (workspace (herdr-dispatch--require 'herdr-workspace "a workspace"))
+         (branch (read-string "New worktree branch: "))
+         (base (herdr-dispatch--arg args "--base"))
+         (dir (herdr-state-workspace-directory (herdr-state-current) workspace)))
+    (herdr-rpc-call "worktree.create"
+                    `((branch . ,branch)
+                      (base . ,(unless (string-empty-p (or base "")) base))
+                      (cwd . ,dir)
+                      (focus . t)))
+    (setq herdr-dispatch--worktrees nil)
+    (herdr-dispatch-refresh)))
+
+(defun herdr-dispatch--create-heading ()
+  "Return the create menu heading, naming what point resolves to."
+  (format "Create   [%s]"
+          (or (herdr-dispatch--value-at-point 'herdr-pane)
+              (herdr-dispatch--value-at-point 'herdr-tab)
+              (herdr-dispatch--value-at-point 'herdr-workspace)
+              "nothing at point")))
+
+(transient-define-prefix herdr-dispatch-create ()
+  "Create a herdr object, taking its parent from point."
+  [:description herdr-dispatch--create-heading
+   ["Create"
+    ("w" "workspace" herdr-dispatch-create-workspace)
+    ("t" "tab"       herdr-dispatch-create-tab)
+    ("n" "pane"      herdr-dispatch-create-pane)
+    ("a" "agent"     herdr-dispatch-create-agent)
+    ("%" "worktree"  herdr-dispatch-create-worktree)]
+   ["Arguments"
+    ("-b" "base ref"  "--base=")
+    ("-l" "label"     "--label=")
+    ("-k" "agent kind" "--kind=")
+    ("-d" "directory" "--directory=")]])
 
 (defun herdr-dispatch--header (state)
   "Return the header line summarising STATE."

@@ -671,5 +671,97 @@ would still produce a plausible-looking single call."
   (dolist (verb '(herdr-dispatch-rename herdr-dispatch-close))
     (should (commandp verb))))
 
+;;; Create
+
+(ert-deftest herdr-dispatch-create-tab-focuses-the-workspace-first ()
+  "tab.create takes no workspace_id, so the workspace has to be focused."
+  (skip-unless (featurep 'magit-section))
+  (let ((calls nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (method params) (push (cons method params) calls) nil))
+              ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore)
+              ((symbol-function 'transient-args) (lambda (_) nil))
+              ((symbol-function 'read-string) (lambda (&rest _) "")))
+      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+        (search-forward "herdr.el")
+        (herdr-dispatch-create-tab)
+        (should (equal '("workspace.focus" "tab.create")
+                       (reverse (mapcar #'car calls))))))))
+
+(ert-deftest herdr-dispatch-create-pane-splits-a-pane-of-the-tab ()
+  "pane.split needs a target_pane_id; a tab is not one."
+  (skip-unless (featurep 'magit-section))
+  (let ((target nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (_method params)
+                 (setq target (alist-get 'target_pane_id params))
+                 nil))
+              ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore)
+              ((symbol-function 'transient-args) (lambda (_) nil)))
+      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+        (search-forward "w1:p2")
+        (herdr-dispatch-create-pane)
+        (should (equal "w1:p2" target))))))
+
+(ert-deftest herdr-dispatch-create-pane-resolves-a-tab-to-one-of-its-panes ()
+  "A tab section is not a pane_id itself; splitting it must target the
+pane_id of one of its panes, found by matching tab_id in the live
+state's pane list — not the tab id passed straight through.  A real
+state is built via `herdr-state-from-snapshot\\=' rather than mocking
+`herdr-state-panes\\=', because that accessor is a `cl-defstruct\\=' slot
+reader inlined at the call site, which a `cl-letf\\=' override of its
+symbol-function does not reach."
+  (skip-unless (featurep 'magit-section))
+  (let ((target nil)
+        (herdr-state--current
+         (herdr-state-from-snapshot
+          '((workspaces . (((workspace_id . "w2") (label . "api") (pane_count . 2))))
+            (tabs . (((tab_id . "w2:t1") (workspace_id . "w2") (label . "main"))
+                     ((tab_id . "w2:t2") (workspace_id . "w2") (label . "spike"))))
+            (panes . (((pane_id . "w2:p1") (agent . "claude")
+                       (agent_status . "working")
+                       (workspace_id . "w2") (tab_id . "w2:t1"))
+                      ((pane_id . "w2:p2") (agent . "gemini")
+                       (agent_status . "idle")
+                       (workspace_id . "w2") (tab_id . "w2:t2"))))))))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (_method params)
+                 (setq target (alist-get 'target_pane_id params))
+                 nil))
+              ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore)
+              ((symbol-function 'transient-args) (lambda (_) nil)))
+      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+        (search-forward "spike")
+        (herdr-dispatch-create-pane)
+        (should (equal "w2:p2" target))))))
+
+(ert-deftest herdr-dispatch-create-reads-transient-arguments ()
+  (skip-unless (featurep 'magit-section))
+  (should (equal "main" (herdr-dispatch--arg '("--base=main") "--base")))
+  (should-not (herdr-dispatch--arg '("--base=main") "--label")))
+
+(ert-deftest herdr-dispatch-create-worktree-omits-an-empty-base ()
+  "An empty --base means \"off the current ref\"; `herdr-worktree-create's
+own contract (see herdr-cmd-test.el) is that a blank string must not
+reach the server as one.  `herdr-dispatch-create-worktree' calls
+`herdr-rpc-call\\=' directly rather than through that command, so the
+same contract has to be reasserted here rather than inherited."
+  (skip-unless (featurep 'magit-section))
+  (let ((params nil)
+        (transient-current-command 'herdr-dispatch-create))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (_method p) (setq params p) nil))
+              ((symbol-function 'herdr-state-workspace-directory)
+               (lambda (_state _id) "/tmp/herdr.el/"))
+              ((symbol-function 'read-string) (lambda (&rest _) "feature"))
+              ((symbol-function 'transient-args) (lambda (_) '("--base=")))
+              ((symbol-function 'herdr-dispatch-refresh) #'ignore))
+      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+        (search-forward "herdr.el")
+        (herdr-dispatch-create-worktree)
+        (should (equal "feature" (alist-get 'branch params)))
+        (should-not (alist-get 'base params))
+        (should (equal "/tmp/herdr.el/" (alist-get 'cwd params)))))))
+
 (provide 'herdr-dispatch-test)
 ;;; herdr-dispatch-test.el ends here
