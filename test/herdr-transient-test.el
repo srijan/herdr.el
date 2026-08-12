@@ -22,14 +22,29 @@
     herdr-transient-worktree))
 
 (defun herdr-transient-test--suffix-plist (node)
-  "Return NODE's suffix plist, if NODE is a suffix entry.
-Layout entries are (LEVEL CLASS PLIST) lists and [LEVEL CLASS PLIST
-CHILDREN] vectors, and the children of a group are a plain list of
-entries — so identifying a suffix needs the shape checked, not just the
-third element read."
+  "Return NODE\\='s suffix plist, if NODE is a suffix entry.
+
+Transient stores a prefix\\='s layout as nested lists and vectors, and it
+has changed their shape between releases.  Up to transient 0.12 a suffix
+was (LEVEL CLASS PLIST) — a list whose car is an integer.  From 0.13 the
+level moved into the plist and a suffix became (CLASS . PLIST), a list
+whose car is a class symbol such as `transient-suffix\\='.  Groups changed
+the same way, from the four-element [LEVEL CLASS PLIST CHILDREN] to the
+three-element [CLASS PLIST CHILDREN].
+
+Both shapes are accepted so the suite asserts the key scheme rather than
+one transient release: pinning to either makes every test that walks the
+layout silently vacuous under the other, which is exactly what happened
+when 0.13 landed and the walker started finding zero suffixes.
+
+The shape has to be checked, not just a fixed element read, because
+group entries reach here too.  A group plist like (:description \"Layout\")
+has a keyword car, so the `symbolp\\=' branch would take its cdr — but that
+is (\"Layout\"), whose car is a string rather than a keyword, so the group
+is rejected and only real suffixes come back."
   (and (consp node)
-       (integerp (car node))
-       (let ((plist (nth 2 node)))
+       (let ((plist (cond ((integerp (car node)) (nth 2 node))
+                          ((symbolp (car node)) (cdr node)))))
          (and (consp plist) (keywordp (car plist))
               (plist-get plist :key)
               plist))))
