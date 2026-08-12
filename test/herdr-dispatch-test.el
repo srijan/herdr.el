@@ -126,22 +126,35 @@ special-casing for the flattened shape."
                (workspace_id . "w1") (tab_id . "w1:t1")))))
   "A session for the refresh tests to drive `herdr-state-current' from.")
 
-(defmacro herdr-dispatch-test-with-dispatcher (&rest body)
-  "Run BODY in a real dispatcher buffer built from the test snapshot.
-`herdr-dispatch-refresh' finds its buffer by name, so this has to be the
-real one rather than a temporary."
-  (declare (indent 0) (debug t))
+(defmacro herdr-dispatch-test-in-dispatcher (snapshot &rest body)
+  "Run BODY in a real dispatcher buffer built from SNAPSHOT.
+Every piece of worktree state is rebound, not just the cache: the pending
+set, the unanswered list and the generation counter are globals that
+outlive a buffer, and a test that left one behind would arrive in the
+next as a workspace mysteriously already asked for."
+  (declare (indent 1) (debug t))
   `(progn
      (skip-unless (featurep 'magit-section))
-     (let ((herdr-state--current
-            (herdr-state-from-snapshot herdr-dispatch-test--snapshot))
+     (let ((herdr-state--current (herdr-state-from-snapshot ,snapshot))
            (herdr-dispatch--worktrees nil)
+           (herdr-dispatch--worktrees-pending nil)
+           (herdr-dispatch--worktrees-unanswered nil)
+           (herdr-dispatch--worktrees-generation 0)
+           (herdr-dispatch--refresh-timer nil)
            (buffer (get-buffer-create herdr-dispatch-buffer-name)))
        (unwind-protect
            (with-current-buffer buffer
              (herdr-dispatch-mode)
              ,@body)
-         (kill-buffer buffer)))))
+         (herdr-dispatch--cancel-refresh)
+         (when (buffer-live-p buffer) (kill-buffer buffer))))))
+
+(defmacro herdr-dispatch-test-with-dispatcher (&rest body)
+  "Run BODY in a real dispatcher buffer built from the test snapshot.
+`herdr-dispatch-refresh' finds its buffer by name, so this has to be the
+real one rather than a temporary."
+  (declare (indent 0) (debug t))
+  `(herdr-dispatch-test-in-dispatcher herdr-dispatch-test--snapshot ,@body))
 
 (defvar herdr-dispatch-test--rebuilds 0
   "Whole-buffer rebuilds counted by `herdr-dispatch-test-counting-rebuilds'.")
@@ -678,57 +691,298 @@ answer rather than an approximate one."
 
 ;;; Worktrees
 
+(defconst herdr-dispatch-test--worktree-snapshot
+  '((workspaces . (((workspace_id . "w1") (label . "web") (pane_count . 1))
+                   ((workspace_id . "w2") (label . "api") (pane_count . 1))
+                   ((workspace_id . "w3") (label . "empty") (pane_count . 0))))
+    (tabs . (((tab_id . "w1:t1") (workspace_id . "w1") (label . "main"))
+             ((tab_id . "w2:t1") (workspace_id . "w2") (label . "main"))))
+    (panes . (((pane_id . "w1:p1") (agent . "claude") (agent_status . "idle")
+               (workspace_id . "w1") (tab_id . "w1:t1") (cwd . "/tmp/web"))
+              ((pane_id . "w2:p1") (agent . "claude") (agent_status . "idle")
+               (workspace_id . "w2") (tab_id . "w2:t1") (cwd . "/tmp/api")))))
+  "A session for the worktree tests, with all three cases in it.
+`w1' and `w2' have a pane reporting a cwd, so a directory can be derived
+for them; `w3' has no panes, which is the workspace
+`herdr-state-workspace-directory' answers nil for and which renders like
+any other.")
+
+(defun herdr-dispatch-test--snapshot-with-pane (snapshot pane)
+  "Return SNAPSHOT with PANE appended to its panes.
+Appended rather than prepended because `herdr-state-workspace-directory'
+answers with the oldest pane it was told about, and a test that added a
+pane to the front would be describing a different session from the one it
+meant to."
+  (cons (cons 'panes (append (alist-get 'panes snapshot) (list pane)))
+        (assq-delete-all 'panes (copy-sequence snapshot))))
+
+(defvar herdr-dispatch-test--async nil
+  "Async calls captured by `herdr-dispatch-test-with-async', oldest first.
+Each is (METHOD PARAMS CALLBACK).")
+
+(defmacro herdr-dispatch-test-with-async (&rest body)
+  "Run BODY with `herdr-rpc-call-async' captured rather than performed.
+
+Nothing is answered until the test says so, so the window between a
+request going out and its reply landing — which is where every in-flight
+bug lives, and which a stub that answers immediately closes before a test
+can stand in it — is one BODY can hold open for as long as it likes."
+  (declare (indent 0) (debug t))
+  `(let ((herdr-dispatch-test--async nil))
+     (cl-letf (((symbol-function 'herdr-rpc-call-async)
+                (lambda (method params callback)
+                  (setq herdr-dispatch-test--async
+                        (append herdr-dispatch-test--async
+                                (list (list method params callback))))
+                  'process))
+               ((symbol-function 'herdr-rpc-call)
+                (lambda (&rest _)
+                  (error "the dashboard must not block on the server"))))
+       ,@body)))
+
+(defun herdr-dispatch-test--reply (index result &optional error)
+  "Answer the INDEXth captured async call with RESULT, or with ERROR."
+  (funcall (nth 2 (nth index herdr-dispatch-test--async)) result error))
+
+(defun herdr-dispatch-test--requested ()
+  "Return the cwd of each captured `worktree.list', oldest first."
+  (mapcar (lambda (call)
+            (should (equal "worktree.list" (nth 0 call)))
+            (alist-get 'cwd (nth 1 call)))
+          herdr-dispatch-test--async))
+
 (ert-deftest herdr-dispatch-fetches-worktrees-once-per-workspace ()
-  (skip-unless (featurep 'magit-section))
-  (let ((calls 0)
-        (herdr-dispatch--worktrees nil))
-    (cl-letf (((symbol-function 'herdr-state-workspace-directory)
-               (lambda (_state _id) "/tmp/project/"))
-              ((symbol-function 'herdr-rpc-call)
-               (lambda (method _params)
-                 (should (equal "worktree.list" method))
-                 (setq calls (1+ calls))
-                 '((worktrees . (((path . "/tmp/project-feat")
-                                  (branch . "feat/x")
-                                  (label . "feat/x")
-                                  (open_workspace_id . nil))))))))
-      (should (equal 1 (length (herdr-dispatch--worktrees-for "w1"))))
-      (should (equal 1 (length (herdr-dispatch--worktrees-for "w1"))))
-      (should (equal 1 calls)))))
+  "A first render asks once per workspace, and asks nothing more meanwhile.
+
+Nothing is cached until a reply lands, so the cache check cannot be what
+holds the later refreshes back — only the pending set can, which is why
+no reply is delivered before them.  The dashboard refreshes several times
+a second off the event stream and a socket round trip does not finish
+inside one, so this is the difference between one request per workspace
+and one per workspace per redraw."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (herdr-dispatch-test-with-async
+      (herdr-dispatch-refresh t)
+      (should (equal '("/tmp/web/" "/tmp/api/")
+                     (herdr-dispatch-test--requested)))
+      (dotimes (_ 19) (herdr-dispatch-refresh))
+      (should (equal '("/tmp/web/" "/tmp/api/")
+                     (herdr-dispatch-test--requested))))))
 
 (ert-deftest herdr-dispatch-caches-a-workspace-with-no-worktrees ()
   "The cache must key on presence, not on a truthy value.
 
 A workspace with zero worktrees still gets an entry — `(WORKSPACE-ID
-. nil)' — so the second call must not re-fetch.  A guard written as
+. nil)' — so no later refresh may ask again.  A guard written as
 `(cdr (assoc ...))' rather than `(assoc ...)' would pass the
-once-per-workspace test above, since that test's mock always returns a
-non-empty list; this is the case that tells the two apart."
-  (skip-unless (featurep 'magit-section))
-  (let ((calls 0)
-        (herdr-dispatch--worktrees nil))
-    (cl-letf (((symbol-function 'herdr-state-workspace-directory)
-               (lambda (_state _id) "/tmp/project/"))
-              ((symbol-function 'herdr-rpc-call)
-               (lambda (_method _params)
-                 (setq calls (1+ calls))
-                 '((worktrees . nil)))))
-      (should-not (herdr-dispatch--worktrees-for "w1"))
-      (should-not (herdr-dispatch--worktrees-for "w1"))
-      (should (equal 1 calls))
-      (should (assoc "w1" herdr-dispatch--worktrees)))))
+once-per-workspace test above, whose reply never arrives at all; this is
+the case that tells the two apart."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (herdr-dispatch-test-with-async
+      (herdr-dispatch-refresh t)
+      (herdr-dispatch-test--reply 0 '((worktrees . nil)))
+      (should (assoc "w1" herdr-dispatch--worktrees))
+      (should-not (cdr (assoc "w1" herdr-dispatch--worktrees)))
+      (dotimes (_ 19) (herdr-dispatch-refresh))
+      (should (equal '("/tmp/web/" "/tmp/api/")
+                     (herdr-dispatch-test--requested))))))
+
+(ert-deftest herdr-dispatch-renders-worktrees-when-the-reply-lands ()
+  "The reported bug, from the user's end: no keystroke is involved.
+
+The redraw is driven by letting the callback's own scheduled timer run,
+not by calling `herdr-dispatch-refresh' afterwards — a callback that
+cached the listing and never asked for a redraw would pass that and
+still leave the worktrees off the screen until something else happened
+to redraw."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (let ((herdr-dispatch-refresh-debounce 0.05))
+      (herdr-dispatch-test-with-async
+        (herdr-dispatch-refresh t)
+        (should-not (string-match-p "worktrees" (buffer-string)))
+        (herdr-dispatch-test--reply
+         0 '((worktrees . (((path . "/tmp/web-feat")
+                            (branch . "feat/x")
+                            (open_workspace_id . nil))))))
+        (sit-for 0.2)
+        (should (string-match-p "worktrees 1" (buffer-string)))
+        (should (string-match-p "feat/x" (buffer-string)))))))
+
+(ert-deftest herdr-dispatch-several-replies-cost-one-redraw ()
+  "Replies landing together must not each rebuild the buffer.
+
+The callback schedules a redraw rather than performing or forcing one, so
+the debounce that already absorbs event bursts absorbs these too.
+Counting rebuilds is what tells that apart from two redraws that happen
+to lay down the same characters."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (let ((herdr-dispatch-refresh-debounce 0.05))
+      (herdr-dispatch-test-with-async
+        (herdr-dispatch-refresh t)
+        (should (equal 1 (herdr-dispatch-test-counting-rebuilds
+                           (herdr-dispatch-test--reply
+                            0 '((worktrees . (((path . "/tmp/web-feat")
+                                               (branch . "feat/x"))))))
+                           (herdr-dispatch-test--reply
+                            1 '((worktrees . (((path . "/tmp/api-spike")
+                                               (branch . "spike"))))))
+                           (sit-for 0.2))))
+        (should (string-match-p "feat/x" (buffer-string)))
+        (should (string-match-p "spike" (buffer-string)))))))
+
+(ert-deftest herdr-dispatch-an-error-reply-neither-signals-nor-wedges ()
+  "A failed `worktree.list' caches empty, and `g' is what retries it.
+
+The reply arrives from a process sentinel, so signalling on it would land
+the error in the event stream's process filter rather than anywhere a
+user could act on — hence the error reaching the callback as data.
+
+Caching the failure is the deliberate half: the ordinary cause is a
+workspace directory that is not a git repository, which fails the same
+way forever, and a workspace left uncached is one asked again on every
+redraw for as long as the dashboard stays open.  It must not be
+permanent either, so the retry on a forced refresh is asserted as well."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (herdr-dispatch-test-with-async
+      (herdr-dispatch-refresh t)
+      (herdr-dispatch-test--reply
+       0 nil '((code . "not_found") (message . "not a git repository")))
+      (should (assoc "w1" herdr-dispatch--worktrees))
+      (dotimes (_ 19) (herdr-dispatch-refresh))
+      (should (equal '("/tmp/web/" "/tmp/api/")
+                     (herdr-dispatch-test--requested)))
+      (herdr-dispatch-refresh t)
+      (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/web/")
+                     (herdr-dispatch-test--requested))))))
+
+(ert-deftest herdr-dispatch-does-not-retry-a-workspace-it-cannot-address ()
+  "`w3' has no panes, so no directory can be derived for it — ever.
+
+It still renders, so a fetch keyed on rendering reaches it on every
+single redraw.  No request can go out for it, which makes the request
+count blind to the loop; what is counted here is the attempt, and the
+cache entry that stops it."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (let ((attempts nil))
+      (advice-add 'herdr-dispatch--fetch-worktrees :before
+                  (lambda (id &rest _) (push id attempts)))
+      (unwind-protect
+          (herdr-dispatch-test-with-async
+            (herdr-dispatch-refresh t)
+            (dotimes (_ 19) (herdr-dispatch-refresh))
+            (should (assoc "w3" herdr-dispatch--worktrees))
+            (should-not (cdr (assoc "w3" herdr-dispatch--worktrees)))
+            (should (equal '("w1" "w2" "w3") (nreverse attempts)))
+            (should (equal '("/tmp/web/" "/tmp/api/")
+                           (herdr-dispatch-test--requested))))
+        (advice-mapc (lambda (fn _props)
+                       (advice-remove 'herdr-dispatch--fetch-worktrees fn))
+                     'herdr-dispatch--fetch-worktrees)))))
+
+(ert-deftest herdr-dispatch-asks-a-workspace-once-it-has-a-directory ()
+  "A workspace with no directory yet is asked as soon as it has one.
+
+`workspace_created' and the `pane_created' that gives the workspace its
+first pane are two events, and a redraw can fall between them — so the
+workspace is cached empty for want of a directory it is about to have.
+Leaving it there until the next \\[herdr-dispatch-refresh] would be the
+reported bug wearing a different hat: worktrees that show up only when a
+key is pressed.  The cure must not become a retry loop either, so the
+refreshes after the request are counted too."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (herdr-dispatch-test-with-async
+      (herdr-dispatch-refresh t)
+      (should (equal '("/tmp/web/" "/tmp/api/")
+                     (herdr-dispatch-test--requested)))
+      (should (assoc "w3" herdr-dispatch--worktrees))
+      (setq herdr-state--current
+            (herdr-state-from-snapshot
+             (herdr-dispatch-test--snapshot-with-pane
+              herdr-dispatch-test--worktree-snapshot
+              '((pane_id . "w3:p1") (agent . "claude") (agent_status . "idle")
+                (workspace_id . "w3") (cwd . "/tmp/late")))))
+      (herdr-dispatch-refresh)
+      (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/late/")
+                     (herdr-dispatch-test--requested)))
+      (dotimes (_ 19) (herdr-dispatch-refresh))
+      (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/late/")
+                     (herdr-dispatch-test--requested)))
+      (herdr-dispatch-test--reply 2 '((worktrees . nil)))
+      (dotimes (_ 19) (herdr-dispatch-refresh))
+      (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/late/")
+                     (herdr-dispatch-test--requested))))))
+
+(ert-deftest herdr-dispatch-invalidation-abandons-a-reply-in-flight ()
+  "A listing invalidated while it was on the wire must not be written back.
+
+`worktree_created' says the answer we are waiting for is already stale,
+so the reply carrying it is dropped whole rather than merely allowed to
+lose a race: it neither populates the cache nor clears a pending marker.
+
+Clearing the marker is the subtle half.  By the time the abandoned reply
+lands, the pending entry for its workspace belongs to the refetch that
+replaced it — so a callback that cleared it would leave the refetch
+unguarded, and the next of the many refreshes would issue a third
+request for the same workspace."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (herdr-dispatch-test-with-async
+      (herdr-dispatch-refresh t)
+      (herdr-dispatch--invalidate-worktrees "worktree_created" nil)
+      (should-not herdr-dispatch--worktrees-pending)
+      (herdr-dispatch-refresh)
+      (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/web/" "/tmp/api/")
+                     (herdr-dispatch-test--requested)))
+      (herdr-dispatch-test--reply 0 '((worktrees . (stale))))
+      (should-not (assoc "w1" herdr-dispatch--worktrees))
+      (should (member "w1" herdr-dispatch--worktrees-pending))
+      (herdr-dispatch-refresh)
+      (should (equal 4 (length herdr-dispatch-test--async)))
+      (herdr-dispatch-test--reply 2 '((worktrees . (fresh))))
+      (should (equal '(fresh) (cdr (assoc "w1" herdr-dispatch--worktrees)))))))
+
+(ert-deftest herdr-dispatch-a-reply-after-the-buffer-is-killed-is-harmless ()
+  "The dashboard can be killed between the request and the reply.
+
+`q' does exactly that, and the reply lands in a process sentinel where an
+error is unhandled and ends up in the event stream's filter.
+
+Asserting that no timer is left behind is what makes this a test rather
+than a smoke check: a callback that scheduled a redraw regardless would
+raise no error here, and would simply leave a timer pointing at a buffer
+that no longer exists."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (herdr-dispatch-test-with-async
+      (herdr-dispatch-refresh t)
+      (kill-buffer herdr-dispatch-buffer-name)
+      (herdr-dispatch-test--reply 0 '((worktrees . nil)))
+      (should (assoc "w1" herdr-dispatch--worktrees))
+      (should-not herdr-dispatch--refresh-timer))))
 
 (ert-deftest herdr-dispatch-worktree-events-drop-the-cache ()
+  "Invalidation clears every record of every worktree, not just the cache.
+
+The answers, the questions still outstanding and the failures all go, and
+the generation moves so that the outstanding ones cannot come back.
+Anything less leaves a workspace that is neither cached, nor pending, nor
+asked again."
   (skip-unless (featurep 'magit-section))
-  (let ((herdr-dispatch--worktrees '(("w1" . (ignored)))))
+  (let ((herdr-dispatch--worktrees '(("w1" . (ignored))))
+        (herdr-dispatch--worktrees-pending '("w2"))
+        (herdr-dispatch--worktrees-unanswered '(("w3" . error)))
+        (herdr-dispatch--worktrees-generation 7))
     (herdr-dispatch--invalidate-worktrees "worktree_created" nil)
-    (should-not herdr-dispatch--worktrees)))
+    (should-not herdr-dispatch--worktrees)
+    (should-not herdr-dispatch--worktrees-pending)
+    (should-not herdr-dispatch--worktrees-unanswered)
+    (should (equal 8 herdr-dispatch--worktrees-generation))))
 
 (ert-deftest herdr-dispatch-unrelated-events-keep-the-cache ()
   (skip-unless (featurep 'magit-section))
-  (let ((herdr-dispatch--worktrees '(("w1" . (ignored)))))
+  (let ((herdr-dispatch--worktrees '(("w1" . (ignored))))
+        (herdr-dispatch--worktrees-generation 7))
     (herdr-dispatch--invalidate-worktrees "pane_updated" nil)
-    (should herdr-dispatch--worktrees)))
+    (should herdr-dispatch--worktrees)
+    (should (equal 7 herdr-dispatch--worktrees-generation))))
 
 (ert-deftest herdr-dispatch-refresh-draws-a-populated-worktrees-cache ()
   "The worktrees branch of the renderer, exercised end-to-end.
@@ -758,49 +1012,28 @@ closes that gap."
                       (herdr-dispatch-test--type-at "feat/x"))))
       (kill-buffer buffer))))
 
-(ert-deftest herdr-dispatch-toggle-fetches-worktrees-on-first-open ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (let ((herdr-dispatch--worktrees nil))
-      (cl-letf (((symbol-function 'herdr-dispatch--worktrees-for)
-                 (lambda (workspace)
-                   (push (cons workspace nil) herdr-dispatch--worktrees)))
-                ((symbol-function 'herdr-dispatch-refresh) #'ignore)
-                ((symbol-function 'magit-section-toggle) #'ignore))
-        (search-forward "w1:p1")
-        (herdr-dispatch-toggle)
-        (should (assoc "w1" herdr-dispatch--worktrees))))))
+(ert-deftest herdr-dispatch-tab-fetches-nothing ()
+  "TAB is the plain section toggle, and reaches the server not at all.
 
-(ert-deftest herdr-dispatch-toggle-does-not-refetch-an-expanded-workspace ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (let ((herdr-dispatch--worktrees '(("w1" . nil))))
-      (cl-letf (((symbol-function 'herdr-dispatch--worktrees-for)
-                 (lambda (&rest _) (error "should not be called")))
-                ((symbol-function 'magit-section-toggle) #'ignore))
-        (search-forward "w1:p1")
-        (herdr-dispatch-toggle)))))
-
-(ert-deftest herdr-dispatch-toggle-toggles-before-it-fetches-and-refreshes ()
-  "The keystroke acts on the section that was under point when it was pressed.
-
-Fetching worktrees ends in a redraw, and a redraw recreates every
-section, so a toggle sequenced after it acts on a section rebuilt out
-from under the user rather than the one they aimed at.  Only the order
-of the three calls distinguishes the two arrangements — both fetch, both
-refresh, both toggle — so the order is what is asserted."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (let ((order nil)
-          (herdr-dispatch--worktrees nil))
-      (cl-letf (((symbol-function 'magit-section-toggle)
-                 (lambda () (interactive) (push 'toggle order)))
-                ((symbol-function 'herdr-dispatch--worktrees-for)
-                 (lambda (workspace)
-                   (push 'fetch order)
-                   (push (cons workspace nil) herdr-dispatch--worktrees)))
-                ((symbol-function 'herdr-dispatch-refresh)
-                 (lambda (&rest _) (push 'refresh order))))
-        (search-forward "w1:p1")
-        (herdr-dispatch-toggle)
-        (should (equal '(toggle fetch refresh) (nreverse order)))))))
+Binding the fetch to it was the reported bug: a blocking `worktree.list'
+on a keystroke, and — because the toggle collapses the workspace before
+the fetch draws into it — a TAB on a workspace line that hid the very
+worktrees it had just fetched.  They showed up only when TAB was pressed
+on an agent line, where a leaf section makes the toggle a no-op.  Both
+lines are pressed here, and the workspace line twice, so a fetch left on
+any of those paths is caught."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (should (eq #'magit-section-toggle
+                (lookup-key herdr-dispatch-mode-map (kbd "TAB"))))
+    (should-not (fboundp 'herdr-dispatch-toggle))
+    (herdr-dispatch-test-with-async
+      (herdr-dispatch-refresh t)
+      (let ((requested (herdr-dispatch-test--requested)))
+        (dolist (line '("web" "w1:p1" "web"))
+          (goto-char (point-min))
+          (search-forward line)
+          (call-interactively (lookup-key herdr-dispatch-mode-map (kbd "TAB"))))
+        (should (equal requested (herdr-dispatch-test--requested)))))))
 
 (ert-deftest herdr-dispatch-folds-and-unfolds-across-intervening-refreshes ()
   "\"Cannot fold after unfolding\" was the report, so fold repeatedly.
@@ -810,23 +1043,19 @@ by a rendered change between every keystroke, because a single toggle in
 a static buffer never meets the erase that broke this."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
-    (cl-letf (((symbol-function 'herdr-dispatch--worktrees-for)
-               (lambda (workspace)
-                 (push (cons workspace nil) herdr-dispatch--worktrees)
-                 nil)))
-      (dotimes (i 4)
-        (goto-char (point-min))
-        (search-forward "web")
-        (herdr-dispatch-toggle)
-        (should (equal (cl-evenp i)
-                       (and (oref (magit-current-section) hidden) t)))
-        (herdr-dispatch-test--pane-event
-         "w1:p1" (if (cl-evenp i) "idle" "working") i)
-        (herdr-dispatch-refresh)
-        (goto-char (point-min))
-        (search-forward "web")
-        (should (equal (cl-evenp i)
-                       (and (oref (magit-current-section) hidden) t)))))))
+    (dotimes (i 4)
+      (goto-char (point-min))
+      (search-forward "web")
+      (call-interactively #'magit-section-toggle)
+      (should (equal (cl-evenp i)
+                     (and (oref (magit-current-section) hidden) t)))
+      (herdr-dispatch-test--pane-event
+       "w1:p1" (if (cl-evenp i) "idle" "working") i)
+      (herdr-dispatch-refresh)
+      (goto-char (point-min))
+      (search-forward "web")
+      (should (equal (cl-evenp i)
+                     (and (oref (magit-current-section) hidden) t))))))
 
 (ert-deftest herdr-dispatch-open-worktree-focuses-an-already-open-worktree ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
@@ -871,11 +1100,6 @@ worktree's directory, and asserting the exact params reaching
                        (herdr-dispatch-test-with-recorders
                            (herdr-workspace-focus herdr-rpc-call)
                          (herdr-dispatch-open-worktree))))))))
-
-(ert-deftest herdr-dispatch-binds-tab-to-toggle ()
-  (skip-unless (featurep 'magit-section))
-  (should (eq #'herdr-dispatch-toggle
-              (lookup-key herdr-dispatch-mode-map (kbd "TAB")))))
 
 (ert-deftest herdr-dispatch-binds-question-mark-to-the-transient ()
   (skip-unless (featurep 'magit-section))

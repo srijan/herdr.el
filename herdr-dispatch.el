@@ -52,8 +52,39 @@ debounced: \\[herdr-dispatch-refresh] redraws immediately."
   :group 'herdr)
 
 (defvar herdr-dispatch--worktrees nil
-  "Alist of (WORKSPACE-ID . LIST-OF-WORKTREEINFO) for expanded workspaces.
-Filled lazily; see `herdr-dispatch--worktrees-for'.")
+  "Alist of (WORKSPACE-ID . LIST-OF-WORKTREEINFO) for answered workspaces.
+
+Presence of the entry, not the truth of its value, is what records that a
+workspace has been answered: a repository with no worktrees at all caches
+as (WORKSPACE-ID . nil) and must not be asked again.  Every guard over
+this alist therefore uses `assoc\\=', never `alist-get\\='.
+
+Filled asynchronously as the dashboard renders; see
+`herdr-dispatch--request-worktrees\\='.")
+
+(defvar herdr-dispatch--worktrees-pending nil
+  "Workspace ids whose `worktree.list\\=' request has not been answered yet.
+
+Nothing reaches `herdr-dispatch--worktrees\\=' until a reply lands, so the
+cache alone cannot stop the next refresh — and the dashboard refreshes
+several times a second under load — from asking the same question again.
+This is the guard that does.")
+
+(defvar herdr-dispatch--worktrees-unanswered nil
+  "Alist of (WORKSPACE-ID . REASON) for entries cached without an answer.
+
+A request that came back an error, and a workspace with no directory to
+address a request to, both cache as (WORKSPACE-ID . nil) so that neither
+is retried on every single redraw.  Remembering which entries are
+placeholders rather than answers is what lets \\[herdr-dispatch-refresh]
+retry exactly those, and REASON — `error\\=' or `no-directory\\=' — is what
+lets one of them retry sooner: see
+`herdr-dispatch--request-worktrees\\='.")
+
+(defvar herdr-dispatch--worktrees-generation 0
+  "Counter bumped every time the worktree cache is invalidated.
+Requests carry the generation they were issued under; see
+`herdr-dispatch--worktrees-received\\=' for what that is worth.")
 
 (defvar herdr-dispatch--refresh-timer nil
   "Timer for the pending debounced redraw, or nil when none is pending.")
@@ -77,7 +108,25 @@ tells itself apart from a redraw of an empty session.")
     (define-key map "f" #'herdr-dispatch-focus)
     (define-key map "R" #'herdr-dispatch-rename)
     (define-key map "k" #'herdr-dispatch-close)
-    (define-key map (kbd "TAB") #'herdr-dispatch-toggle)
+    ;; TAB is `magit-section-toggle' itself.  It was a command of ours
+    ;; for as long as unfolding a workspace was what fetched its
+    ;; worktrees, and that arrangement was wrong twice over: it put a
+    ;; blocking `worktree.list' on a keystroke, and the toggle collapsed
+    ;; the workspace before the fetch drew into it, so TAB on a workspace
+    ;; line hid the very worktrees it had just fetched.  They appeared
+    ;; only when TAB was pressed on an agent line, where a leaf section
+    ;; makes the toggle a no-op — which is how the bug was reported.
+    ;; `herdr-dispatch--request-worktrees' fetches on render now, leaving
+    ;; the toggle nothing of ours to do.
+    ;;
+    ;; If folding misbehaves here again, the cause is not this binding.
+    ;; The reported "cannot fold after unfolding" was
+    ;; `herdr-dispatch--refresh-hook' redrawing synchronously out of the
+    ;; event stream's process filter, landing an `erase-buffer' in the
+    ;; middle of a command roughly ten times a second; the debounce and
+    ;; the unchanged-tree skip in `herdr-dispatch-refresh' are what
+    ;; address that.  Reach for those first.
+    (define-key map (kbd "TAB") #'magit-section-toggle)
     (define-key map "c" #'herdr-dispatch-create)
     (define-key map "w" #'herdr-dispatch-create-workspace)
     (define-key map "t" #'herdr-dispatch-create-tab)
@@ -185,60 +234,168 @@ reported rather than raised.  DOCSTRING documents the command."
 
 ;;; Worktrees
 
-(defun herdr-dispatch--worktrees-for (workspace-id)
-  "Return WORKSPACE-ID\\='s git worktrees, fetching them once.
+(defun herdr-dispatch--forget-worktrees ()
+  "Drop everything known about worktrees, replies still in flight included.
 
-Fetched on first expand rather than on every draw: `worktree.list\\=' is a
-blocking round trip and there is one per workspace, so drawing them
-eagerly would put N synchronous calls in the refresh path."
-  (if-let* ((entry (assoc workspace-id herdr-dispatch--worktrees)))
-      (cdr entry)
-    (let* ((dir (herdr-state-workspace-directory (herdr-state-current)
-                                                  workspace-id))
-           (found (when dir
-                    (alist-get 'worktrees
-                               (herdr-rpc-call "worktree.list"
-                                               `((cwd . ,dir)))))))
-      (push (cons workspace-id found) herdr-dispatch--worktrees)
-      found)))
+Bumping the generation is what abandons those replies, and it is the
+half that is easy to leave out: clearing `herdr-dispatch--worktrees-pending\\='
+alone would let a listing that was already on the wire land afterwards
+and write back the very cache entry the invalidation had just removed —
+and, worse, clear the pending marker belonging to the refetch that
+replaced it, so the refresh after that would issue a third request for
+the same workspace."
+  (setq herdr-dispatch--worktrees nil
+        herdr-dispatch--worktrees-pending nil
+        herdr-dispatch--worktrees-unanswered nil
+        herdr-dispatch--worktrees-generation
+        (1+ herdr-dispatch--worktrees-generation)))
+
+(defun herdr-dispatch--forget-one-worktrees (workspace-id)
+  "Drop what is cached for WORKSPACE-ID, so that it is asked again.
+Only the placeholders are ever dropped this way; an answer stands until
+the whole cache is invalidated."
+  (setq herdr-dispatch--worktrees
+        (assoc-delete-all workspace-id herdr-dispatch--worktrees)
+        herdr-dispatch--worktrees-unanswered
+        (assoc-delete-all workspace-id herdr-dispatch--worktrees-unanswered)))
+
+(defun herdr-dispatch--worktrees-received (workspace-id generation found error)
+  "Cache FOUND as WORKSPACE-ID\\='s worktrees and ask for a redraw.
+
+GENERATION is what `herdr-dispatch--worktrees-generation\\=' held when the
+request went out.  A reply from an older generation was invalidated while
+it was in flight, so it is dropped whole: it neither writes the cache nor
+touches the pending set, which by then describes the refetch that
+replaced it rather than this request.
+
+A non-nil ERROR caches nil rather than nothing at all.  The ordinary
+cause is a workspace directory that is not a git repository, which will
+fail identically forever, and asking again on every redraw is a request
+per workspace several times a second for as long as the dashboard is
+open.  The workspace is remembered in
+`herdr-dispatch--worktrees-unanswered\\=' instead, which
+\\[herdr-dispatch-refresh] retries — so the entry costs nothing to
+correct and is not permanent.  It is not retried any sooner than that,
+because nothing the dashboard can observe says the answer would differ:
+the directory it named is the same directory, and no event announces
+that one has become a git repository.
+
+Called from a process sentinel, where a signal would be unhandled and
+land in the event stream\\='s filter, so nothing here may signal: the
+server\\='s error arrives as data rather than as a `herdr-error\\=', and a
+dashboard killed since the request went out is a redraw not scheduled
+rather than a buffer written to."
+  (when (equal generation herdr-dispatch--worktrees-generation)
+    (setq herdr-dispatch--worktrees-pending
+          (delete workspace-id herdr-dispatch--worktrees-pending))
+    (when error
+      (setf (alist-get workspace-id herdr-dispatch--worktrees-unanswered
+                       nil nil #'equal)
+            'error))
+    (setf (alist-get workspace-id herdr-dispatch--worktrees nil nil #'equal)
+          found)
+    (when (get-buffer herdr-dispatch-buffer-name)
+      (herdr-dispatch--schedule-refresh))))
+
+(defun herdr-dispatch--fetch-worktrees (workspace-id directory)
+  "Ask for WORKSPACE-ID\\='s worktrees, which live in DIRECTORY.
+
+A nil DIRECTORY has no question to ask — `herdr-state-workspace-directory\\='
+derives one from the workspace\\='s panes, and a workspace with no panes
+still renders — so it caches empty at once rather than being reconsidered
+on every redraw for as long as it stays empty.  That it caches as
+`no-directory\\=' rather than as a failure is what lets
+`herdr-dispatch--request-worktrees\\=' ask again the moment a pane gives
+the workspace a directory.
+
+Asynchronous because there is one request per workspace and this runs in
+the refresh path, which is driven by the event stream: a blocking round
+trip there is felt as the whole dashboard stalling.  `herdr-rpc-call-async\\='
+hands a server error to the callback as data, but an unreachable socket
+signals here and now, so that is turned into the same failure the
+callback already handles rather than being allowed to escape into a
+redraw."
+  (if (null directory)
+      (progn
+        (setf (alist-get workspace-id herdr-dispatch--worktrees-unanswered
+                         nil nil #'equal)
+              'no-directory)
+        (setf (alist-get workspace-id herdr-dispatch--worktrees nil nil #'equal)
+              nil))
+    (push workspace-id herdr-dispatch--worktrees-pending)
+    (let ((generation herdr-dispatch--worktrees-generation))
+      (condition-case err
+          (herdr-rpc-call-async
+           "worktree.list" `((cwd . ,directory))
+           (lambda (result error)
+             (herdr-dispatch--worktrees-received
+              workspace-id generation (alist-get 'worktrees result) error)))
+        (herdr-error
+         (herdr-dispatch--worktrees-received
+          workspace-id generation nil
+          `((code . ,(herdr-error-code err))
+            (message . ,(herdr-error-message err)))))))))
+
+(defun herdr-dispatch--request-worktrees (state)
+  "Ask for the worktrees of every workspace in STATE that has none cached.
+
+Worktrees are the one thing in the tree the session snapshot does not
+carry, so they are fetched as the dashboard renders rather than on a
+keystroke: they appear a moment after the buffer opens, with nothing
+blocking and nothing to press.
+
+Runs on every refresh, including the ones that skip the redraw.  A
+skipped redraw means the tree just built equals the tree on screen, and a
+tree built while no worktrees are known goes on equalling itself — so
+keying the fetch to the redraw would leave a workspace unasked forever.
+A workspace is still only asked once: `assoc\\=' covers the ones already
+answered and `herdr-dispatch--worktrees-pending\\=' the ones being answered
+now.
+
+The exception is a workspace that was cached empty only because no
+directory could be derived for it, which is the state a workspace is in
+between the event announcing it and the event giving it its first pane.
+Waiting for \\[herdr-dispatch-refresh] there would be the reported bug in
+another costume — worktrees that appear only when a key is pressed — so
+such an entry is dropped as soon as a directory exists.  This costs a
+`herdr-state-workspace-directory\\=' per redraw, which is a walk of the
+pane list rather than a round trip, and it cannot loop: the entry that
+replaces it is either an answer or a failure, and neither is retried
+here."
+  (dolist (workspace (herdr-state-workspaces state))
+    (let* ((id (alist-get 'workspace_id workspace))
+           (directory (herdr-state-workspace-directory state id)))
+      (when (and directory
+                 (eq 'no-directory
+                     (alist-get id herdr-dispatch--worktrees-unanswered
+                                nil nil #'equal)))
+        (herdr-dispatch--forget-one-worktrees id))
+      (unless (or (assoc id herdr-dispatch--worktrees)
+                  (member id herdr-dispatch--worktrees-pending))
+        (herdr-dispatch--fetch-worktrees id directory)))))
+
+(defun herdr-dispatch--retry-unanswered-worktrees ()
+  "Forget the workspaces cached empty for want of an answer.
+The next `herdr-dispatch--request-worktrees\\=' asks them again.  Only
+those: a repository that genuinely has no worktrees keeps its entry, so
+\\[herdr-dispatch-refresh] does not re-ask the whole session."
+  (dolist (id (mapcar #'car herdr-dispatch--worktrees-unanswered))
+    (setq herdr-dispatch--worktrees
+          (assoc-delete-all id herdr-dispatch--worktrees)))
+  (setq herdr-dispatch--worktrees-unanswered nil))
 
 (defun herdr-dispatch--invalidate-worktrees (kind _data)
   "Drop the worktree cache when KIND changed the set of worktrees.
 Also unhooks from `herdr-state-change-hook\\=' once the dispatcher's buffer
 is gone, matching `herdr-dispatch--refresh-hook\\='.  Whole-cache rather
 than per-workspace: the events carry a worktree, not the workspace whose
-listing it belongs to, and the refetch is one call per expanded
+listing it belongs to, and the refetch is one asynchronous call per
 workspace."
   (when (member kind '("worktree_created" "worktree_opened"
                        "worktree_removed"))
-    (setq herdr-dispatch--worktrees nil))
+    (herdr-dispatch--forget-worktrees))
   (unless (get-buffer herdr-dispatch-buffer-name)
     (remove-hook 'herdr-state-change-hook #'herdr-dispatch--invalidate-worktrees)))
-
-(herdr-dispatch-defverb herdr-dispatch-toggle ()
-  "Fold or unfold the section at point, fetching worktrees on first open.
-
-The toggle happens first because a keystroke should act on the section
-that was under point when it was pressed, not on one this command
-rebuilt in between.  The workspace is re-resolved from point afterwards
-rather than captured before, so the fetch still follows what the toggle
-landed on.
-
-Ordering is not what fixed the reported \"cannot fold after unfolding\",
-though — `call-interactively\\=' evaluates `magit-section-toggle\\='s
-`interactive\\=' form after the refresh has returned, so the section it
-acts on was always freshly resolved.  That symptom came from
-`herdr-dispatch--refresh-hook\\=' redrawing synchronously out of the event
-stream\\='s process filter, which could land an `erase-buffer\\=' in the
-middle of this command roughly ten times a second; the debounce and the
-unchanged-tree skip in `herdr-dispatch-refresh\\=' are what address it.
-Reach for those first when a command in this buffer misbehaves under
-load."
-  (call-interactively #'magit-section-toggle)
-  (when-let* ((workspace (herdr-dispatch--value-at-point 'herdr-workspace))
-              ((not (assoc workspace herdr-dispatch--worktrees))))
-    (herdr-dispatch--worktrees-for workspace)
-    (herdr-dispatch-refresh)))
 
 (defun herdr-dispatch--worktree-at-point ()
   "Return the cached WorktreeInfo for the worktree line at point.
@@ -472,7 +629,7 @@ not the workspace at point, matching the treatment already given to
                       (base . ,(unless (string-empty-p (or base "")) base))
                       (cwd . ,dir)
                       (focus . t)))
-    (setq herdr-dispatch--worktrees nil)
+    (herdr-dispatch--forget-worktrees)
     (herdr-dispatch-refresh)))
 
 (defun herdr-dispatch--create-heading ()
@@ -538,10 +695,18 @@ Nearly every `pane_updated\\=' carries only revision and scroll churn that
 the dashboard never renders, and erasing the buffer to lay down the same
 characters is what reset the cursor and left folds acting on dead
 sections.  Non-nil FORCE redraws regardless, which is what
-\\[herdr-dispatch-refresh] does."
+\\[herdr-dispatch-refresh] does.
+
+Also where worktrees are fetched, since this is the one place that knows
+a workspace is being drawn.  The request goes out whether or not this
+call redraws, and the reply schedules its own redraw rather than forcing
+one; see `herdr-dispatch--request-worktrees\\='.  FORCE additionally
+retries the workspaces whose last fetch could not be answered, which is
+the manual cure for a `worktree.list\\=' that failed."
   (interactive (list t))
   (when-let* ((buffer (get-buffer herdr-dispatch-buffer-name)))
     (with-current-buffer buffer
+      (when force (herdr-dispatch--retry-unanswered-worktrees))
       (let* ((state (herdr-state-current))
              (header (herdr-dispatch--header state))
              (tree (herdr-tree-build state herdr-dispatch--worktrees)))
@@ -579,7 +744,12 @@ sections.  Non-nil FORCE redraws regardless, which is what
                                 (herdr-dispatch--position-restore (cdr entry)))))
                 (set-window-point (car entry) position))))
           (setq herdr-dispatch--rendered-header header
-                herdr-dispatch--rendered-tree tree))))))
+                herdr-dispatch--rendered-tree tree))
+        ;; After the draw rather than before it: a reply must reach the
+        ;; screen through the scheduled redraw, so that a callback which
+        ;; caches without asking for one is a visible failure rather than
+        ;; something this call papers over.
+        (herdr-dispatch--request-worktrees state)))))
 
 (defun herdr-dispatch--cancel-refresh ()
   "Cancel the pending debounced redraw, if there is one."
