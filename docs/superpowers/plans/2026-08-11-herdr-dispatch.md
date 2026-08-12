@@ -47,6 +47,24 @@ Spec: `docs/superpowers/specs/2026-08-11-herdr-dispatch-design.md`
 - Tests needing a live herdr server are tagged `:live` and run only under `make test-live`.
 - Every new curated method must be added to `herdr-cmd-methods` in `herdr-cmd.el`.
 - Commit after every task. Work on branch `herdr-dispatch`.
+- **KNOWN-RED BASELINE — read before you run the suite.** Four tests in
+  `test/herdr-transient-test.el` fail on pristine upstream `fe8bc41`, before any work on this
+  branch, and they are not yours to fix:
+
+  ```
+  herdr-transient-adoption-is-offered-and-hidden-under-session
+  herdr-transient-every-curated-command-is-reachable
+  herdr-transient-every-prefix-has-suffixes
+  herdr-transient-lowercase-noun-navigates-uppercase-opens-a-menu
+  ```
+
+  Cause: they introspect `transient`'s internals and the installed `transient` is newer than the
+  API they were written against, so the helper returns zero suffixes and `(> 0 2)` fails. Loading
+  `transient` onto the path does not help — verified.
+
+  **Therefore the passing gate everywhere in this plan is "no NEW failures beyond those four",
+  never "all tests pass".** `make test` exits non-zero because of them; that is expected. Judge
+  by the failure list, not the exit code. `make compile` must still exit 0.
 - Docstrings: first line a complete sentence ending in a period; escape `'foo'` as `\\='foo\\='`
   inside docstrings, matching the existing files.
 
