@@ -218,12 +218,22 @@ workspace."
 (herdr-dispatch-defverb herdr-dispatch-toggle ()
   "Fold or unfold the section at point, fetching worktrees on first open.
 
-The toggle happens first.  Fetching worktrees ends in a redraw, and a
-redraw recreates every section, so a toggle running afterwards would act
-on a section object holding markers into the erased buffer — which is
-why a fold following an unfold appeared to do nothing.  The workspace is
-re-resolved from point after the toggle rather than captured before it,
-so the fetch still follows whatever the keystroke landed on."
+The toggle happens first because a keystroke should act on the section
+that was under point when it was pressed, not on one this command
+rebuilt in between.  The workspace is re-resolved from point afterwards
+rather than captured before, so the fetch still follows what the toggle
+landed on.
+
+Ordering is not what fixed the reported \"cannot fold after unfolding\",
+though — `call-interactively\\=' evaluates `magit-section-toggle\\='s
+`interactive\\=' form after the refresh has returned, so the section it
+acts on was always freshly resolved.  That symptom came from
+`herdr-dispatch--refresh-hook\\=' redrawing synchronously out of the event
+stream\\='s process filter, which could land an `erase-buffer\\=' in the
+middle of this command roughly ten times a second; the debounce and the
+unchanged-tree skip in `herdr-dispatch-refresh\\=' are what address it.
+Reach for those first when a command in this buffer misbehaves under
+load."
   (call-interactively #'magit-section-toggle)
   (when-let* ((workspace (herdr-dispatch--value-at-point 'herdr-workspace))
               ((not (assoc workspace herdr-dispatch--worktrees))))

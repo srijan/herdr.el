@@ -143,47 +143,6 @@ real one rather than a temporary."
              ,@body)
          (kill-buffer buffer)))))
 
-(ert-deftest herdr-dispatch-refresh-draws-the-session ()
-  (herdr-dispatch-test-with-dispatcher
-    (herdr-dispatch-refresh)
-    (should (string-match-p
-             (regexp-quote
-              (format "1 workspaces  2 panes  1%s1%s"
-                      (herdr-tree-glyph "blocked")
-                      (herdr-tree-glyph "working")))
-             (buffer-string)))
-    (should (string-match-p "web" (buffer-string)))
-    (should (string-match-p "w1:p1" (buffer-string)))
-    (should (string-match-p "w1:p2" (buffer-string)))))
-
-(ert-deftest herdr-dispatch-refresh-keeps-folds-and-point ()
-  "Redrawing must not unfold the tree or move you to a different agent.
-
-Neither was covered while `herdr-dispatch-refresh' still called
-`magit-section-cache-visibility' with no argument — which signals
-`wrong-type-argument' on every invocation, because outside an insert
-there is no current section to cache.  The three renderer tests passed
-throughout, so a completely broken refresh looked green."
-  (herdr-dispatch-test-with-dispatcher
-    (herdr-dispatch-refresh)
-    (goto-char (point-min))
-    (search-forward "web")
-    (magit-section-hide (magit-current-section))
-    (should (oref (magit-current-section) hidden))
-    (goto-char (point-min))
-    (search-forward "w1:p2")
-    (let ((ident (magit-section-ident (magit-current-section))))
-      (should (equal '((herdr-pane . "w1:p2") (herdr-workspace . "w1")
-                       (herdr-root))
-                     ident))
-      (herdr-dispatch-refresh)
-      (should (equal ident (magit-section-ident (magit-current-section))))
-      (goto-char (point-min))
-      (search-forward "web")
-      (should (oref (magit-current-section) hidden)))))
-
-;;; Redraw suppression, debouncing and point
-
 (defvar herdr-dispatch-test--rebuilds 0
   "Whole-buffer rebuilds counted by `herdr-dispatch-test-counting-rebuilds'.")
 
@@ -223,6 +182,56 @@ dashboard never renders; STATUS is one it does."
                                        (tab_id . "w1:t1")
                                        (revision . ,revision)
                                        (scroll . ,revision)))))))
+
+(ert-deftest herdr-dispatch-refresh-draws-the-session ()
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh)
+    (should (string-match-p
+             (regexp-quote
+              (format "1 workspaces  2 panes  1%s1%s"
+                      (herdr-tree-glyph "blocked")
+                      (herdr-tree-glyph "working")))
+             (buffer-string)))
+    (should (string-match-p "web" (buffer-string)))
+    (should (string-match-p "w1:p1" (buffer-string)))
+    (should (string-match-p "w1:p2" (buffer-string)))))
+
+(ert-deftest herdr-dispatch-refresh-keeps-folds-and-point ()
+  "Redrawing must not unfold the tree or move you to a different agent.
+
+Neither was covered while `herdr-dispatch-refresh' still called
+`magit-section-cache-visibility' with no argument — which signals
+`wrong-type-argument' on every invocation, because outside an insert
+there is no current section to cache.  The three renderer tests passed
+throughout, so a completely broken refresh looked green.
+
+A rendered change is driven before the second refresh deliberately.
+`herdr-dispatch-refresh' now returns without erasing anything when the
+tree and header are what is already on screen, so a second call against
+an unchanged cache asserts nothing at all — it would pass against a
+refresh that had no restore path whatsoever.  The change is what makes
+this a test of a redraw again rather than a test of the skip."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (search-forward "web")
+    (magit-section-hide (magit-current-section))
+    (should (oref (magit-current-section) hidden))
+    (goto-char (point-min))
+    (search-forward "w1:p2")
+    (let ((ident (magit-section-ident (magit-current-section))))
+      (should (equal '((herdr-pane . "w1:p2") (herdr-workspace . "w1")
+                       (herdr-root))
+                     ident))
+      (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
+      (should (equal 1 (herdr-dispatch-test-counting-rebuilds
+                         (herdr-dispatch-refresh))))
+      (should (equal ident (magit-section-ident (magit-current-section))))
+      (goto-char (point-min))
+      (search-forward "web")
+      (should (oref (magit-current-section) hidden)))))
+
+;;; Redraw suppression, debouncing and point
 
 (ert-deftest herdr-dispatch-refresh-skips-a-redraw-of-an-unchanged-tree ()
   "Revision churn must not cost an `erase-buffer'.
