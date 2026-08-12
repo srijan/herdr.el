@@ -65,8 +65,10 @@ Spec: `docs/superpowers/specs/2026-08-11-herdr-dispatch-design.md`
   **Therefore the passing gate everywhere in this plan is "no NEW failures beyond those four",
   never "all tests pass".** `make test` exits non-zero because of them; that is expected. Judge
   by the failure list, not the exit code. `make compile` must still exit 0.
-- Docstrings: first line a complete sentence ending in a period; escape `'foo'` as `\\='foo\\='`
-  inside docstrings, matching the existing files.
+- Docstrings: first line a complete sentence ending in a period. To stop Emacs converting a
+  quote to a curly quote, write `\\='` in source (two backslashes), which puts `\='` in the
+  runtime docstring. Note that several pre-existing docstrings in this repo write a single
+  backslash, which renders a stray `=` — do not copy that; it is a known pre-existing bug.
 
 ## File Structure
 
