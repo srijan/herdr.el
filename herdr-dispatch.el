@@ -46,6 +46,8 @@ Filled lazily; see `herdr-dispatch--worktrees-for'.")
     (define-key map "p" #'herdr-dispatch-prompt)
     (define-key map "r" #'herdr-dispatch-read)
     (define-key map "f" #'herdr-dispatch-focus)
+    (define-key map "R" #'herdr-dispatch-rename)
+    (define-key map "k" #'herdr-dispatch-close)
     (define-key map (kbd "TAB") #'herdr-dispatch-toggle)
     map)
   "Keymap for `herdr-dispatch-mode'.
@@ -243,6 +245,42 @@ server\\='s choice rather than ours."
                     `((workspace_id . ,(herdr-dispatch--value-at-point
                                         'herdr-workspace)))))
    (t (user-error "herdr: nothing at point"))))
+
+;;; The mutating verbs
+
+(herdr-dispatch-defverb herdr-dispatch-rename ()
+  "Rename the thing at point.
+Most specific section wins: a pane line inside a workspace renames the
+pane, which is the thing you are looking at, rather than its tab or
+workspace."
+  (cond
+   ((herdr-dispatch--value-at-point 'herdr-pane)
+    (herdr-pane-rename (read-string "Pane label: ")
+                       (herdr-dispatch--value-at-point 'herdr-pane)))
+   ((herdr-dispatch--value-at-point 'herdr-tab)
+    (herdr-tab-rename (read-string "Tab label: ")
+                      (herdr-dispatch--value-at-point 'herdr-tab)))
+   ((herdr-dispatch--value-at-point 'herdr-workspace)
+    (herdr-workspace-rename (read-string "Workspace label: ")
+                            (herdr-dispatch--value-at-point 'herdr-workspace)))
+   (t (user-error "herdr: nothing at point to rename"))))
+
+(herdr-dispatch-defverb herdr-dispatch-close ()
+  "Close or remove the thing at point.
+The underlying commands — `herdr-pane-close\\=', `herdr-workspace-close\\='
+and `herdr-worktree-remove\\=' — already prompt for confirmation, so this
+adds no second prompt.  `herdr-tab-close\\=' does not prompt; that
+asymmetry is left as it is rather than fixed here."
+  (cond
+   ((herdr-dispatch--value-at-point 'herdr-worktree)
+    (herdr-worktree-remove (herdr-dispatch--value-at-point 'herdr-workspace)))
+   ((herdr-dispatch--value-at-point 'herdr-pane)
+    (herdr-pane-close (herdr-dispatch--value-at-point 'herdr-pane)))
+   ((herdr-dispatch--value-at-point 'herdr-tab)
+    (herdr-tab-close (herdr-dispatch--value-at-point 'herdr-tab)))
+   ((herdr-dispatch--value-at-point 'herdr-workspace)
+    (herdr-workspace-close (herdr-dispatch--value-at-point 'herdr-workspace)))
+   (t (user-error "herdr: nothing at point to close"))))
 
 (defun herdr-dispatch--header (state)
   "Return the header line summarising STATE."

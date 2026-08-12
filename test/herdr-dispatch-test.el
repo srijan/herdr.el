@@ -561,5 +561,115 @@ worktree's directory, and asserting the exact params reaching
   (should (eq #'herdr-dispatch-toggle
               (lookup-key herdr-dispatch-mode-map (kbd "TAB")))))
 
+;;; Rename
+
+(ert-deftest herdr-dispatch-rename-dispatches-on-section-type ()
+  (skip-unless (featurep 'magit-section))
+  (let ((called nil))
+    (cl-letf (((symbol-function 'herdr-pane-rename)
+               (lambda (label id) (setq called (list 'pane label id))))
+              ((symbol-function 'read-string) (lambda (&rest _) "new")))
+      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+        (search-forward "w1:p1")
+        (herdr-dispatch-rename)
+        (should (equal '(pane "new" "w1:p1") called))))))
+
+(ert-deftest herdr-dispatch-rename-on-a-workspace-renames-the-workspace ()
+  (skip-unless (featurep 'magit-section))
+  (let ((called nil))
+    (cl-letf (((symbol-function 'herdr-workspace-rename)
+               (lambda (label id) (setq called (list 'workspace label id))))
+              ((symbol-function 'read-string) (lambda (&rest _) "new")))
+      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+        (search-forward "herdr.el")
+        (herdr-dispatch-rename)
+        (should (equal '(workspace "new" "w1") called))))))
+
+(ert-deftest herdr-dispatch-rename-on-a-tab-renames-the-tab ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "spike")
+    (should (equal '((herdr-tab-rename "new" "w2:t2"))
+                   (cl-letf (((symbol-function 'read-string)
+                              (lambda (&rest _) "new")))
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-pane-rename herdr-tab-rename
+                                            herdr-workspace-rename)
+                       (herdr-dispatch-rename)))))))
+
+(ert-deftest herdr-dispatch-rename-prefers-the-pane-over-its-tab-and-workspace ()
+  "A pane nested under both a tab and a workspace must still rename the
+pane: only `w2:p1\\=' has all three ancestors to distinguish a `cond\\=' that
+checks the tab or the workspace first from one that checks the pane
+first."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "w2:p1")
+    (should (equal '((herdr-pane-rename "new" "w2:p1"))
+                   (cl-letf (((symbol-function 'read-string)
+                              (lambda (&rest _) "new")))
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-pane-rename herdr-tab-rename
+                                            herdr-workspace-rename)
+                       (herdr-dispatch-rename)))))))
+
+(ert-deftest herdr-dispatch-rename-refuses-a-line-with-nothing-on-it ()
+  (herdr-dispatch-test-with-buffer nil
+    (should-error (herdr-dispatch-rename) :type 'user-error)))
+
+;;; Close
+
+(ert-deftest herdr-dispatch-close-prefers-the-pane-over-its-tab-and-workspace ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "w2:p1")
+    (should (equal '((herdr-pane-close "w2:p1"))
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-close herdr-tab-close herdr-workspace-close
+                                         herdr-worktree-remove)
+                     (herdr-dispatch-close))))))
+
+(ert-deftest herdr-dispatch-close-on-a-tab-closes-the-tab ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "spike")
+    (should (equal '((herdr-tab-close "w2:t2"))
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-close herdr-tab-close herdr-workspace-close
+                                         herdr-worktree-remove)
+                     (herdr-dispatch-close))))))
+
+(ert-deftest herdr-dispatch-close-on-a-workspace-closes-the-workspace ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "api")
+    (should (equal '((herdr-workspace-close "w2"))
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-close herdr-tab-close herdr-workspace-close
+                                         herdr-worktree-remove)
+                     (herdr-dispatch-close))))))
+
+(ert-deftest herdr-dispatch-close-on-a-worktree-removes-its-workspace ()
+  "A worktree line's close must reach `herdr-worktree-remove\\=' with the
+enclosing workspace id, not `herdr-workspace-close\\=' on the same id and
+not any pane close at all — the worktree line sits inside `w1\\='s
+worktrees section, so a `cond\\=' that checked the workspace branch first
+would still produce a plausible-looking single call."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "open as w2")
+    (should (equal '((herdr-worktree-remove "w1"))
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-close herdr-tab-close herdr-workspace-close
+                                         herdr-worktree-remove)
+                     (herdr-dispatch-close))))))
+
+(ert-deftest herdr-dispatch-close-refuses-a-line-with-nothing-on-it ()
+  (herdr-dispatch-test-with-buffer nil
+    (should-error (herdr-dispatch-close) :type 'user-error)))
+
+(ert-deftest herdr-dispatch-binds-the-mutating-verbs ()
+  (skip-unless (featurep 'magit-section))
+  (should (eq #'herdr-dispatch-rename
+              (lookup-key herdr-dispatch-mode-map "R")))
+  (should (eq #'herdr-dispatch-close
+              (lookup-key herdr-dispatch-mode-map "k")))
+  (dolist (verb '(herdr-dispatch-rename herdr-dispatch-close))
+    (should (commandp verb))))
+
 (provide 'herdr-dispatch-test)
 ;;; herdr-dispatch-test.el ends here
