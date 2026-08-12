@@ -32,5 +32,11 @@ so every invocation created a duplicate workspace."
   (should-not (herdr--workspace-for-directory
                (herdr-project-test--state) "/tmp/nowhere")))
 
+(ert-deftest herdr-menu-is-a-distinct-command-from-herdr ()
+  "`herdr-menu' is the transient-ending counterpart to `herdr'."
+  (should (commandp 'herdr-menu))
+  (should (commandp 'herdr))
+  (should-not (eq (symbol-function 'herdr-menu) (symbol-function 'herdr))))
+
 (provide 'herdr-project-test)
 ;;; herdr-project-test.el ends here

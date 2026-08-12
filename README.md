@@ -204,6 +204,11 @@ Terminal buffers track their pane's working directory (`herdr-term-track-directo
 `M-x herdr` (or `C-c H`) opens `*herdr-agents*`: the whole session as a foldable
 workspace → tab → pane tree, and the place every command is reachable from.
 
+`M-x herdr-menu` does the same startup as `herdr` — bringing up the server, terminals and event
+stream — but ends on `herdr-transient`'s compact menu instead of the dashboard. Reach for `herdr`
+when you want to survey the whole session; reach for `herdr-menu` when you are inside an agent's
+terminal buffer and popping open a full-window dashboard would be the wrong move.
+
 | Key | Action |
 | --- | --- |
 | `RET` | go to the thing at point |
@@ -224,9 +229,11 @@ number and adds nothing. A collapsed section still shows the worst status inside
 so folding never hides a blocked agent.
 
 `herdr-transient` is unchanged. The package binds no global key for it: it is reached by
-`M-x herdr-transient` or by `?` in the dispatcher, and the transient goes back the other
-way with `l`. Bind it yourself if you want it on a key. It is the surface to use from
-inside an agent's terminal buffer, where leaving for the dispatcher is the wrong move.
+`M-x herdr-menu`, `M-x herdr-transient` or by `?` in the dispatcher, and the transient goes
+back the other way with `l`. Bind it yourself if you want it on a key. Calling
+`herdr-transient` directly skips the startup `herdr` and `herdr-menu` perform, so from a
+cold Emacs it opens with no state cache behind it; `herdr-menu` is the entry point that
+guarantees the startup has run.
 
 ## Agent awareness
 

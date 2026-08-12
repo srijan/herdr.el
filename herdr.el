@@ -120,6 +120,20 @@ it."
   (herdr-term-display)
   (herdr-agents))
 
+;;;###autoload
+(defun herdr-menu ()
+  "Start herdr if needed and open the compact menu instead of the dashboard.
+Does the same startup as `herdr\\=' — `herdr-start\\=' and
+`herdr-term-display\\=' — but ends on `herdr-transient\\=' rather than
+`herdr-agents\\='.  This is the surface to reach for from inside an
+agent\\='s terminal buffer, where popping open a full-window dashboard
+would pull you out of what you were doing; use `herdr\\=' instead when
+you want to survey the whole session."
+  (interactive)
+  (herdr-start)
+  (herdr-term-display)
+  (call-interactively 'herdr-transient))
+
 ;; Loaded last: herdr-transient autoloads `herdr-project', which is
 ;; defined above, so requiring it here rather than at the top avoids a
 ;; circular load while still making the whole command surface available
