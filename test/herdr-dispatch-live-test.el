@@ -11,7 +11,9 @@
   (condition-case nil (progn (herdr-rpc-call "ping") t) (herdr-error nil)))
 
 (ert-deftest herdr-dispatch-create-round-trip-leaves-the-session-unchanged ()
-  "Create a workspace, tab, pane and agent, then put it all back."
+  "Create a workspace against the real server, then close it again.
+Asserts the session holds exactly the workspaces it started with, so a
+create path that leaks is caught here rather than in the user\\='s session."
   :tags '(:live)
   (skip-unless (and (herdr-dispatch-live-test--server-p)
                     (require 'magit-section nil t)))

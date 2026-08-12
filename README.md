@@ -223,7 +223,9 @@ Workspaces with a single tab omit the tab level, since an unnamed tab is labelle
 number and adds nothing. A collapsed section still shows the worst status inside it,
 so folding never hides a blocked agent.
 
-`herdr-transient` is unchanged and still globally bound — it is the surface to use from
+`herdr-transient` is unchanged. The package binds no global key for it: it is reached by
+`M-x herdr-transient` or by `?` in the dispatcher, and the transient goes back the other
+way with `l`. Bind it yourself if you want it on a key. It is the surface to use from
 inside an agent's terminal buffer, where leaving for the dispatcher is the wrong move.
 
 ## Agent awareness
@@ -273,6 +275,36 @@ make test        # hermetic; no herdr required, uses a fake server
 make test-live   # needs a running herdr; includes the schema drift test
 make compile     # byte-compile, warnings are errors
 ```
+
+### `EXTRA_LOAD_PATH`, and what bare `make test` leaves out
+
+Bare `make test` and `make compile` run against `emacs -Q -L .`, which has no third-party
+packages on its load path. That is deliberate — it keeps both targets meaningful on a
+checkout with nothing installed — but it means neither one covers the dispatcher:
+
+- **`make test`** skips every test whose dependency is missing, currently ~60 of 250,
+  including the whole `herdr-dispatch` suite. The skips are reported, not hidden, but a
+  green bare run says nothing about `herdr-dispatch.el`.
+- **`make compile`** drops `herdr-dispatch.el` from its file list entirely, since
+  byte-compiling it without `magit-section` would only fail on the `require`. So the
+  largest file in the package never meets `byte-compile-error-on-warn` on a bare run.
+
+Point `EXTRA_LOAD_PATH` at the dependencies to run and compile everything. It takes a
+space-separated list of directories, and with `straight`, `elpaca` or any other manager
+they are wherever that manager builds packages:
+
+```bash
+B=~/.emacs.d/var/elpaca/builds   # adjust to your package manager
+DEPS="$B/magit-section $B/compat $B/dash $B/llama $B/transient $B/cond-let"
+
+make test    EXTRA_LOAD_PATH="$DEPS"   # 250 tests, 0 skipped
+make compile EXTRA_LOAD_PATH="$DEPS"   # all 12 files, warnings are errors
+```
+
+All six directories are needed: `magit-section` is the dispatcher's own dependency, and
+`compat`, `dash`, `llama`, `transient` and `cond-let` are what it and `transient` pull in
+behind it. **Run this form before sending a change** — the bare targets will not tell you
+that you broke the dispatcher.
 
 `make test-live` includes a drift test that checks every curated command's method and parameters
 against the running server's schema. herdr is young and its API will move; when it does, that test
