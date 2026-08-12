@@ -7,7 +7,7 @@
 ;; Version: 0.1.0
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-;; Package-Requires: ((emacs "28.1") (transient "0.4.0") (ghostel "0"))
+;; Package-Requires: ((emacs "28.1") (transient "0.4.0") (magit-section "3.3") (ghostel "0"))
 
 ;; This file is not part of GNU Emacs.
 
