@@ -111,11 +111,14 @@ fresh workspace every time."
 
 ;;;###autoload
 (defun herdr ()
-  "Start herdr if needed and open its command menu."
+  "Start herdr if needed and open the dispatcher.
+The transient stays on `herdr-transient\\=', which is the right surface
+when you are inside an agent\\='s terminal buffer and do not want to leave
+it."
   (interactive)
   (herdr-start)
   (herdr-term-display)
-  (call-interactively 'herdr-transient))
+  (herdr-agents))
 
 ;; Loaded last: herdr-transient autoloads `herdr-project', which is
 ;; defined above, so requiring it here rather than at the top avoids a

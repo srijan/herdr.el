@@ -561,6 +561,11 @@ worktree's directory, and asserting the exact params reaching
   (should (eq #'herdr-dispatch-toggle
               (lookup-key herdr-dispatch-mode-map (kbd "TAB")))))
 
+(ert-deftest herdr-dispatch-binds-question-mark-to-the-transient ()
+  (skip-unless (featurep 'magit-section))
+  (should (eq #'herdr-transient
+              (lookup-key herdr-dispatch-mode-map "?"))))
+
 ;;; Rename
 
 (ert-deftest herdr-dispatch-rename-dispatches-on-section-type ()
@@ -762,6 +767,62 @@ same contract has to be reasserted here rather than inherited."
         (should (equal "feature" (alist-get 'branch params)))
         (should-not (alist-get 'base params))
         (should (equal "/tmp/herdr.el/" (alist-get 'cwd params)))))))
+
+(ert-deftest herdr-dispatch-create-workspace-uses-the-directory-argument-when-set ()
+  "--directory short-circuits both the point-derived default and the prompt."
+  (skip-unless (featurep 'magit-section))
+  (let ((called nil)
+        (transient-current-command 'herdr-dispatch-create))
+    (cl-letf (((symbol-function 'herdr-workspace-create)
+               (lambda (dir label) (setq called (list dir label))))
+              ((symbol-function 'transient-args)
+               (lambda (_) '("--directory=/tmp/proj" "--label=proj")))
+              ((symbol-function 'read-directory-name)
+               (lambda (&rest _) (error "should not prompt"))))
+      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+        (search-forward "herdr.el")
+        (herdr-dispatch-create-workspace)
+        (should (equal '("/tmp/proj" "proj") called))))))
+
+(ert-deftest herdr-dispatch-create-agent-starts-in-the-pane-at-point ()
+  "The agent kind and name come from the transient's arguments when set,
+skipping both prompts."
+  (skip-unless (featurep 'magit-section))
+  (let ((called nil)
+        (transient-current-command 'herdr-dispatch-create))
+    (cl-letf (((symbol-function 'herdr-agent-start)
+               (lambda (name kind pane) (setq called (list name kind pane))))
+              ((symbol-function 'transient-args)
+               (lambda (_) '("--kind=claude" "--label=scout")))
+              ((symbol-function 'completing-read)
+               (lambda (&rest _) (error "should not prompt for kind")))
+              ((symbol-function 'read-string)
+               (lambda (&rest _) (error "should not prompt for name"))))
+      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+        (search-forward "w1:p2")
+        (herdr-dispatch-create-agent)
+        (should (equal '("scout" "claude" "w1:p2") called))))))
+
+(ert-deftest herdr-dispatch-binds-the-create-verbs ()
+  (skip-unless (featurep 'magit-section))
+  (should (eq #'herdr-dispatch-create
+              (lookup-key herdr-dispatch-mode-map "c")))
+  (should (eq #'herdr-dispatch-create-workspace
+              (lookup-key herdr-dispatch-mode-map "w")))
+  (should (eq #'herdr-dispatch-create-tab
+              (lookup-key herdr-dispatch-mode-map "t")))
+  (should (eq #'herdr-dispatch-create-pane
+              (lookup-key herdr-dispatch-mode-map "n")))
+  (should (eq #'herdr-dispatch-create-agent
+              (lookup-key herdr-dispatch-mode-map "a")))
+  (should (eq #'herdr-dispatch-create-worktree
+              (lookup-key herdr-dispatch-mode-map "%")))
+  (dolist (verb '(herdr-dispatch-create herdr-dispatch-create-workspace
+                                        herdr-dispatch-create-tab
+                                        herdr-dispatch-create-pane
+                                        herdr-dispatch-create-agent
+                                        herdr-dispatch-create-worktree))
+    (should (commandp verb))))
 
 (provide 'herdr-dispatch-test)
 ;;; herdr-dispatch-test.el ends here

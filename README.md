@@ -65,7 +65,7 @@ Optional, used when present, never required: `marginalia`, `embark`, `consult`, 
 `:ensure nil` matters if you set `use-package-always-ensure` — without it Emacs tries MELPA and fails at startup.
 
 `M-x herdr` starts the server if it is not running, brings up the terminals, connects the event
-stream, and opens the menu.
+stream, and opens the dispatcher.
 
 ## Terminal backends
 
@@ -199,12 +199,37 @@ Worth knowing about:
 Terminal buffers track their pane's working directory (`herdr-term-track-directory`), so
 `find-file` and `compile` from a herdr buffer start in the right place.
 
+## The dispatcher
+
+`M-x herdr` (or `C-c H`) opens `*herdr-agents*`: the whole session as a foldable
+workspace → tab → pane tree, and the place every command is reachable from.
+
+| Key | Action |
+| --- | --- |
+| `RET` | go to the thing at point |
+| `TAB` | fold; fetches a workspace's worktrees on first open |
+| `c` | create menu, with its parent taken from point |
+| `w` / `t` / `n` / `a` / `%` | create workspace / tab / pane / agent / worktree directly |
+| `p` | prompt the agent at point |
+| `r` | read the pane at point into a buffer |
+| `f` | focus the thing at point server-side, without moving Emacs |
+| `R` | rename the thing at point |
+| `k` | close or remove the thing at point |
+| `g` | refresh from the cache |
+| `q` | quit the window |
+| `?` | open `herdr-transient` |
+
+Workspaces with a single tab omit the tab level, since an unnamed tab is labelled by
+number and adds nothing. A collapsed section still shows the worst status inside it,
+so folding never hides a blocked agent.
+
+`herdr-transient` is unchanged and still globally bound — it is the surface to use from
+inside an agent's terminal buffer, where leaving for the dispatcher is the wrong move.
+
 ## Agent awareness
 
 - **Modeline** — `herdr-agents-mode-line-mode` shows e.g. `herdr:2⏸1✓`. Idle agents are omitted
   deliberately: a count that is always on screen stops being read.
-- **`M-x herdr-agents`** — a tree of workspaces and panes with status. `RET` focuses, `p` prompts,
-  `r` reads. Event-driven, no timer.
 - **Desktop notifications** — off by default. `(setq herdr-notify-statuses '("blocked" "done"))`
   to opt in. Uses `alert` when available.
 

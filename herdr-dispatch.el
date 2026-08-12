@@ -29,6 +29,13 @@
 (require 'herdr-rpc)
 (require 'herdr-cmd)
 
+;; `herdr-transient' lives in herdr-transient.el, which autoloads
+;; `herdr-agents' (defined below).  Requiring it here rather than
+;; autoloading would close that into a load cycle, so `?' reaches it the
+;; same way `herdr-agents' reaches back.
+(declare-function herdr-transient "herdr-transient" ())
+(autoload 'herdr-transient "herdr-transient" nil t)
+
 (defcustom herdr-dispatch-buffer-name "*herdr-agents*"
   "Name of the dispatcher buffer."
   :type 'string
@@ -56,6 +63,7 @@ Filled lazily; see `herdr-dispatch--worktrees-for'.")
     (define-key map "n" #'herdr-dispatch-create-pane)
     (define-key map "a" #'herdr-dispatch-create-agent)
     (define-key map "%" #'herdr-dispatch-create-worktree)
+    (define-key map "?" #'herdr-transient)
     map)
   "Keymap for `herdr-dispatch-mode'.
 Lowercase letters are the read-only verbs; each acts on whatever the

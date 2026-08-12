@@ -55,7 +55,7 @@
     (herdr-worktree-open         "worktree.open"        "branch" "cwd" "focus")
     (herdr-worktree-remove       "worktree.remove"      "workspace_id" "force")
     (herdr-agent-prompt          "agent.prompt"         "target" "text")
-    (herdr-agent-read            "agent.read"           "target" "source" "lines" "format")
+    (herdr-agent-read            "agent.read"           "target" "source" "lines" "format" "strip_ansi")
     (herdr-agent-wait            "agent.wait"           "target" "until" "timeout_ms")
     (herdr-agent-start           "agent.start"          "pane_id" "name" "kind")
     (herdr-agent-explain         "agent.explain"        "target")
