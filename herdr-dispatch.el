@@ -24,6 +24,12 @@
 (require 'magit-section)
 (require 'herdr-tree)
 (require 'herdr-state)
+(require 'herdr-rpc)
+(require 'herdr-cmd)
+
+;; Defined in Task 7, in this file.  Declared because `herdr-dispatch-visit'
+;; below calls it, and the byte-compiler must not warn about that.
+(declare-function herdr-dispatch-open-worktree "herdr-dispatch" ())
 
 (defcustom herdr-dispatch-buffer-name "*herdr-agents*"
   "Name of the dispatcher buffer."
@@ -39,10 +45,14 @@ Filled lazily; see `herdr-dispatch--worktrees-for'.")
     (set-keymap-parent map magit-section-mode-map)
     (define-key map "g" #'herdr-dispatch-refresh)
     (define-key map "q" #'quit-window)
+    (define-key map (kbd "RET") #'herdr-dispatch-visit)
+    (define-key map "p" #'herdr-dispatch-prompt)
+    (define-key map "r" #'herdr-dispatch-read)
+    (define-key map "f" #'herdr-dispatch-focus)
     map)
   "Keymap for `herdr-dispatch-mode'.
-Verbs are added in the command-surface layer; this holds only what the
-buffer needs to be readable.")
+Lowercase letters are the read-only verbs; each acts on whatever the
+line under point names, so no key needs a target of its own.")
 
 (define-derived-mode herdr-dispatch-mode magit-section-mode "herdr"
   "Major mode for the herdr dispatcher."
@@ -81,6 +91,97 @@ and do not need defending."
          (magit-insert-section (herdr-worktree value)
            (magit-insert-heading line)
            (herdr-dispatch--insert-nodes children)))))))
+
+;;; The object at point
+
+(defun herdr-dispatch--value-at-point (type)
+  "Return the value of the nearest enclosing section of TYPE, or nil.
+Walks up rather than down: a verb invoked on a pane line inside a
+workspace should reach the workspace too."
+  (let ((section (magit-current-section))
+        (found nil))
+    (while (and section (not found))
+      (when (eq type (oref section type))
+        (setq found (oref section value)))
+      (setq section (oref section parent)))
+    found))
+
+(defun herdr-dispatch--require (type what)
+  "Return the nearest enclosing TYPE value, or signal that WHAT is needed."
+  (or (herdr-dispatch--value-at-point type)
+      (user-error "herdr: point is not on %s" what)))
+
+(defun herdr-dispatch--protect (fn)
+  "Call FN, reporting a `herdr-error\\=' rather than letting it escape.
+
+A stale cache is the usual cause — the pane closed while you were
+looking at it — so `not_found\\=' reconciles and redraws before reporting.
+Seeing a correct tree alongside the message is the difference between
+\"that pane is gone\" and an opaque failure."
+  (condition-case err
+      (funcall fn)
+    (herdr-error
+     (let ((code (herdr-error-code err)))
+       (when (equal code "not_found")
+         (herdr-state-reconcile-panes)
+         (herdr-dispatch-refresh))
+       (message "herdr: %s%s" (herdr-error-message err)
+                (if (equal code "no_server")
+                    " (M-x herdr-start)"
+                  (format " [%s]" code)))))))
+
+(defmacro herdr-dispatch-defverb (name args docstring &rest body)
+  "Define NAME as an interactive command taking ARGS, running BODY.
+BODY is wrapped in `herdr-dispatch--protect\\=', so a server error is
+reported rather than raised.  DOCSTRING documents the command."
+  (declare (indent 3) (doc-string 3))
+  `(defun ,name ,args
+     ,docstring
+     (interactive)
+     (herdr-dispatch--protect (lambda () ,@body))))
+
+;;; The read-only verbs
+
+(herdr-dispatch-defverb herdr-dispatch-visit ()
+  "Go to the thing at point.
+A pane is focused and its buffer shown; a tab or workspace is focused
+and then followed to whichever pane herdr lands on, which is the
+server\\='s choice rather than ours."
+  (cond
+   ((herdr-dispatch--value-at-point 'herdr-pane)
+    (herdr-pane-focus (herdr-dispatch--value-at-point 'herdr-pane)))
+   ((herdr-dispatch--value-at-point 'herdr-worktree)
+    (herdr-dispatch-open-worktree))
+   ((herdr-dispatch--value-at-point 'herdr-tab)
+    (herdr-tab-focus (herdr-dispatch--value-at-point 'herdr-tab)))
+   ((herdr-dispatch--value-at-point 'herdr-workspace)
+    (herdr-workspace-focus (herdr-dispatch--value-at-point 'herdr-workspace)))
+   (t (user-error "herdr: nothing at point"))))
+
+(herdr-dispatch-defverb herdr-dispatch-prompt ()
+  "Prompt the agent at point."
+  (let ((pane (herdr-dispatch--require 'herdr-pane "an agent")))
+    (herdr-agent-prompt (read-string "Prompt: ") pane)))
+
+(herdr-dispatch-defverb herdr-dispatch-read ()
+  "Read the pane at point into a buffer."
+  (herdr-pane-read (herdr-dispatch--require 'herdr-pane "a pane")
+                   "recent_unwrapped"))
+
+(herdr-dispatch-defverb herdr-dispatch-focus ()
+  "Focus the thing at point server-side, without moving Emacs."
+  (cond
+   ((herdr-dispatch--value-at-point 'herdr-pane)
+    (herdr-rpc-call "pane.focus"
+                    `((pane_id . ,(herdr-dispatch--value-at-point 'herdr-pane)))))
+   ((herdr-dispatch--value-at-point 'herdr-tab)
+    (herdr-rpc-call "tab.focus"
+                    `((tab_id . ,(herdr-dispatch--value-at-point 'herdr-tab)))))
+   ((herdr-dispatch--value-at-point 'herdr-workspace)
+    (herdr-rpc-call "workspace.focus"
+                    `((workspace_id . ,(herdr-dispatch--value-at-point
+                                        'herdr-workspace)))))
+   (t (user-error "herdr: nothing at point"))))
 
 (defun herdr-dispatch--header (state)
   "Return the header line summarising STATE."

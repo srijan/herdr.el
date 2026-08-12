@@ -3,6 +3,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 (require 'herdr-tree)
 
 ;; magit-section is a hard dependency of herdr-dispatch and is not on the
@@ -150,6 +151,263 @@ throughout, so a completely broken refresh looked green."
       (goto-char (point-min))
       (search-forward "web")
       (should (oref (magit-current-section) hidden)))))
+
+;;; Resolution
+
+(ert-deftest herdr-dispatch-resolves-the-nearest-enclosing-section ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "w1:p2")
+    (should (equal "w1:p2" (herdr-dispatch--value-at-point 'herdr-pane)))
+    (should (equal "w1" (herdr-dispatch--value-at-point 'herdr-workspace)))))
+
+(ert-deftest herdr-dispatch-resolution-is-nil-when-absent ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "herdr.el")
+    (should-not (herdr-dispatch--value-at-point 'herdr-pane))))
+
+(ert-deftest herdr-dispatch-resolves-every-ancestor-type ()
+  "One pane line has to answer for its tab and its workspace as well."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "w2:p2")
+    (should (equal "w2:p2" (herdr-dispatch--value-at-point 'herdr-pane)))
+    (should (equal "w2:t2" (herdr-dispatch--value-at-point 'herdr-tab)))
+    (should (equal "w2" (herdr-dispatch--value-at-point 'herdr-workspace)))))
+
+(ert-deftest herdr-dispatch-resolution-prefers-the-innermost-match ()
+  "\"Nearest enclosing\" means the walk stops at the first match.
+
+`herdr-tree-build' never nests a type inside itself today, so no fixture
+drawn from a real session can tell a resolver that stops from one that
+keeps climbing.  The guarantee belongs to the resolver rather than to
+the current tree shape, so it is pinned here with a nested fixture of
+its own."
+  (herdr-dispatch-test-with-buffer
+      '((herdr-workspace "outer" "outer workspace"
+                         ((herdr-workspace "inner" "inner workspace"
+                                           ((herdr-pane "p" "a pane" nil))))))
+    (search-forward "a pane")
+    (should (equal "inner" (herdr-dispatch--value-at-point 'herdr-workspace)))))
+
+(ert-deftest herdr-dispatch-require-errors-with-a-specific-message ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "herdr.el")
+    (should-error (herdr-dispatch--require 'herdr-pane "a pane")
+                  :type 'user-error)
+    (should (equal "herdr: point is not on a pane"
+                   (condition-case err
+                       (herdr-dispatch--require 'herdr-pane "a pane")
+                     (user-error (error-message-string err)))))
+    (should (equal "w1" (herdr-dispatch--require 'herdr-workspace "a workspace")))))
+
+;;; Error reporting
+
+(defvar herdr-dispatch-test--calls nil
+  "Calls recorded by `herdr-dispatch-test--recorder', newest first.")
+
+(defun herdr-dispatch-test--recorder (name)
+  "Return a function recording each call to it as (NAME . ARGS)."
+  (lambda (&rest args)
+    (push (cons name args) herdr-dispatch-test--calls)
+    nil))
+
+(defmacro herdr-dispatch-test-with-recorders (names &rest body)
+  "Run BODY with each function in NAMES replaced by a recorder.
+Evaluates to the list of calls made, oldest first, so a test can assert
+on which command ran, with which arguments, and in which order."
+  (declare (indent 1) (debug t))
+  `(let ((herdr-dispatch-test--calls nil))
+     (cl-letf ,(mapcar (lambda (name)
+                         `((symbol-function ',name)
+                           (herdr-dispatch-test--recorder ',name)))
+                       names)
+       ,@body)
+     (nreverse herdr-dispatch-test--calls)))
+
+(defvar herdr-dispatch-test--messages nil
+  "Messages captured by `herdr-dispatch-test-with-messages', newest first.")
+
+(defmacro herdr-dispatch-test-with-messages (&rest body)
+  "Run BODY with `message' captured, evaluating to the messages, oldest first."
+  (declare (indent 0) (debug t))
+  `(let ((herdr-dispatch-test--messages nil))
+     (cl-letf (((symbol-function 'message)
+                (lambda (fmt &rest args)
+                  (push (apply #'format fmt args)
+                        herdr-dispatch-test--messages))))
+       ,@body)
+     (nreverse herdr-dispatch-test--messages)))
+
+(ert-deftest herdr-dispatch-protect-reports-a-server-error ()
+  (skip-unless (featurep 'magit-section))
+  (let ((messages nil))
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (herdr-dispatch--protect
+       (lambda () (signal 'herdr-error (list "busy" "pane is busy")))))
+    (should (string-match-p "busy" (car messages)))
+    (should (equal '("herdr: pane is busy [busy]") messages))))
+
+(ert-deftest herdr-dispatch-protect-passes-a-result-through ()
+  "Protection must not cost the return value of the command it wraps."
+  (skip-unless (featurep 'magit-section))
+  (should (equal 42 (herdr-dispatch--protect (lambda () 42)))))
+
+(ert-deftest herdr-dispatch-protect-reconciles-a-stale-cache-before-reporting ()
+  "`not_found' usually means the cache is stale, so it is corrected first.
+
+Asserting only that some message appeared would pass against a wrapper
+that reported and left the dead pane on screen, which is the failure
+this branch exists to prevent — hence the ordering assertion."
+  (skip-unless (featurep 'magit-section))
+  (let* ((calls nil)
+         (messages
+          (herdr-dispatch-test-with-messages
+            (setq calls
+                  (herdr-dispatch-test-with-recorders
+                      (herdr-state-reconcile-panes herdr-dispatch-refresh)
+                    (herdr-dispatch--protect
+                     (lambda ()
+                       (signal 'herdr-error
+                               (list "not_found" "no such pane")))))))))
+    (should (equal '((herdr-state-reconcile-panes) (herdr-dispatch-refresh))
+                   calls))
+    (should (equal '("herdr: no such pane [not_found]") messages))))
+
+(ert-deftest herdr-dispatch-protect-leaves-a-good-cache-alone ()
+  "Any error but `not_found' says nothing about the cache; do not redraw."
+  (skip-unless (featurep 'magit-section))
+  (let* ((calls nil)
+         (messages
+          (herdr-dispatch-test-with-messages
+            (setq calls
+                  (herdr-dispatch-test-with-recorders
+                      (herdr-state-reconcile-panes herdr-dispatch-refresh)
+                    (herdr-dispatch--protect
+                     (lambda ()
+                       (signal 'herdr-error
+                               (list "busy" "pane is busy")))))))))
+    (should-not calls)
+    (should (equal '("herdr: pane is busy [busy]") messages))))
+
+(ert-deftest herdr-dispatch-protect-points-at-the-fix-for-no-server ()
+  "A dead server has one cure, and the message names it instead of a code."
+  (skip-unless (featurep 'magit-section))
+  (should (equal '("herdr: not running (M-x herdr-start)")
+                 (herdr-dispatch-test-with-messages
+                   (herdr-dispatch--protect
+                    (lambda ()
+                      (signal 'herdr-error
+                              (list "no_server" "not running"))))))))
+
+;;; Verbs
+
+(defun herdr-dispatch-test--visit-from (text)
+  "Return the calls `herdr-dispatch-visit' makes from the line holding TEXT."
+  (goto-char (point-min))
+  (search-forward text)
+  (herdr-dispatch-test-with-recorders
+      (herdr-pane-focus herdr-tab-focus herdr-workspace-focus
+                        herdr-dispatch-open-worktree)
+    (herdr-dispatch-visit)))
+
+(ert-deftest herdr-dispatch-visit-goes-to-the-thing-at-point ()
+  "Each line type reaches its own command, innermost first.
+
+A pane line sits inside a workspace, and a worktree line inside one too,
+so a resolver checked in the wrong order would focus the workspace from
+both and still look like it worked."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (should (equal '((herdr-pane-focus "w1:p2"))
+                   (herdr-dispatch-test--visit-from "w1:p2")))
+    (should (equal '((herdr-dispatch-open-worktree))
+                   (herdr-dispatch-test--visit-from "open as w2")))
+    (should (equal '((herdr-tab-focus "w2:t2"))
+                   (herdr-dispatch-test--visit-from "spike")))
+    (should (equal '((herdr-workspace-focus "w2"))
+                   (herdr-dispatch-test--visit-from "api")))))
+
+(ert-deftest herdr-dispatch-visit-refuses-a-line-with-nothing-on-it ()
+  (herdr-dispatch-test-with-buffer nil
+    (should-error (herdr-dispatch-visit) :type 'user-error)))
+
+(ert-deftest herdr-dispatch-prompt-sends-to-the-agent-at-point ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (should (equal '((herdr-agent-prompt "ship it" "w1:p2"))
+                   (cl-letf (((symbol-function 'read-string)
+                              (lambda (&rest _) "ship it")))
+                     (herdr-dispatch-test-with-recorders (herdr-agent-prompt)
+                       (search-forward "w1:p2")
+                       (herdr-dispatch-prompt)))))))
+
+(ert-deftest herdr-dispatch-prompt-needs-an-agent ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "herdr.el")
+    (should-error (herdr-dispatch-prompt) :type 'user-error)))
+
+(ert-deftest herdr-dispatch-read-reads-the-pane-at-point ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (should (equal '((herdr-pane-read "w1:p2" "recent_unwrapped"))
+                   (herdr-dispatch-test-with-recorders (herdr-pane-read)
+                     (search-forward "w1:p2")
+                     (herdr-dispatch-read))))))
+
+(ert-deftest herdr-dispatch-read-needs-a-pane ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "herdr.el")
+    (should-error (herdr-dispatch-read) :type 'user-error)))
+
+(defun herdr-dispatch-test--focus-from (text)
+  "Return the calls `herdr-dispatch-focus' makes from the line holding TEXT.
+The following commands are recorded alongside `herdr-rpc-call' so that
+reaching the server through one of them is distinguishable from calling
+it directly — they issue the same request, and only the recorder tells
+them apart."
+  (goto-char (point-min))
+  (search-forward text)
+  (herdr-dispatch-test-with-recorders
+      (herdr-rpc-call herdr-pane-focus herdr-tab-focus herdr-workspace-focus)
+    (herdr-dispatch-focus)))
+
+(ert-deftest herdr-dispatch-focus-stays-in-emacs ()
+  "Focusing calls the server directly rather than the following commands.
+
+`herdr-pane-focus' and friends move Emacs as well; `f' is the verb for
+when you want the terminal to move and Emacs to stay put, so it must not
+be implemented in terms of them."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (should (equal '((herdr-rpc-call "pane.focus" ((pane_id . "w1:p2"))))
+                   (herdr-dispatch-test--focus-from "w1:p2")))
+    (should (equal '((herdr-rpc-call "tab.focus" ((tab_id . "w2:t2"))))
+                   (herdr-dispatch-test--focus-from "spike")))
+    (should (equal '((herdr-rpc-call "workspace.focus"
+                                     ((workspace_id . "w2"))))
+                   (herdr-dispatch-test--focus-from "api")))))
+
+(ert-deftest herdr-dispatch-verbs-report-rather-than-raise ()
+  "Every verb goes through the protection, not just the ones tested above."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "w1:p2")
+    (should (equal '("herdr: pane is busy [busy]")
+                   (herdr-dispatch-test-with-messages
+                     (cl-letf (((symbol-function 'herdr-pane-focus)
+                                (lambda (&rest _)
+                                  (signal 'herdr-error
+                                          (list "busy" "pane is busy")))))
+                       (herdr-dispatch-visit)))))))
+
+(ert-deftest herdr-dispatch-binds-the-read-only-verbs ()
+  (skip-unless (featurep 'magit-section))
+  (should (eq #'herdr-dispatch-visit
+              (lookup-key herdr-dispatch-mode-map (kbd "RET"))))
+  (should (eq #'herdr-dispatch-prompt
+              (lookup-key herdr-dispatch-mode-map "p")))
+  (should (eq #'herdr-dispatch-read
+              (lookup-key herdr-dispatch-mode-map "r")))
+  (should (eq #'herdr-dispatch-focus
+              (lookup-key herdr-dispatch-mode-map "f")))
+  (dolist (verb '(herdr-dispatch-visit herdr-dispatch-prompt
+                                       herdr-dispatch-read herdr-dispatch-focus))
+    (should (commandp verb))))
 
 (provide 'herdr-dispatch-test)
 ;;; herdr-dispatch-test.el ends here
