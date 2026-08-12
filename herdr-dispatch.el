@@ -41,9 +41,30 @@
   :type 'string
   :group 'herdr)
 
+(defcustom herdr-dispatch-refresh-debounce 0.2
+  "Seconds to coalesce dispatcher redraws triggered by events.
+One agent producing output bumps its pane\\='s revision about ten times a
+second and every bump reaches `herdr-state-change-hook\\=', so redrawing
+per event meant erasing and rebuilding the buffer ten times a second.
+Short enough that the dashboard still reads as live.  Only the hook is
+debounced: \\[herdr-dispatch-refresh] redraws immediately."
+  :type 'number
+  :group 'herdr)
+
 (defvar herdr-dispatch--worktrees nil
   "Alist of (WORKSPACE-ID . LIST-OF-WORKTREEINFO) for expanded workspaces.
 Filled lazily; see `herdr-dispatch--worktrees-for'.")
+
+(defvar herdr-dispatch--refresh-timer nil
+  "Timer for the pending debounced redraw, or nil when none is pending.")
+
+(defvar-local herdr-dispatch--rendered-tree nil
+  "The tree last drawn into this buffer, as `herdr-tree-build' returned it.")
+
+(defvar-local herdr-dispatch--rendered-header nil
+  "The header line last drawn into this buffer.
+Nil means the buffer has never been drawn, which is how a first refresh
+tells itself apart from a redraw of an empty session.")
 
 (defvar herdr-dispatch-mode-map
   (let ((map (make-sparse-keymap)))
@@ -72,7 +93,7 @@ line under point names, so no key needs a target of its own.")
 (define-derived-mode herdr-dispatch-mode magit-section-mode "herdr"
   "Major mode for the herdr dispatcher."
   (setq-local revert-buffer-function
-              (lambda (&rest _) (herdr-dispatch-refresh))))
+              (lambda (&rest _) (herdr-dispatch-refresh t))))
 
 (defun herdr-dispatch--insert-nodes (nodes &optional depth)
   "Insert NODES, each (TYPE VALUE LINE CHILDREN), as magit sections.
@@ -195,12 +216,19 @@ workspace."
     (remove-hook 'herdr-state-change-hook #'herdr-dispatch--invalidate-worktrees)))
 
 (herdr-dispatch-defverb herdr-dispatch-toggle ()
-  "Fold or unfold the section at point, fetching worktrees on first open."
+  "Fold or unfold the section at point, fetching worktrees on first open.
+
+The toggle happens first.  Fetching worktrees ends in a redraw, and a
+redraw recreates every section, so a toggle running afterwards would act
+on a section object holding markers into the erased buffer — which is
+why a fold following an unfold appeared to do nothing.  The workspace is
+re-resolved from point after the toggle rather than captured before it,
+so the fetch still follows whatever the keystroke landed on."
+  (call-interactively #'magit-section-toggle)
   (when-let* ((workspace (herdr-dispatch--value-at-point 'herdr-workspace))
               ((not (assoc workspace herdr-dispatch--worktrees))))
     (herdr-dispatch--worktrees-for workspace)
-    (herdr-dispatch-refresh))
-  (call-interactively #'magit-section-toggle))
+    (herdr-dispatch-refresh)))
 
 (defun herdr-dispatch--worktree-at-point ()
   "Return the cached WorktreeInfo for the worktree line at point.
@@ -471,36 +499,100 @@ already keeps idle out of the modeline segment."
             (length (herdr-state-panes state))
             (if (string-empty-p summary) "" (concat "  " summary)))))
 
-(defun herdr-dispatch-refresh ()
-  "Redraw the dispatcher from the cache, keeping point and fold state."
-  (interactive)
+(defun herdr-dispatch--position-at (position)
+  "Return (IDENT . COLUMN) naming the section and column at POSITION, or nil.
+Section identity rather than a line number: a pane closing above point
+used to move you to a different agent than the one you were reading."
+  (save-excursion
+    (goto-char position)
+    (when-let* ((section (magit-current-section)))
+      (cons (magit-section-ident section) (current-column)))))
+
+(defun herdr-dispatch--position-restore (position)
+  "Return where POSITION now lands, or nil when its section is gone.
+POSITION is a (IDENT . COLUMN) pair from `herdr-dispatch--position-at'.
+The column is restored within the section\\='s heading line and clamped to
+that line\\='s end, so a redraw keeps the horizontal place as well as the
+vertical one — going to the section start alone jumps you to column 0."
+  (when-let* ((section (magit-get-section (car position))))
+    (save-excursion
+      (goto-char (oref section start))
+      (move-to-column (cdr position))
+      (point))))
+
+(defun herdr-dispatch-refresh (&optional force)
+  "Redraw the dispatcher from the cache, keeping point and fold state.
+
+Does nothing when the tree and header are already what is on screen.
+Nearly every `pane_updated\\=' carries only revision and scroll churn that
+the dashboard never renders, and erasing the buffer to lay down the same
+characters is what reset the cursor and left folds acting on dead
+sections.  Non-nil FORCE redraws regardless, which is what
+\\[herdr-dispatch-refresh] does."
+  (interactive (list t))
   (when-let* ((buffer (get-buffer herdr-dispatch-buffer-name)))
     (with-current-buffer buffer
-      (let ((inhibit-read-only t)
-            (state (herdr-state-current)))
-        ;; Point is restored by section identity rather than by line
-        ;; number: a pane closing above point used to move you to a
-        ;; different agent than the one you were reading.
-        ;;
-        ;; Fold state needs no saving here.  `magit-section-hide' and
-        ;; `magit-section-show' write to `magit-section-visibility-cache'
-        ;; as they go, and `magit-section-set-visibility-hook' reads it
-        ;; back when each section is recreated below.
-        (let ((ident (and (magit-current-section)
-                          (magit-section-ident (magit-current-section)))))
-          (erase-buffer)
-          (magit-insert-section (herdr-root)
-            (magit-insert-heading (herdr-dispatch--header state))
-            (herdr-dispatch--insert-nodes
-             (herdr-tree-build state herdr-dispatch--worktrees)))
-          (when ident
-            (when-let* ((section (magit-get-section ident)))
-              (goto-char (oref section start)))))))))
+      (let* ((state (herdr-state-current))
+             (header (herdr-dispatch--header state))
+             (tree (herdr-tree-build state herdr-dispatch--worktrees)))
+        (when (or force
+                  (not (equal header herdr-dispatch--rendered-header))
+                  (not (equal tree herdr-dispatch--rendered-tree)))
+          ;; Point is saved per window as well as for the buffer.  When
+          ;; the hook fires from the event-stream process filter the
+          ;; dashboard is usually not the selected window, and for a
+          ;; window that is not selected `window-point' is what governs —
+          ;; `erase-buffer' collapses it and a buffer-point restore never
+          ;; reaches it.
+          ;;
+          ;; Fold state needs no saving here.  `magit-section-hide' and
+          ;; `magit-section-show' write to `magit-section-visibility-cache'
+          ;; as they go, and `magit-section-set-visibility-hook' reads it
+          ;; back when each section is recreated below.
+          (let* ((inhibit-read-only t)
+                 (saved (mapcar (lambda (window)
+                                  (cons window
+                                        (herdr-dispatch--position-at
+                                         (window-point window))))
+                                (get-buffer-window-list buffer nil t)))
+                 (here (herdr-dispatch--position-at (point))))
+            (erase-buffer)
+            (magit-insert-section (herdr-root)
+              (magit-insert-heading header)
+              (herdr-dispatch--insert-nodes tree))
+            (when-let* ((position (and here
+                                       (herdr-dispatch--position-restore here))))
+              (goto-char position))
+            (dolist (entry saved)
+              (when-let* ((position
+                           (and (cdr entry)
+                                (herdr-dispatch--position-restore (cdr entry)))))
+                (set-window-point (car entry) position))))
+          (setq herdr-dispatch--rendered-header header
+                herdr-dispatch--rendered-tree tree))))))
+
+(defun herdr-dispatch--cancel-refresh ()
+  "Cancel the pending debounced redraw, if there is one."
+  (when herdr-dispatch--refresh-timer
+    (cancel-timer herdr-dispatch--refresh-timer)
+    (setq herdr-dispatch--refresh-timer nil)))
+
+(defun herdr-dispatch--schedule-refresh ()
+  "Redraw the dispatcher shortly, coalescing a burst of events into one.
+Cancels and reschedules on each event, the shape
+`herdr-term--schedule-directory-poll\\=' already uses for the same problem."
+  (herdr-dispatch--cancel-refresh)
+  (setq herdr-dispatch--refresh-timer
+        (run-at-time herdr-dispatch-refresh-debounce nil
+                     (lambda ()
+                       (setq herdr-dispatch--refresh-timer nil)
+                       (herdr-dispatch-refresh)))))
 
 (defun herdr-dispatch--refresh-hook (&rest _)
-  "Refresh the dispatcher, or unhook when its buffer is gone."
+  "Schedule a dispatcher redraw, or unhook when its buffer is gone."
   (if (get-buffer herdr-dispatch-buffer-name)
-      (herdr-dispatch-refresh)
+      (herdr-dispatch--schedule-refresh)
+    (herdr-dispatch--cancel-refresh)
     (remove-hook 'herdr-state-change-hook #'herdr-dispatch--refresh-hook)))
 
 ;;;###autoload
@@ -512,7 +604,7 @@ already keeps idle out of the modeline segment."
       (unless (derived-mode-p 'herdr-dispatch-mode) (herdr-dispatch-mode))
       (add-hook 'herdr-state-change-hook #'herdr-dispatch--refresh-hook)
       (add-hook 'herdr-state-change-hook #'herdr-dispatch--invalidate-worktrees))
-    (herdr-dispatch-refresh)
+    (herdr-dispatch-refresh t)
     (pop-to-buffer buffer)))
 
 (provide 'herdr-dispatch)

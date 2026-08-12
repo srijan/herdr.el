@@ -182,6 +182,204 @@ throughout, so a completely broken refresh looked green."
       (search-forward "web")
       (should (oref (magit-current-section) hidden)))))
 
+;;; Redraw suppression, debouncing and point
+
+(defvar herdr-dispatch-test--rebuilds 0
+  "Whole-buffer rebuilds counted by `herdr-dispatch-test-counting-rebuilds'.")
+
+(defun herdr-dispatch-test--count-rebuild (&rest args)
+  "Count one rebuild unless ARGS say this is a recursive insert.
+`herdr-dispatch--insert-nodes' recurses with an explicit DEPTH, so only
+the top-level call a redraw makes arrives with a single argument."
+  (unless (cdr args)
+    (setq herdr-dispatch-test--rebuilds (1+ herdr-dispatch-test--rebuilds))))
+
+(defmacro herdr-dispatch-test-counting-rebuilds (&rest body)
+  "Run BODY, evaluating to the number of buffer rebuilds it caused.
+Counting the insert is what tells a suppressed redraw apart from a
+redraw that happened to lay down the same characters — comparing buffer
+strings cannot, and that is the whole distinction under test."
+  (declare (indent 0) (debug t))
+  `(unwind-protect
+       (progn
+         (setq herdr-dispatch-test--rebuilds 0)
+         (advice-add 'herdr-dispatch--insert-nodes :before
+                     #'herdr-dispatch-test--count-rebuild)
+         ,@body
+         herdr-dispatch-test--rebuilds)
+     (advice-remove 'herdr-dispatch--insert-nodes
+                    #'herdr-dispatch-test--count-rebuild)))
+
+(defun herdr-dispatch-test--pane-event (id status revision)
+  "Fold a `pane_updated' for pane ID with STATUS and REVISION into the cache.
+REVISION and scroll are the fields the live stream mostly carries and the
+dashboard never renders; STATUS is one it does."
+  (setq herdr-state--current
+        (herdr-state-reduce herdr-state--current "pane_updated"
+                            `((pane . ((pane_id . ,id)
+                                       (agent . "claude")
+                                       (agent_status . ,status)
+                                       (workspace_id . "w1")
+                                       (tab_id . "w1:t1")
+                                       (revision . ,revision)
+                                       (scroll . ,revision)))))))
+
+(ert-deftest herdr-dispatch-refresh-skips-a-redraw-of-an-unchanged-tree ()
+  "Revision churn must not cost an `erase-buffer'.
+
+A 20-second capture against a live server produced 201 events, 192 of
+them `pane_updated' carrying only revision and scroll.  Redrawing on each
+is what reset the cursor and left folds acting on erased sections, so a
+redraw that would produce the identical tree must not happen at all."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (let ((tick (buffer-chars-modified-tick)))
+      (should (equal 0 (herdr-dispatch-test-counting-rebuilds
+                         (dotimes (i 10)
+                           (herdr-dispatch-test--pane-event "w1:p1" "blocked" i)
+                           (herdr-dispatch-refresh)))))
+      (should (equal tick (buffer-chars-modified-tick)))
+      ;; A field the dashboard does render still gets through.
+      (herdr-dispatch-test--pane-event "w1:p1" "idle" 11)
+      (should (equal 1 (herdr-dispatch-test-counting-rebuilds
+                         (herdr-dispatch-refresh))))
+      (should-not (equal tick (buffer-chars-modified-tick)))
+      (should (string-match-p (regexp-quote (herdr-tree-glyph "idle"))
+                              (buffer-string))))))
+
+(ert-deftest herdr-dispatch-refresh-redraws-when-only-the-header-changed ()
+  "The header is not derived from the tree, so it needs its own comparison.
+
+`herdr-dispatch--header' counts every pane in the cache, while
+`herdr-tree-build' walks workspaces — so a pane whose workspace herdr
+does not know about moves the header and leaves the tree alone.  A skip
+keyed on the tree by itself would freeze the header at a stale count."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (let ((tree (herdr-tree-build (herdr-state-current) nil)))
+      (setq herdr-state--current
+            (herdr-state-reduce herdr-state--current "pane_created"
+                                '((pane . ((pane_id . "ghost:p9")
+                                           (agent . "shell")
+                                           (agent_status . "idle")
+                                           (workspace_id . "ghost")
+                                           (tab_id . "ghost:t1"))))))
+      (should (equal tree (herdr-tree-build (herdr-state-current) nil)))
+      (should (equal 1 (herdr-dispatch-test-counting-rebuilds
+                         (herdr-dispatch-refresh))))
+      (should (string-match-p "3 panes" (buffer-string))))))
+
+(ert-deftest herdr-dispatch-refresh-called-interactively-always-redraws ()
+  "`g' is what you press when you doubt the screen, so it must not be skipped."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (should (equal 0 (herdr-dispatch-test-counting-rebuilds
+                       (herdr-dispatch-refresh))))
+    (should (equal 1 (herdr-dispatch-test-counting-rebuilds
+                       (call-interactively #'herdr-dispatch-refresh))))))
+
+(ert-deftest herdr-dispatch-refresh-hook-defers-rather-than-redrawing ()
+  "The hook schedules; it does not draw.
+
+Asserting only that a redraw eventually happened would pass against the
+undebounced hook, so the point immediately after the event — nothing
+drawn, a timer pending — is what is pinned here."
+  (herdr-dispatch-test-with-dispatcher
+    (let ((herdr-dispatch-refresh-debounce 0.05))
+      (herdr-dispatch-refresh t)
+      (unwind-protect
+          (progn
+            (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
+            (should (equal 0 (herdr-dispatch-test-counting-rebuilds
+                               (herdr-dispatch--refresh-hook "pane_updated" nil))))
+            (should herdr-dispatch--refresh-timer)
+            (should (equal 1 (herdr-dispatch-test-counting-rebuilds
+                               (sit-for 0.2))))
+            (should-not herdr-dispatch--refresh-timer))
+        (herdr-dispatch--cancel-refresh)))))
+
+(ert-deftest herdr-dispatch-refresh-hook-coalesces-a-burst-of-events ()
+  "Ten events inside one window must cost one redraw rather than ten.
+
+Every event here flips `agent_status', which the dashboard does render,
+so the tree-equality skip cannot account for the saving on its own —
+only coalescing can, which is what makes this a test of the debounce
+rather than a second test of the skip."
+  (herdr-dispatch-test-with-dispatcher
+    (let ((herdr-dispatch-refresh-debounce 0.05))
+      (herdr-dispatch-refresh t)
+      (unwind-protect
+          (should (equal 1 (herdr-dispatch-test-counting-rebuilds
+                             (dotimes (i 10)
+                               (herdr-dispatch-test--pane-event
+                                "w1:p1" (if (cl-evenp i) "idle" "working") i)
+                               (herdr-dispatch--refresh-hook "pane_updated" nil))
+                             (sit-for 0.2))))
+        (herdr-dispatch--cancel-refresh)))))
+
+(ert-deftest herdr-dispatch-refresh-hook-cancels-its-timer-with-the-buffer ()
+  "A pending redraw must not outlive the buffer it would draw into."
+  (skip-unless (featurep 'magit-section))
+  (let ((herdr-state-change-hook (list #'herdr-dispatch--refresh-hook))
+        (buffer (get-buffer-create herdr-dispatch-buffer-name)))
+    (unwind-protect
+        (progn
+          (with-current-buffer buffer (herdr-dispatch-mode))
+          (herdr-dispatch--refresh-hook "pane_updated" nil)
+          (should herdr-dispatch--refresh-timer)
+          (kill-buffer buffer)
+          (herdr-dispatch--refresh-hook "pane_updated" nil)
+          (should-not herdr-dispatch--refresh-timer)
+          (should-not (memq #'herdr-dispatch--refresh-hook
+                            herdr-state-change-hook)))
+      (herdr-dispatch--cancel-refresh)
+      (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest herdr-dispatch-refresh-restores-point-in-an-unselected-window ()
+  "The cursor reset happens in a window that is not the selected one.
+
+When the hook fires from the event-stream process filter the dashboard
+is typically not selected, and for such a window `window-point' is what
+governs — `erase-buffer' collapses it to 1 and a buffer-point restore
+never touches it.  Buffer point is parked at `point-min' here so a
+restore that only puts back `point' cannot pass by accident."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (let ((window (split-window)))
+      (unwind-protect
+          (progn
+            (set-window-buffer window (current-buffer))
+            (should-not (eq (current-buffer) (window-buffer (selected-window))))
+            (goto-char (point-min))
+            (search-forward "w1:p2")
+            (set-window-point window (+ 3 (line-beginning-position)))
+            (goto-char (point-min))
+            (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
+            (herdr-dispatch-refresh)
+            (let ((position (window-point window)))
+              (should (equal "w1:p2"
+                             (save-excursion
+                               (goto-char position)
+                               (herdr-dispatch--value-at-point 'herdr-pane))))
+              (should (equal 3 (save-excursion
+                                 (goto-char position)
+                                 (current-column))))))
+        (delete-window window)))))
+
+(ert-deftest herdr-dispatch-refresh-keeps-the-column-not-only-the-line ()
+  "Restoring to the section start alone throws you back to column 0.
+Vertical position was already covered; horizontal was not, and both move
+under the same `erase-buffer'."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (search-forward "w1:p2")
+    (goto-char (+ 4 (line-beginning-position)))
+    (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
+    (herdr-dispatch-refresh)
+    (should (equal "w1:p2" (herdr-dispatch--value-at-point 'herdr-pane)))
+    (should (equal 4 (current-column)))))
+
 ;;; Resolution
 
 (ert-deftest herdr-dispatch-resolves-the-nearest-enclosing-section ()
@@ -571,6 +769,55 @@ closes that gap."
                 ((symbol-function 'magit-section-toggle) #'ignore))
         (search-forward "w1:p1")
         (herdr-dispatch-toggle)))))
+
+(ert-deftest herdr-dispatch-toggle-toggles-before-it-fetches-and-refreshes ()
+  "The keystroke acts on the section that was under point when it was pressed.
+
+Fetching worktrees ends in a redraw, and a redraw recreates every
+section, so a toggle sequenced after it acts on a section rebuilt out
+from under the user rather than the one they aimed at.  Only the order
+of the three calls distinguishes the two arrangements — both fetch, both
+refresh, both toggle — so the order is what is asserted."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((order nil)
+          (herdr-dispatch--worktrees nil))
+      (cl-letf (((symbol-function 'magit-section-toggle)
+                 (lambda () (interactive) (push 'toggle order)))
+                ((symbol-function 'herdr-dispatch--worktrees-for)
+                 (lambda (workspace)
+                   (push 'fetch order)
+                   (push (cons workspace nil) herdr-dispatch--worktrees)))
+                ((symbol-function 'herdr-dispatch-refresh)
+                 (lambda (&rest _) (push 'refresh order))))
+        (search-forward "w1:p1")
+        (herdr-dispatch-toggle)
+        (should (equal '(toggle fetch refresh) (nreverse order)))))))
+
+(ert-deftest herdr-dispatch-folds-and-unfolds-across-intervening-refreshes ()
+  "\"Cannot fold after unfolding\" was the report, so fold repeatedly.
+
+Real sections and the real `magit-section-toggle', with a redraw driven
+by a rendered change between every keystroke, because a single toggle in
+a static buffer never meets the erase that broke this."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (cl-letf (((symbol-function 'herdr-dispatch--worktrees-for)
+               (lambda (workspace)
+                 (push (cons workspace nil) herdr-dispatch--worktrees)
+                 nil)))
+      (dotimes (i 4)
+        (goto-char (point-min))
+        (search-forward "web")
+        (herdr-dispatch-toggle)
+        (should (equal (cl-evenp i)
+                       (and (oref (magit-current-section) hidden) t)))
+        (herdr-dispatch-test--pane-event
+         "w1:p1" (if (cl-evenp i) "idle" "working") i)
+        (herdr-dispatch-refresh)
+        (goto-char (point-min))
+        (search-forward "web")
+        (should (equal (cl-evenp i)
+                       (and (oref (magit-current-section) hidden) t)))))))
 
 (ert-deftest herdr-dispatch-open-worktree-focuses-an-already-open-worktree ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
