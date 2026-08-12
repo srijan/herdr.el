@@ -345,10 +345,19 @@ TIMEOUT is in seconds.  PATTERN is treated as a regular expression."
                       (focus . t))))))
 
 (defun herdr-tab-close (&optional tab-id)
-  "Close TAB-ID, prompting when not given."
+  "Close TAB-ID, prompting when not given.
+Confirms first, like every other close: a tab takes its panes with it,
+and the dispatcher puts `k\\=' one keystroke from any tab line."
   (interactive)
-  (herdr-rpc-call "tab.close"
-                  `((tab_id . ,(or tab-id (herdr-select-tab "Close tab: "))))))
+  (let ((tab (or tab-id (herdr-select-tab "Close tab: "))))
+    (if (y-or-n-p (format "Close tab %s? " tab))
+        (progn
+          (herdr-rpc-call "tab.close" `((tab_id . ,tab)))
+          ;; Say something afterwards, for the reason `herdr-pane-close'
+          ;; does: closing reaps the tab's panes and their buffers, so
+          ;; redisplay happens while the prompt is still on screen.
+          (message "herdr: closed tab %s" tab))
+      (message "herdr: tab %s left open" tab))))
 
 (defun herdr-tab-focus (&optional tab-id)
   "Focus TAB-ID, prompting when not given, and follow it in Emacs."

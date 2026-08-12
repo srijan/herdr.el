@@ -237,6 +237,26 @@ looking unanswered."
           (should said)
           (should (string-match-p "w1:p1" said)))))))
 
+(ert-deftest herdr-tab-close-confirms-before-closing ()
+  "A tab takes its panes with it, and the dispatcher binds `k\\=' one
+keystroke from any tab line, so declining must reach no server at all —
+a test that only checked the message would pass on a close that asked
+and then closed regardless."
+  (dolist (answer '(t nil))
+    (let (said asked methods)
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (prompt) (setq asked prompt) answer))
+                ((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (herdr-test-with-server
+            (lambda (req)
+              (push (alist-get 'method req) methods)
+              (cons (herdr-test-ok req '((type . "ok"))) nil))
+          (herdr-tab-close "w1:t1")
+          (should (string-match-p "w1:t1" (or asked "")))
+          (should (string-match-p "w1:t1" (or said "")))
+          (should (equal (if answer '("tab.close") nil) methods)))))))
+
 (ert-deftest herdr-workspace-close-reports-afterwards ()
   (let (said)
     (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
