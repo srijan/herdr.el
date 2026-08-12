@@ -21,15 +21,12 @@
 ;;; Code:
 
 (require 'subr-x)
+(require 'seq)
 (require 'magit-section)
 (require 'herdr-tree)
 (require 'herdr-state)
 (require 'herdr-rpc)
 (require 'herdr-cmd)
-
-;; Defined in Task 7, in this file.  Declared because `herdr-dispatch-visit'
-;; below calls it, and the byte-compiler must not warn about that.
-(declare-function herdr-dispatch-open-worktree "herdr-dispatch" ())
 
 (defcustom herdr-dispatch-buffer-name "*herdr-agents*"
   "Name of the dispatcher buffer."
@@ -49,6 +46,7 @@ Filled lazily; see `herdr-dispatch--worktrees-for'.")
     (define-key map "p" #'herdr-dispatch-prompt)
     (define-key map "r" #'herdr-dispatch-read)
     (define-key map "f" #'herdr-dispatch-focus)
+    (define-key map (kbd "TAB") #'herdr-dispatch-toggle)
     map)
   "Keymap for `herdr-dispatch-mode'.
 Lowercase letters are the read-only verbs; each acts on whatever the
@@ -140,6 +138,53 @@ reported rather than raised.  DOCSTRING documents the command."
      (interactive)
      (herdr-dispatch--protect (lambda () ,@body))))
 
+;;; Worktrees
+
+(defun herdr-dispatch--worktrees-for (workspace-id)
+  "Return WORKSPACE-ID\\='s git worktrees, fetching them once.
+
+Fetched on first expand rather than on every draw: `worktree.list\\=' is a
+blocking round trip and there is one per workspace, so drawing them
+eagerly would put N synchronous calls in the refresh path."
+  (if-let* ((entry (assoc workspace-id herdr-dispatch--worktrees)))
+      (cdr entry)
+    (let* ((dir (herdr-state-workspace-directory (herdr-state-current)
+                                                  workspace-id))
+           (found (when dir
+                    (alist-get 'worktrees
+                               (herdr-rpc-call "worktree.list"
+                                               `((cwd . ,dir)))))))
+      (push (cons workspace-id found) herdr-dispatch--worktrees)
+      found)))
+
+(defun herdr-dispatch--invalidate-worktrees (kind _data)
+  "Drop the worktree cache when KIND changed the set of worktrees.
+Whole-cache rather than per-workspace: the events carry a worktree, not
+the workspace whose listing it belongs to, and the refetch is one call
+per expanded workspace."
+  (when (member kind '("worktree_created" "worktree_opened"
+                       "worktree_removed"))
+    (setq herdr-dispatch--worktrees nil)))
+
+(herdr-dispatch-defverb herdr-dispatch-toggle ()
+  "Fold or unfold the section at point, fetching worktrees on first open."
+  (when-let* ((workspace (herdr-dispatch--value-at-point 'herdr-workspace))
+              ((not (assoc workspace herdr-dispatch--worktrees))))
+    (herdr-dispatch--worktrees-for workspace)
+    (herdr-dispatch-refresh))
+  (call-interactively #'magit-section-toggle))
+
+(herdr-dispatch-defverb herdr-dispatch-open-worktree ()
+  "Open the worktree at point as a workspace."
+  (let* ((path (herdr-dispatch--require 'herdr-worktree "a worktree"))
+         (worktree (seq-find (lambda (candidate)
+                               (equal path (alist-get 'path candidate)))
+                             (apply #'append
+                                    (mapcar #'cdr herdr-dispatch--worktrees)))))
+    (if-let* ((open (alist-get 'open_workspace_id worktree)))
+        (herdr-workspace-focus open)
+      (herdr-worktree-open (alist-get 'branch worktree)))))
+
 ;;; The read-only verbs
 
 (herdr-dispatch-defverb herdr-dispatch-visit ()
@@ -229,7 +274,8 @@ server\\='s choice rather than ours."
   (let ((buffer (get-buffer-create herdr-dispatch-buffer-name)))
     (with-current-buffer buffer
       (unless (derived-mode-p 'herdr-dispatch-mode) (herdr-dispatch-mode))
-      (add-hook 'herdr-state-change-hook #'herdr-dispatch--refresh-hook))
+      (add-hook 'herdr-state-change-hook #'herdr-dispatch--refresh-hook)
+      (add-hook 'herdr-state-change-hook #'herdr-dispatch--invalidate-worktrees))
     (herdr-dispatch-refresh)
     (pop-to-buffer buffer)))
 

@@ -409,5 +409,137 @@ be implemented in terms of them."
                                        herdr-dispatch-read herdr-dispatch-focus))
     (should (commandp verb))))
 
+;;; Worktrees
+
+(ert-deftest herdr-dispatch-fetches-worktrees-once-per-workspace ()
+  (skip-unless (featurep 'magit-section))
+  (let ((calls 0)
+        (herdr-dispatch--worktrees nil))
+    (cl-letf (((symbol-function 'herdr-state-workspace-directory)
+               (lambda (_state _id) "/tmp/project/"))
+              ((symbol-function 'herdr-rpc-call)
+               (lambda (method _params)
+                 (should (equal "worktree.list" method))
+                 (setq calls (1+ calls))
+                 '((worktrees . (((path . "/tmp/project-feat")
+                                  (branch . "feat/x")
+                                  (label . "feat/x")
+                                  (open_workspace_id . nil))))))))
+      (should (equal 1 (length (herdr-dispatch--worktrees-for "w1"))))
+      (should (equal 1 (length (herdr-dispatch--worktrees-for "w1"))))
+      (should (equal 1 calls)))))
+
+(ert-deftest herdr-dispatch-caches-a-workspace-with-no-worktrees ()
+  "The cache must key on presence, not on a truthy value.
+
+A workspace with zero worktrees still gets an entry — `(WORKSPACE-ID
+. nil)' — so the second call must not re-fetch.  A guard written as
+`(cdr (assoc ...))' rather than `(assoc ...)' would pass the
+once-per-workspace test above, since that test's mock always returns a
+non-empty list; this is the case that tells the two apart."
+  (skip-unless (featurep 'magit-section))
+  (let ((calls 0)
+        (herdr-dispatch--worktrees nil))
+    (cl-letf (((symbol-function 'herdr-state-workspace-directory)
+               (lambda (_state _id) "/tmp/project/"))
+              ((symbol-function 'herdr-rpc-call)
+               (lambda (_method _params)
+                 (setq calls (1+ calls))
+                 '((worktrees . nil)))))
+      (should-not (herdr-dispatch--worktrees-for "w1"))
+      (should-not (herdr-dispatch--worktrees-for "w1"))
+      (should (equal 1 calls))
+      (should (assoc "w1" herdr-dispatch--worktrees)))))
+
+(ert-deftest herdr-dispatch-worktree-events-drop-the-cache ()
+  (skip-unless (featurep 'magit-section))
+  (let ((herdr-dispatch--worktrees '(("w1" . (ignored)))))
+    (herdr-dispatch--invalidate-worktrees "worktree_created" nil)
+    (should-not herdr-dispatch--worktrees)))
+
+(ert-deftest herdr-dispatch-unrelated-events-keep-the-cache ()
+  (skip-unless (featurep 'magit-section))
+  (let ((herdr-dispatch--worktrees '(("w1" . (ignored)))))
+    (herdr-dispatch--invalidate-worktrees "pane_updated" nil)
+    (should herdr-dispatch--worktrees)))
+
+(ert-deftest herdr-dispatch-refresh-draws-a-populated-worktrees-cache ()
+  "The worktrees branch of the renderer, exercised end-to-end.
+
+Every other renderer test drives `herdr-dispatch--insert-nodes' from a
+hand-written fixture; `herdr-dispatch--worktrees' is nil in all of them,
+so nothing has ever pushed a real cache entry through
+`herdr-dispatch-refresh' -> `herdr-tree-build' -> the renderer.  This
+closes that gap."
+  (skip-unless (featurep 'magit-section))
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot herdr-dispatch-test--snapshot))
+        (herdr-dispatch--worktrees
+         '(("w1" . (((path . "/tmp/web-feat")
+                     (branch . "feat/x")
+                     (label . "feat/x")
+                     (open_workspace_id . nil))))))
+        (buffer (get-buffer-create herdr-dispatch-buffer-name)))
+    (unwind-protect
+        (with-current-buffer buffer
+          (herdr-dispatch-mode)
+          (herdr-dispatch-refresh)
+          (should (string-match-p "worktrees 1" (buffer-string)))
+          (should (eq 'herdr-worktrees
+                      (herdr-dispatch-test--type-at "worktrees 1")))
+          (should (eq 'herdr-worktree
+                      (herdr-dispatch-test--type-at "feat/x"))))
+      (kill-buffer buffer))))
+
+(ert-deftest herdr-dispatch-toggle-fetches-worktrees-on-first-open ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((herdr-dispatch--worktrees nil))
+      (cl-letf (((symbol-function 'herdr-dispatch--worktrees-for)
+                 (lambda (workspace)
+                   (push (cons workspace nil) herdr-dispatch--worktrees)))
+                ((symbol-function 'herdr-dispatch-refresh) #'ignore)
+                ((symbol-function 'magit-section-toggle) #'ignore))
+        (search-forward "w1:p1")
+        (herdr-dispatch-toggle)
+        (should (assoc "w1" herdr-dispatch--worktrees))))))
+
+(ert-deftest herdr-dispatch-toggle-does-not-refetch-an-expanded-workspace ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((herdr-dispatch--worktrees '(("w1" . nil))))
+      (cl-letf (((symbol-function 'herdr-dispatch--worktrees-for)
+                 (lambda (&rest _) (error "should not be called")))
+                ((symbol-function 'magit-section-toggle) #'ignore))
+        (search-forward "w1:p1")
+        (herdr-dispatch-toggle)))))
+
+(ert-deftest herdr-dispatch-open-worktree-focuses-an-already-open-worktree ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((herdr-dispatch--worktrees
+           '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (branch . "fix")
+                       (open_workspace_id . "w2")))))))
+      (search-forward "open as w2")
+      (should (equal '((herdr-workspace-focus "w2"))
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-workspace-focus herdr-worktree-open)
+                       (herdr-dispatch-open-worktree)))))))
+
+(ert-deftest herdr-dispatch-open-worktree-opens-a-closed-worktree ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((herdr-dispatch--worktrees
+           '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (branch . "fix")
+                       (open_workspace_id . nil)))))))
+      (search-forward "open as w2")
+      (should (equal '((herdr-worktree-open "fix"))
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-workspace-focus herdr-worktree-open)
+                       (herdr-dispatch-open-worktree)))))))
+
+(ert-deftest herdr-dispatch-binds-tab-to-toggle ()
+  (skip-unless (featurep 'magit-section))
+  (should (eq #'herdr-dispatch-toggle
+              (lookup-key herdr-dispatch-mode-map (kbd "TAB")))))
+
 (provide 'herdr-dispatch-test)
 ;;; herdr-dispatch-test.el ends here
