@@ -88,6 +88,74 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
          (pane (nth 2 (car (nth 3 (car tabs))))))
     (should (string-match-p "claude/reviewer" pane))))
 
+(ert-deftest herdr-tree-keeps-a-pane-whose-tab-is-not-cached ()
+  "A pane must never be dropped for naming a tab the cache does not hold.
+
+Panes hang off their tab, so a workspace whose tabs are missing used to
+render as a heading with no children at all — while that heading went on
+counting the pane, so the buffer both claimed the pane existed and
+offered no row to read, prompt or close it.  The flat listing this tree
+replaced could not lose a pane, so silence here is a regression, not a
+gap.
+
+Reachable rather than theoretical: `herdr-state' drops a `tab_created\\='
+event that carries no `tab\\=' payload, and a resync races the events
+around it.  This is that state exactly — one workspace, one blocked pane,
+no tabs."
+  (let ((state (herdr-state-from-snapshot
+                '((workspaces . (((workspace_id . "w1") (label . "repo")
+                                  (pane_count . 1))))
+                  (tabs . nil)
+                  (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (tab_id . "w1:t1") (agent . "claude")
+                             (agent_status . "blocked"))))))))
+    (let ((tree (herdr-tree-build state nil)))
+      (should (equal '((herdr-workspace (herdr-pane)))
+                     (herdr-tree-test--types tree)))
+      ;; The row must name the pane, or it is reachable only in shape.
+      (should (equal "w1:p1" (nth 1 (car (nth 3 (car tree))))))
+      (should (string-match-p "w1:p1" (nth 2 (car (nth 3 (car tree)))))))))
+
+(ert-deftest herdr-tree-shows-an-uncached-tabs-pane-beside-the-tabs-it-has ()
+  "The partial case: some tabs known, one pane naming a tab that is not.
+The known tabs must keep their own panes and their own level, and the
+orphan must appear alongside them rather than displacing or joining
+them."
+  (let* ((state (herdr-tree-test--state
+                 '(panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (tab_id . "w1:t1") (agent . "claude"))
+                            ((pane_id . "w1:p3") (workspace_id . "w1")
+                             (tab_id . "w1:t2") (agent . "codex"))
+                            ((pane_id . "w1:p9") (workspace_id . "w1")
+                             (tab_id . "w1:t9") (agent . "gemini"))))))
+         (tree (herdr-tree-build state nil)))
+    (should (equal '((herdr-workspace
+                      (herdr-tab (herdr-pane))
+                      (herdr-tab (herdr-pane))
+                      (herdr-pane)))
+                   (herdr-tree-test--types tree)))
+    (should (equal "w1:p9" (nth 1 (nth 2 (nth 3 (car tree))))))))
+
+(defun herdr-tree-test--pane-ids (nodes)
+  "Return the id of every `herdr-pane\\=' node anywhere under NODES.
+Collected across the whole subtree rather than one level, so a pane
+rendered twice — once under its tab and again beside it — shows up as the
+duplicate it is instead of hiding at a level the test never looked at."
+  (apply #'append
+         (mapcar (lambda (node)
+                   (append (when (eq 'herdr-pane (nth 0 node))
+                             (list (nth 1 node)))
+                           (herdr-tree-test--pane-ids (nth 3 node))))
+                 nodes)))
+
+(ert-deftest herdr-tree-does-not-repeat-a-pane-whose-tab-is-cached ()
+  "Guards the other direction: the orphan pass must not also emit panes
+their own tab already renders.  Every pane appears exactly once."
+  (should (equal '("w1:p1" "w1:p2" "w1:p3")
+                 (sort (herdr-tree-test--pane-ids
+                        (herdr-tree-build (herdr-tree-test--state) nil))
+                       #'string<))))
+
 (ert-deftest herdr-tree-omits-worktrees-when-not-fetched ()
   "A workspace absent from WORKTREES gets no worktrees section."
   (should-not

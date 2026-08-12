@@ -79,6 +79,27 @@ lifecycle.  A name set through `agent.rename\\=' is appended to the kind."
                         (equal tab-id (alist-get 'tab_id pane)))
                       (herdr-state-panes state))))
 
+(defun herdr-tree--orphan-panes-in-workspace (state workspace-id)
+  "Return nodes for WORKSPACE-ID\\='s panes whose tab is not in STATE.
+
+Panes are drawn under their tab, so a pane naming a tab the cache does
+not hold would otherwise be drawn nowhere at all: the workspace heading
+would go on counting it while no row existed to read, prompt or close it.
+
+That state is reachable rather than theoretical — a `tab_created\\=' event
+carrying no `tab\\=' payload is dropped, and a resync races the events
+around it — and losing a pane is the one failure the flat listing this
+tree replaced could not have.  Showing them directly under the workspace
+keeps every pane reachable no matter what the tab cache knows."
+  (let ((known (mapcar (lambda (tab) (alist-get 'tab_id tab))
+                       (herdr-state-tabs state))))
+    (mapcar (lambda (pane) (herdr-tree--pane-node state pane))
+            (seq-filter (lambda (pane)
+                          (and (equal workspace-id
+                                      (alist-get 'workspace_id pane))
+                               (not (member (alist-get 'tab_id pane) known))))
+                        (herdr-state-panes state)))))
+
 (defun herdr-tree--tab-node (state tab)
   "Return the node for TAB in STATE."
   (let ((id (alist-get 'tab_id tab)))
@@ -111,8 +132,7 @@ so it is marked rather than repeated."
           nil)))
 
 (defun herdr-tree--worktrees-node (workspace-id worktrees)
-  "Return the worktrees node for WORKSPACE-ID, or nil when it has none to
-show.
+  "Return the worktrees node for WORKSPACE-ID, or nil when it has none.
 
 Nil covers both \\='none were found\\=' and \\='none have been fetched yet\\=':
 a workspace with zero worktrees has no section worth drawing either way.
@@ -131,11 +151,15 @@ not here."
          ;; One tab is not structure.  Unnamed tabs are labelled by
          ;; number, so keeping the level would indent every pane behind a
          ;; heading that reads "1".
-         (children (if (= (length tabs) 1)
-                       (herdr-tree--panes-in-tab
-                        state (alist-get 'tab_id (car tabs)))
-                     (mapcar (lambda (tab) (herdr-tree--tab-node state tab))
-                             tabs)))
+         ;; Panes whose tab the cache does not hold sit alongside the tab
+         ;; nodes rather than being dropped with the tab they name.
+         (children (append (if (= (length tabs) 1)
+                               (herdr-tree--panes-in-tab
+                                state (alist-get 'tab_id (car tabs)))
+                             (mapcar (lambda (tab)
+                                       (herdr-tree--tab-node state tab))
+                                     tabs))
+                           (herdr-tree--orphan-panes-in-workspace state id)))
          (worktree-node (herdr-tree--worktrees-node id worktrees)))
     (list 'herdr-workspace id
           (string-trim-right
