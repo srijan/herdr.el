@@ -159,12 +159,16 @@ eagerly would put N synchronous calls in the refresh path."
 
 (defun herdr-dispatch--invalidate-worktrees (kind _data)
   "Drop the worktree cache when KIND changed the set of worktrees.
-Whole-cache rather than per-workspace: the events carry a worktree, not
-the workspace whose listing it belongs to, and the refetch is one call
-per expanded workspace."
+Also unhooks from `herdr-state-change-hook\\=' once the dispatcher's buffer
+is gone, matching `herdr-dispatch--refresh-hook\\='.  Whole-cache rather
+than per-workspace: the events carry a worktree, not the workspace whose
+listing it belongs to, and the refetch is one call per expanded
+workspace."
   (when (member kind '("worktree_created" "worktree_opened"
                        "worktree_removed"))
-    (setq herdr-dispatch--worktrees nil)))
+    (setq herdr-dispatch--worktrees nil))
+  (unless (get-buffer herdr-dispatch-buffer-name)
+    (remove-hook 'herdr-state-change-hook #'herdr-dispatch--invalidate-worktrees)))
 
 (herdr-dispatch-defverb herdr-dispatch-toggle ()
   "Fold or unfold the section at point, fetching worktrees on first open."
@@ -175,15 +179,27 @@ per expanded workspace."
   (call-interactively #'magit-section-toggle))
 
 (herdr-dispatch-defverb herdr-dispatch-open-worktree ()
-  "Open the worktree at point as a workspace."
+  "Open the worktree at point as a workspace.
+
+Calls `worktree.open\\=' directly rather than through `herdr-worktree-open\\=',
+which derives its `cwd\\=' from the calling buffer's `default-directory\\=' —
+here that would be `*herdr-agents*\\=', not the worktree's own workspace,
+so the request would resolve against whatever directory the dispatcher
+buffer happened to hold rather than the workspace at point."
   (let* ((path (herdr-dispatch--require 'herdr-worktree "a worktree"))
+         (workspace (herdr-dispatch--require 'herdr-workspace "a workspace"))
          (worktree (seq-find (lambda (candidate)
                                (equal path (alist-get 'path candidate)))
                              (apply #'append
                                     (mapcar #'cdr herdr-dispatch--worktrees)))))
     (if-let* ((open (alist-get 'open_workspace_id worktree)))
         (herdr-workspace-focus open)
-      (herdr-worktree-open (alist-get 'branch worktree)))))
+      (let ((dir (herdr-state-workspace-directory (herdr-state-current)
+                                                   workspace)))
+        (herdr-rpc-call "worktree.open"
+                        `((branch . ,(alist-get 'branch worktree))
+                          (cwd . ,dir)
+                          (focus . t)))))))
 
 ;;; The read-only verbs
 

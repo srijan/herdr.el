@@ -521,20 +521,40 @@ closes that gap."
       (search-forward "open as w2")
       (should (equal '((herdr-workspace-focus "w2"))
                      (herdr-dispatch-test-with-recorders
-                         (herdr-workspace-focus herdr-worktree-open)
+                         (herdr-workspace-focus herdr-rpc-call)
                        (herdr-dispatch-open-worktree)))))))
 
-(ert-deftest herdr-dispatch-open-worktree-opens-a-closed-worktree ()
+(ert-deftest herdr-dispatch-open-worktree-opens-a-closed-worktree-in-its-own-directory ()
+  "The cwd sent to `worktree.open\\=' must be the worktree's own workspace
+directory, resolved the same way `herdr-dispatch--worktrees-for' does —
+not `default-directory\\=', which in the dispatcher buffer names nothing
+in particular.
+
+`herdr-worktree-open' (the wrapped command `herdr-cmd' already has)
+derives its `cwd\\=' from the calling buffer's `default-directory\\=' , so a
+test that only records \"was `herdr-worktree-open' called\" would pass
+even if the open request resolved against the wrong repository entirely.
+Binding `default-directory\\=' here to something that is not the
+worktree's directory, and asserting the exact params reaching
+`herdr-rpc-call\\=', is what would catch that."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (let ((herdr-dispatch--worktrees
            '(("w1" . (((path . "/tmp/herdr.el-fix")
                        (branch . "fix")
-                       (open_workspace_id . nil)))))))
+                       (open_workspace_id . nil))))))
+          (default-directory "/totally/unrelated/directory/"))
       (search-forward "open as w2")
-      (should (equal '((herdr-worktree-open "fix"))
-                     (herdr-dispatch-test-with-recorders
-                         (herdr-workspace-focus herdr-worktree-open)
-                       (herdr-dispatch-open-worktree)))))))
+      (cl-letf (((symbol-function 'herdr-state-workspace-directory)
+                 (lambda (_state workspace-id)
+                   (should (equal "w1" workspace-id))
+                   "/tmp/herdr.el/")))
+        (should (equal '((herdr-rpc-call "worktree.open"
+                                         ((branch . "fix")
+                                          (cwd . "/tmp/herdr.el/")
+                                          (focus . t))))
+                       (herdr-dispatch-test-with-recorders
+                           (herdr-workspace-focus herdr-rpc-call)
+                         (herdr-dispatch-open-worktree))))))))
 
 (ert-deftest herdr-dispatch-binds-tab-to-toggle ()
   (skip-unless (featurep 'magit-section))
