@@ -841,12 +841,21 @@ Caching the failure is the deliberate half: the ordinary cause is a
 workspace directory that is not a git repository, which fails the same
 way forever, and a workspace left uncached is one asked again on every
 redraw for as long as the dashboard stays open.  It must not be
-permanent either, so the retry on a forced refresh is asserted as well."
+permanent either, so the retry on a forced refresh is asserted as well.
+
+`w2' is answered before that forced refresh, and asserting that it is
+*not* asked again is the other half of the same rule: \\[herdr-dispatch-refresh]
+re-asks what could not be answered, and only that.  Answering it also
+keeps this test honest now that a forced refresh abandons requests still
+in flight — an unanswered `w2' would be re-asked for that reason instead,
+and the assertion would no longer be about placeholders at all."
   (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
     (herdr-dispatch-test-with-async
       (herdr-dispatch-refresh t)
       (herdr-dispatch-test--reply
        0 nil '((code . "not_found") (message . "not a git repository")))
+      (herdr-dispatch-test--reply
+       1 '((worktrees . (((path . "/tmp/api-spike") (branch . "spike"))))))
       (should (assoc "w1" herdr-dispatch--worktrees))
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal '("/tmp/web/" "/tmp/api/")
@@ -958,6 +967,139 @@ that no longer exists."
       (should (assoc "w1" herdr-dispatch--worktrees))
       (should-not herdr-dispatch--refresh-timer))))
 
+(ert-deftest herdr-dispatch-a-reply-that-never-comes-is-cured-by-g ()
+  "A request that is never answered must not wedge its workspace forever.
+
+`herdr-rpc-call-async' has no timeout, unlike `herdr-rpc-call'.  A server
+that accepts the connection and then never replies therefore leaves the
+pending marker set for the life of the Emacs session — and that marker is
+exactly what stops the workspace being asked again, so the workspace
+shows no worktrees for the rest of the session.  \\[herdr-dispatch-refresh]
+has to be able to break that, which means clearing the pending set and
+not merely the cache.
+
+Bumping the generation while doing so is not optional, and the tail of
+this test is what says so: the abandoned reply is delivered afterwards,
+and must neither write the cache nor clear the marker that by then
+belongs to the refetch.  A version that cleared pending without moving
+the generation would pass everything above and then issue a third
+request for the same workspace here."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (herdr-dispatch-test-with-async
+      (herdr-dispatch-refresh t)
+      (should (equal '("w2" "w1") herdr-dispatch--worktrees-pending))
+      (dotimes (_ 19) (herdr-dispatch-refresh))
+      (should (equal '("/tmp/web/" "/tmp/api/")
+                     (herdr-dispatch-test--requested)))
+      ;; `g'.
+      (herdr-dispatch-refresh t)
+      (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/web/" "/tmp/api/")
+                     (herdr-dispatch-test--requested)))
+      ;; The reply nobody was waiting for any more.
+      (herdr-dispatch-test--reply 0 '((worktrees . (stale))))
+      (should-not (assoc "w1" herdr-dispatch--worktrees))
+      (should (member "w1" herdr-dispatch--worktrees-pending))
+      (dotimes (_ 19) (herdr-dispatch-refresh))
+      (should (equal 4 (length herdr-dispatch-test--async)))
+      (herdr-dispatch-test--reply 2 '((worktrees . (fresh))))
+      (should (equal '(fresh) (cdr (assoc "w1" herdr-dispatch--worktrees)))))))
+
+(ert-deftest herdr-dispatch-a-dead-server-caches-rather-than-signalling ()
+  "Opening the dashboard while herdr is not running is the common failure.
+
+`herdr-rpc-call-async' hands a *server* error to the callback as data,
+but an unreachable socket is not a server error: `herdr-rpc-connect'
+signals `herdr-error' with code \"no_server\" synchronously, inside the
+refresh.  Neither caller of `herdr-dispatch-refresh' — the debounce timer
+and \\[herdr-dispatch-refresh] — is wrapped in `herdr-dispatch--protect',
+so letting that escape means a backtrace out of a timer, and a pending
+marker left set behind it that nothing would ever clear.
+
+Every workspace is asserted, not just the first: the signal happens once
+per workspace, and a handler placed outside the loop would abandon the
+rest of the session after the first failure."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (cl-letf (((symbol-function 'herdr-rpc-call-async)
+               (lambda (&rest _)
+                 (signal 'herdr-error (list "no_server" "not running")))))
+      (herdr-dispatch-refresh t)
+      (dolist (id '("w1" "w2"))
+        (should (assoc id herdr-dispatch--worktrees))
+        (should-not (cdr (assoc id herdr-dispatch--worktrees)))
+        (should (eq 'error (alist-get id herdr-dispatch--worktrees-unanswered
+                                      nil nil #'equal)))
+        (should-not (member id herdr-dispatch--worktrees-pending))))
+    ;; And the dashboard still draws, which is the point of not signalling.
+    (should (string-match-p "web" (buffer-string)))))
+
+(ert-deftest herdr-dispatch-a-failed-send-caches-rather-than-signalling ()
+  "The socket can also fail in a way that is not a `herdr-error'.
+
+`herdr-rpc-call-async' connects and then calls `process-send-string',
+which signals a plain `error' if the peer closed in between — so a
+handler for `herdr-error' alone still lets a signal escape into the
+refresh, with the pending marker already set.  The condition is the
+signal reaching us, not its type."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (cl-letf (((symbol-function 'herdr-rpc-call-async)
+               (lambda (&rest _)
+                 (error "process nil: no longer connected to pipe"))))
+      (herdr-dispatch-refresh t)
+      (should (assoc "w1" herdr-dispatch--worktrees))
+      (should (eq 'error (alist-get "w1" herdr-dispatch--worktrees-unanswered
+                                    nil nil #'equal)))
+      (should-not herdr-dispatch--worktrees-pending))))
+
+(ert-deftest herdr-dispatch-opening-the-dashboard-forgets-stale-worktrees ()
+  "Worktree knowledge does not outlive the buffer it was fetched for.
+
+`herdr-dispatch--invalidate-worktrees' takes itself off
+`herdr-state-change-hook' when the dashboard dies, so a worktree created
+between closing the dashboard and reopening it is one nothing hears
+about.  \\[herdr-dispatch-refresh] is no cure — it re-asks the
+workspaces that could not be answered, not the ones that were — so
+without this the answer would outlive its truth with nothing able to
+correct it.
+
+Returning to a dashboard that is already open is the other half, and it
+must not forget: that would make every invocation of the command a full
+refetch of the session."
+  (skip-unless (featurep 'magit-section))
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot herdr-dispatch-test--worktree-snapshot))
+        (herdr-state-change-hook nil)
+        (herdr-dispatch--worktrees '(("w1" . (stale))))
+        (herdr-dispatch--worktrees-pending nil)
+        (herdr-dispatch--worktrees-unanswered nil)
+        (herdr-dispatch--worktrees-generation 0)
+        (herdr-dispatch--refresh-timer nil))
+    (should-not (get-buffer herdr-dispatch-buffer-name))
+    (unwind-protect
+        (herdr-dispatch-test-with-async
+          (save-window-excursion (herdr-agents))
+          (should-not (assoc "w1" herdr-dispatch--worktrees))
+          (should (equal '("/tmp/web/" "/tmp/api/")
+                         (herdr-dispatch-test--requested)))
+          ;; Both, so that nothing is left in flight for the forced
+          ;; refresh inside the second `herdr-agents' to reissue — that
+          ;; rescue has its own test, and leaving it to fire here would
+          ;; put a second reason in the way of the one thing this half
+          ;; asserts.
+          (herdr-dispatch-test--reply
+           0 '((worktrees . (((path . "/tmp/web-feat") (branch . "feat/x"))))))
+          (herdr-dispatch-test--reply 1 '((worktrees . nil)))
+          (save-window-excursion (herdr-agents))
+          (should (equal "/tmp/web-feat"
+                         (alist-get 'path
+                                    (car (cdr (assoc
+                                               "w1"
+                                               herdr-dispatch--worktrees))))))
+          (should (equal '("/tmp/web/" "/tmp/api/")
+                         (herdr-dispatch-test--requested))))
+      (herdr-dispatch--cancel-refresh)
+      (when (get-buffer herdr-dispatch-buffer-name)
+        (kill-buffer herdr-dispatch-buffer-name)))))
+
 (ert-deftest herdr-dispatch-worktree-events-drop-the-cache ()
   "Invalidation clears every record of every worktree, not just the cache.
 
@@ -1021,11 +1163,14 @@ the fetch draws into it — a TAB on a workspace line that hid the very
 worktrees it had just fetched.  They showed up only when TAB was pressed
 on an agent line, where a leaf section makes the toggle a no-op.  Both
 lines are pressed here, and the workspace line twice, so a fetch left on
-any of those paths is caught."
+any of those paths is caught.
+
+Pressing the key and counting requests is the assertion that states the
+requirement; the binding is checked too, but a TAB that reaches the
+server is the bug whatever it is bound to."
   (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
     (should (eq #'magit-section-toggle
                 (lookup-key herdr-dispatch-mode-map (kbd "TAB"))))
-    (should-not (fboundp 'herdr-dispatch-toggle))
     (herdr-dispatch-test-with-async
       (herdr-dispatch-refresh t)
       (let ((requested (herdr-dispatch-test--requested)))

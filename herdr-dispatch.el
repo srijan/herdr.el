@@ -238,12 +238,17 @@ reported rather than raised.  DOCSTRING documents the command."
   "Drop everything known about worktrees, replies still in flight included.
 
 Bumping the generation is what abandons those replies, and it is the
-half that is easy to leave out: clearing `herdr-dispatch--worktrees-pending\\='
-alone would let a listing that was already on the wire land afterwards
-and write back the very cache entry the invalidation had just removed —
-and, worse, clear the pending marker belonging to the refetch that
-replaced it, so the refresh after that would issue a third request for
-the same workspace."
+half that is easy to leave out.  There are two ways to leave it out and
+they fail differently.  Clearing `herdr-dispatch--worktrees-pending\\='
+without a generation at all lets a listing that was already on the wire
+land afterwards and write back the very cache entry the invalidation had
+just removed — the dashboard then shows a listing the server has already
+said is stale, and stops asking.  Guarding only the cache write, while
+clearing the pending marker unconditionally, trades that for the
+opposite failure: by then the marker belongs to the refetch that
+replaced this request, so clearing it leaves the refetch unguarded and
+the next refresh issues a third request for the same workspace.  Dropping
+the reply whole is what avoids both."
   (setq herdr-dispatch--worktrees nil
         herdr-dispatch--worktrees-pending nil
         herdr-dispatch--worktrees-unanswered nil
@@ -311,10 +316,22 @@ the workspace a directory.
 Asynchronous because there is one request per workspace and this runs in
 the refresh path, which is driven by the event stream: a blocking round
 trip there is felt as the whole dashboard stalling.  `herdr-rpc-call-async\\='
-hands a server error to the callback as data, but an unreachable socket
-signals here and now, so that is turned into the same failure the
-callback already handles rather than being allowed to escape into a
-redraw."
+hands a server error to the callback as data, but getting the request out
+at all can signal here and now, so that is turned into the same failure
+the callback already handles rather than being allowed to escape into a
+redraw.
+
+`error\\=' rather than `herdr-error\\=', because two different signals are
+reachable: an unreachable socket is a `herdr-error\\=' with code
+\"no_server\", while a peer that closed between connecting and sending
+makes `process-send-string\\=' signal a plain `error\\='.  Both leave the
+pending marker set, and the callers of `herdr-dispatch-refresh\\=' — the
+debounce timer and \\[herdr-dispatch-refresh] — are not wrapped in
+`herdr-dispatch--protect\\=', so an escaping signal is a backtrace out of
+a timer and a workspace wedged behind a marker nothing will clear.  The
+width is affordable because the guarded form is one call: the callback
+is invoked from a sentinel later, not from inside it, so a bug in our own
+callback cannot hide in here."
   (if (null directory)
       (progn
         (setf (alist-get workspace-id herdr-dispatch--worktrees-unanswered
@@ -330,11 +347,14 @@ redraw."
            (lambda (result error)
              (herdr-dispatch--worktrees-received
               workspace-id generation (alist-get 'worktrees result) error)))
-        (herdr-error
+        (error
          (herdr-dispatch--worktrees-received
           workspace-id generation nil
-          `((code . ,(herdr-error-code err))
-            (message . ,(herdr-error-message err)))))))))
+          (if (eq (car err) 'herdr-error)
+              `((code . ,(herdr-error-code err))
+                (message . ,(herdr-error-message err)))
+            `((code . "call_failed")
+              (message . ,(error-message-string err))))))))))
 
 (defun herdr-dispatch--request-worktrees (state)
   "Ask for the worktrees of every workspace in STATE that has none cached.
@@ -375,14 +395,31 @@ here."
         (herdr-dispatch--fetch-worktrees id directory)))))
 
 (defun herdr-dispatch--retry-unanswered-worktrees ()
-  "Forget the workspaces cached empty for want of an answer.
-The next `herdr-dispatch--request-worktrees\\=' asks them again.  Only
-those: a repository that genuinely has no worktrees keeps its entry, so
-\\[herdr-dispatch-refresh] does not re-ask the whole session."
+  "Forget every workspace that has no answer, and ask again.
+The next `herdr-dispatch--request-worktrees\\=' asks them.  Only those: a
+repository that genuinely has no worktrees keeps its entry, so
+\\[herdr-dispatch-refresh] does not re-ask the whole session.
+
+A request still in flight counts as unanswered, and this is the only
+thing that can rescue one.  `herdr-rpc-call-async\\=' has no timeout — a
+server that accepts the connection and never replies leaves the pending
+marker set for as long as Emacs runs, and the marker is precisely what
+stops the workspace being asked again.  Clearing it here is what makes
+\\[herdr-dispatch-refresh] a cure for that rather than a no-op.
+
+The generation must move with it.  Clearing the marker while a reply is
+still on the wire is the same race `herdr-dispatch--forget-worktrees\\='
+describes: the reply would land after the refetch had claimed a new
+marker, clear a marker it no longer owns, and leave the refetch
+unguarded for a third request.  Bumping the generation drops that reply
+whole instead."
   (dolist (id (mapcar #'car herdr-dispatch--worktrees-unanswered))
     (setq herdr-dispatch--worktrees
           (assoc-delete-all id herdr-dispatch--worktrees)))
-  (setq herdr-dispatch--worktrees-unanswered nil))
+  (setq herdr-dispatch--worktrees-unanswered nil
+        herdr-dispatch--worktrees-pending nil
+        herdr-dispatch--worktrees-generation
+        (1+ herdr-dispatch--worktrees-generation)))
 
 (defun herdr-dispatch--invalidate-worktrees (kind _data)
   "Drop the worktree cache when KIND changed the set of worktrees.
@@ -777,9 +814,23 @@ Cancels and reschedules on each event, the shape
 
 ;;;###autoload
 (defun herdr-agents ()
-  "Show the herdr dispatcher: workspaces, tabs, panes and agents."
+  "Show the herdr dispatcher: workspaces, tabs, panes and agents.
+
+Worktree knowledge belongs to an open dashboard, so opening one starts
+from none.  While the dashboard is up, `herdr-dispatch--invalidate-worktrees\\='
+is on `herdr-state-change-hook\\=' and keeps the listings honest; when the
+buffer dies that hook takes itself off, so a worktree created between
+closing the dashboard and reopening it is one nothing here ever hears
+about.  \\[herdr-dispatch-refresh] is no cure — it re-asks the workspaces
+that could not be answered, not the ones that were — so the answers would
+otherwise outlive their truth with nothing able to correct them.
+Forgetting on open costs one asynchronous request per workspace, which is
+what opening the dashboard already costs."
   (interactive)
-  (let ((buffer (get-buffer-create herdr-dispatch-buffer-name)))
+  (let ((buffer (get-buffer herdr-dispatch-buffer-name)))
+    (unless buffer
+      (herdr-dispatch--forget-worktrees)
+      (setq buffer (get-buffer-create herdr-dispatch-buffer-name)))
     (with-current-buffer buffer
       (unless (derived-mode-p 'herdr-dispatch-mode) (herdr-dispatch-mode))
       (add-hook 'herdr-state-change-hook #'herdr-dispatch--refresh-hook)
