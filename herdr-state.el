@@ -69,6 +69,12 @@ is \"resync\" and DATA is nil.")
   (panes nil)
   (tabs nil)
   (workspaces nil)
+  ;; Named `agent-info' rather than `agents': a slot called `agents'
+  ;; would generate `herdr-state-agents', clobbering the function of that
+  ;; name below.  This holds the raw AgentInfo array from
+  ;; `session.snapshot', which carries `name' — the one field no
+  ;; PaneInfo has.
+  (agent-info nil)
   (focused-pane-id nil)
   (focused-tab-id nil)
   (focused-workspace-id nil))
@@ -83,6 +89,7 @@ is \"resync\" and DATA is nil.")
    :panes (alist-get 'panes snapshot)
    :tabs (alist-get 'tabs snapshot)
    :workspaces (alist-get 'workspaces snapshot)
+   :agent-info (alist-get 'agents snapshot)
    :focused-pane-id (alist-get 'focused_pane_id snapshot)
    :focused-tab-id (alist-get 'focused_tab_id snapshot)
    :focused-workspace-id (alist-get 'focused_workspace_id snapshot)))
@@ -130,6 +137,33 @@ way to know where it is."
                        (alist-get 'foreground_cwd pane))))
     (when (file-directory-p dir)
       (file-name-as-directory dir))))
+
+(defun herdr-state-agent-name (state pane-id)
+  "Return the name reported for the agent in PANE-ID, or nil.
+
+Names live only in `session.snapshot\\='s `agents\\=' array; neither
+`pane.list\\=' nor the pane events carry one, so this is refreshed on the
+snapshot cadence rather than off the event stream.  Nil until someone
+calls `agent.rename\\='."
+  (when-let* ((agent (seq-find (lambda (candidate)
+                                 (equal pane-id (alist-get 'pane_id candidate)))
+                               (herdr-state-agent-info state))))
+    (alist-get 'name agent)))
+
+(defun herdr-state-workspace-directory (state workspace-id)
+  "Return WORKSPACE-ID\\='s directory in STATE, or nil.
+
+Protocol 19\\='s WorkspaceInfo carries no cwd of any kind, so it is derived
+from the workspace\\='s panes: the first one that reports a `cwd\\='.  Panes
+are held in cache order — snapshot order with later arrivals appended —
+so that is the oldest pane herdr told us about, which is the one the
+workspace was created in."
+  (when-let* ((dir (seq-some (lambda (pane)
+                               (and (equal workspace-id
+                                           (alist-get 'workspace_id pane))
+                                    (alist-get 'cwd pane)))
+                             (herdr-state-panes state))))
+    (file-name-as-directory dir)))
 
 (defun herdr-state-pane-ids (state)
   "Return every pane id in STATE."

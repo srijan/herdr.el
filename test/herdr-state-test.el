@@ -230,5 +230,47 @@ arrays."
   (should (null (herdr-state-pane-directory
                  '((cwd . "/definitely/not/here/at/all"))))))
 
+(ert-deftest herdr-state-keeps-the-agents-array ()
+  "session.snapshot carries agent names that no pane record has."
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (agent . "claude"))))
+                  (agents . (((pane_id . "w1:p1") (agent . "claude")
+                              (name . "reviewer"))))))))
+    (should (equal "reviewer" (herdr-state-agent-name state "w1:p1")))))
+
+(ert-deftest herdr-state-agent-name-is-nil-until-renamed ()
+  "AgentInfo.name is null until someone calls agent.rename."
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (agent . "claude"))))
+                  (agents . (((pane_id . "w1:p1") (agent . "claude")
+                              (name . nil))))))))
+    (should-not (herdr-state-agent-name state "w1:p1"))
+    (should-not (herdr-state-agent-name state "w1:p9"))))
+
+(ert-deftest herdr-state-workspace-directory-comes-from-panes ()
+  "Protocol 19 WorkspaceInfo has no cwd, so it is derived."
+  (let ((state (herdr-state-from-snapshot
+                '((workspaces . (((workspace_id . "w1"))))
+                  (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (cwd . "/tmp/project"))
+                            ((pane_id . "w1:p2") (workspace_id . "w1")
+                             (cwd . "/tmp/project/sub"))))))))
+    (should (equal "/tmp/project/"
+                   (herdr-state-workspace-directory state "w1")))))
+
+(ert-deftest herdr-state-workspace-directory-skips-panes-without-cwd ()
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1"))
+                            ((pane_id . "w1:p2") (workspace_id . "w1")
+                             (cwd . "/tmp/project"))))))))
+    (should (equal "/tmp/project/"
+                   (herdr-state-workspace-directory state "w1")))))
+
+(ert-deftest herdr-state-workspace-directory-is-nil-when-unknown ()
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1"))))))))
+    (should-not (herdr-state-workspace-directory state "w1"))
+    (should-not (herdr-state-workspace-directory state "w9"))))
+
 (provide 'herdr-state-test)
 ;;; herdr-state-test.el ends here
