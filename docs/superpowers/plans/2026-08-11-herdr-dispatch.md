@@ -25,6 +25,25 @@ Spec: `docs/superpowers/specs/2026-08-11-herdr-dispatch-design.md`
   external function with `declare-function` and every external variable with `defvar`.
 - `make test` runs `emacs -Q --batch -L . -L test`. **`magit-section` is not on that load path.**
   Anything requiring it must be guarded with `(skip-unless (require 'magit-section nil t))`.
+- **The dispatcher's dependency set is six directories, not one** — confirmed empirically:
+  `magit-section`, `compat`, `dash`, `llama`, `transient`, `cond-let`. Loading only
+  `magit-section` dies with "Cannot open load file: cond-let".
+- **Canonical command for running dispatcher tests** (referred to below as THE DEPS COMMAND):
+
+  ```bash
+  B=$HOME/.emacs.d/var/elpaca/builds
+  DEPS="$B/magit-section $B/compat $B/dash $B/llama $B/transient $B/cond-let"
+  make test EXTRA_LOAD_PATH="$DEPS"
+  make compile EXTRA_LOAD_PATH="$DEPS"
+  ```
+
+  For a single test file, substitute directly:
+
+  ```bash
+  emacs -Q --batch -L . -L test $(for d in $DEPS; do printf -- '-L %s ' "$d"; done) \
+    -l test/herdr-dispatch-test.el \
+    --eval '(ert-run-tests-batch-and-exit "herdr-dispatch")'
+  ```
 - Tests needing a live herdr server are tagged `:live` and run only under `make test-live`.
 - Every new curated method must be added to `herdr-cmd-methods` in `herdr-cmd.el`.
 - Commit after every task. Work on branch `herdr-dispatch`.
@@ -665,6 +684,15 @@ runs under emacs -Q -L ., where magit-section is not on the load path."
 
 ---
 
+### Tasks 4 and 5: executed together as one dispatch
+
+> **Ruling (pre-flight, 2026-08-11):** Tasks 4 and 5 are implemented by a single implementer in
+> one dispatch, ending in **one commit**. Task 4 alone leaves `M-x herdr-agents` undefined, and
+> committing a knowingly broken branch state is not worth the extra review gate. Use Task 4's
+> commit message, extended with Task 5's second paragraph. Ignore Task 4 Step 5's instruction to
+> comment out the transient's `l` entry and Task 4 Step 7's separate commit — neither is needed
+> when the replacement lands in the same change.
+
 ### Task 4: Move the glyphs, slim `herdr-agents.el` to modeline and notifications
 
 **Files:**
@@ -846,14 +874,16 @@ Create `test/herdr-dispatch-test.el`:
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run:
+Run THE DEPS COMMAND's single-file form (see Global Constraints):
 ```bash
-emacs -Q --batch -L . -L test \
-  -L "$(dirname "$(find "$HOME/.emacs.d/var/elpaca/builds" -name magit-section.el | head -1)")" \
+B=$HOME/.emacs.d/var/elpaca/builds
+DEPS="$B/magit-section $B/compat $B/dash $B/llama $B/transient $B/cond-let"
+emacs -Q --batch -L . -L test $(for d in $DEPS; do printf -- '-L %s ' "$d"; done) \
   -l test/herdr-dispatch-test.el \
   --eval '(ert-run-tests-batch-and-exit "herdr-dispatch")'
 ```
 Expected: FAIL, cannot open load file `herdr-dispatch`.
+This command is referred to below as THE DISPATCHER TEST COMMAND.
 
 Note: under plain `make test` these skip rather than fail, which is correct — the tree model
 carries the coverage that matters.
@@ -913,18 +943,37 @@ buffer needs to be readable.")
               (lambda (&rest _) (herdr-dispatch-refresh))))
 
 (defun herdr-dispatch--insert-nodes (nodes)
-  "Insert NODES, each (TYPE VALUE LINE CHILDREN), as magit sections."
+  "Insert NODES, each (TYPE VALUE LINE CHILDREN), as magit sections.
+
+`magit-insert-section\\=' takes its type as an unevaluated symbol, so the
+five types are spelled out rather than passed through.  A runtime `eval\\='
+would collapse these into one branch; five explicit branches byte-compile
+and do not need defending."
   (dolist (node nodes)
-    (let ((type (nth 0 node))
-          (value (nth 1 node))
+    (let ((value (nth 1 node))
           (line (nth 2 node))
           (children (nth 3 node)))
-      ;; `eval' because magit-insert-section takes its type as an
-      ;; unevaluated symbol, and ours is only known at runtime.
-      (eval `(magit-insert-section (,type ,value)
-               (magit-insert-heading ,line)
-               (funcall ,(lambda () (herdr-dispatch--insert-nodes children))))
-            t))))
+      (pcase (nth 0 node)
+        ('herdr-workspace
+         (magit-insert-section (herdr-workspace value)
+           (magit-insert-heading line)
+           (herdr-dispatch--insert-nodes children)))
+        ('herdr-tab
+         (magit-insert-section (herdr-tab value)
+           (magit-insert-heading line)
+           (herdr-dispatch--insert-nodes children)))
+        ('herdr-pane
+         (magit-insert-section (herdr-pane value)
+           (magit-insert-heading line)
+           (herdr-dispatch--insert-nodes children)))
+        ('herdr-worktrees
+         (magit-insert-section (herdr-worktrees value)
+           (magit-insert-heading line)
+           (herdr-dispatch--insert-nodes children)))
+        ('herdr-worktree
+         (magit-insert-section (herdr-worktree value)
+           (magit-insert-heading line)
+           (herdr-dispatch--insert-nodes children)))))))
 
 (defun herdr-dispatch--header (state)
   "Return the header line summarising STATE."
@@ -997,21 +1046,24 @@ If Task 4 Step 5 required commenting out `("l" "agents" herdr-agents)` in
 (autoload 'herdr-agents "herdr-dispatch" nil t)
 ```
 
-Run: `make compile`
-Expected: exit 0. `magit-section` is not on the compile load path either, so
-`herdr-dispatch.el` will not compile under bare `make compile`. Add it to the Makefile:
+`herdr-dispatch.el` requires `magit-section`, which bare `make compile` cannot resolve. Add an
+opt-in load path to the Makefile — the first two lines only:
 
 ```make
 EMACS ?= emacs
-LOADPATH := $(shell $(EMACS) -Q --batch --eval \
-  '(princ (mapconcat (lambda (d) (concat "-L " d)) \
-     (seq-filter (lambda (d) (file-exists-p (expand-file-name "magit-section.el" d))) \
-       load-path) " "))' 2>/dev/null)
-BATCH := $(EMACS) -Q --batch -L . -L test $(LOADPATH)
+EXTRA_LOAD_PATH ?=
+BATCH := $(EMACS) -Q --batch -L . -L test $(addprefix -L ,$(EXTRA_LOAD_PATH))
 ```
 
-This resolves magit-section from the user's own `load-path` when one exists and is empty
-otherwise, so `make test` still runs with no packages installed.
+Bare `make test` keeps working with no packages installed, and skips the dispatcher tests.
+Run both forms and expect exit 0 from each:
+
+```bash
+make test && make compile
+B=$HOME/.emacs.d/var/elpaca/builds
+DEPS="$B/magit-section $B/compat $B/dash $B/llama $B/transient $B/cond-let"
+make test EXTRA_LOAD_PATH="$DEPS" && make compile EXTRA_LOAD_PATH="$DEPS"
+```
 
 - [ ] **Step 7: Commit**
 
@@ -1074,7 +1126,7 @@ Append to `test/herdr-dispatch-test.el`:
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run the Step 2 command from Task 5.
+Run THE DISPATCHER TEST COMMAND (Task 5 Step 2).
 Expected: FAIL, `herdr-dispatch--value-at-point` void-function.
 
 - [ ] **Step 3: Add resolution, protection and verbs**
@@ -1187,12 +1239,12 @@ Bind them in `herdr-dispatch-mode-map`:
 
 - [ ] **Step 4: Run the tests**
 
-Run the Step 2 command from Task 5.
+Run THE DISPATCHER TEST COMMAND (Task 5 Step 2).
 Expected: 7 tests PASS.
 
 - [ ] **Step 5: Run the hermetic suite and compile**
 
-Run: `make test && make compile`
+Run `make test && make compile`, then both again with `EXTRA_LOAD_PATH="$DEPS"` (Global Constraints).
 Expected: both exit 0.
 
 - [ ] **Step 6: Commit**
@@ -1259,7 +1311,7 @@ Append to `test/herdr-dispatch-test.el`:
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run the Step 2 command from Task 5.
+Run THE DISPATCHER TEST COMMAND (Task 5 Step 2).
 Expected: FAIL, `herdr-dispatch--worktrees-for` void-function.
 
 - [ ] **Step 3: Implement**
@@ -1327,12 +1379,12 @@ Bind TAB in `herdr-dispatch-mode-map`:
 
 - [ ] **Step 4: Run the tests**
 
-Run the Step 2 command from Task 5.
+Run THE DISPATCHER TEST COMMAND (Task 5 Step 2).
 Expected: 10 tests PASS.
 
 - [ ] **Step 5: Run the hermetic suite and compile**
 
-Run: `make test && make compile`
+Run `make test && make compile`, then both again with `EXTRA_LOAD_PATH="$DEPS"` (Global Constraints).
 Expected: both exit 0.
 
 - [ ] **Step 6: Commit**
@@ -1388,7 +1440,7 @@ already prompt. Do not add a second prompt.
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run the Step 2 command from Task 5.
+Run THE DISPATCHER TEST COMMAND (Task 5 Step 2).
 Expected: FAIL, `herdr-dispatch-rename` void-function.
 
 - [ ] **Step 3: Implement**
@@ -1434,12 +1486,12 @@ Bind:
 
 - [ ] **Step 4: Run the tests**
 
-Run the Step 2 command from Task 5.
+Run THE DISPATCHER TEST COMMAND (Task 5 Step 2).
 Expected: 12 tests PASS.
 
 - [ ] **Step 5: Hermetic suite and compile**
 
-Run: `make test && make compile`
+Run `make test && make compile`, then both again with `EXTRA_LOAD_PATH="$DEPS"` (Global Constraints).
 Expected: both exit 0.
 
 - [ ] **Step 6: Commit**
@@ -1508,7 +1560,7 @@ git commit -m "Add rename and close, dispatching on the section at point"
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run the Step 2 command from Task 5.
+Run THE DISPATCHER TEST COMMAND (Task 5 Step 2).
 Expected: FAIL, `herdr-dispatch--arg` void-function.
 
 - [ ] **Step 3: Implement**
@@ -1635,12 +1687,12 @@ Bind the transient and the five direct keys:
 
 - [ ] **Step 4: Run the tests**
 
-Run the Step 2 command from Task 5.
+Run THE DISPATCHER TEST COMMAND (Task 5 Step 2).
 Expected: 15 tests PASS.
 
 - [ ] **Step 5: Hermetic suite and compile**
 
-Run: `make test && make compile`
+Run `make test && make compile`, then both again with `EXTRA_LOAD_PATH="$DEPS"` (Global Constraints).
 Expected: both exit 0.
 
 - [ ] **Step 6: Commit**
