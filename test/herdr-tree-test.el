@@ -88,20 +88,23 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
          (pane (nth 2 (car (nth 3 (car tabs))))))
     (should (string-match-p "claude/reviewer" pane))))
 
-(ert-deftest herdr-tree-adds-a-worktrees-section-only-when-known ()
-  (should (equal '(herdr-workspace herdr-tab herdr-tab)
-                 (cons 'herdr-workspace
-                       (mapcar #'car (nth 3 (car (herdr-tree-build
-                                                  (herdr-tree-test--state)
-                                                  nil))))))
-          )
+(ert-deftest herdr-tree-omits-worktrees-when-not-fetched ()
+  "A workspace absent from WORKTREES gets no worktrees section."
+  (should-not
+   (seq-find (lambda (node) (eq 'herdr-worktrees (car node)))
+             (nth 3 (car (herdr-tree-build (herdr-tree-test--state) nil))))))
+
+(ert-deftest herdr-tree-includes-worktrees-when-fetched ()
+  "A workspace present in WORKTREES gets a worktrees section, last."
   (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el-feat")
                                 (branch . "feat/dispatch")
                                 (label . "feat/dispatch")
                                 (open_workspace_id . nil))))))
          (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
-                                                 worktrees)))))
-    (should (equal 'herdr-worktrees (car (car (last children)))))))
+                                                 worktrees))))
+         (section (car (last children))))
+    (should (eq 'herdr-worktrees (car section)))
+    (should (equal 1 (length (nth 3 section))))))
 
 (ert-deftest herdr-tree-dims-a-worktree-already-open-as-a-workspace ()
   (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el-feat")

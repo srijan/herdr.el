@@ -111,9 +111,13 @@ so it is marked rather than repeated."
           nil)))
 
 (defun herdr-tree--worktrees-node (workspace-id worktrees)
-  "Return the worktrees node for WORKSPACE-ID, or nil when there are none.
-WORKTREES is the alist passed to `herdr-tree-build\\='.  A workspace absent
-from it has not been expanded yet, which is different from having none."
+  "Return the worktrees node for WORKSPACE-ID, or nil when it has none to
+show.
+
+Nil covers both \\='none were found\\=' and \\='none have been fetched yet\\=':
+a workspace with zero worktrees has no section worth drawing either way.
+The distinction between the two lives in the cache that builds WORKTREES,
+not here."
   (when-let* ((entry (assoc workspace-id worktrees))
               (found (cdr entry)))
     (list 'herdr-worktrees workspace-id
