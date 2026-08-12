@@ -11,32 +11,30 @@
 
 ;; Knowing which agents are blocked or finished without going to look.
 ;;
-;; Two surfaces, both fed by `herdr-state-change-hook' and neither doing
-;; any I/O: a modeline segment that is always on, and `*herdr-agents*',
-;; a tree you open when the segment says something interesting.  Desktop
-;; notifications are available but off, because an agent changing state
-;; is not by default worth interrupting for.
+;; A modeline segment that is always on, fed by `herdr-state-change-hook'
+;; and doing no I/O, plus desktop notifications that are available but
+;; off, because an agent changing state is not by default worth
+;; interrupting for.  The buffer those used to sit beside now lives in
+;; `herdr-dispatch'.
 
 ;;; Code:
 
 (require 'subr-x)
 (require 'herdr-state)
-(require 'herdr-cmd)
+(require 'herdr-tree)
+
+;; `herdr-agents' is the dispatcher command, and lives in
+;; `herdr-dispatch', which requires magit-section.  Autoloaded rather
+;; than required so the modeline segment costs nothing until the buffer
+;; is actually asked for.
+(declare-function herdr-agents "herdr-dispatch" ())
+(autoload 'herdr-agents "herdr-dispatch" nil t)
 
 (defcustom herdr-notify-statuses nil
   "Agent statuses that raise a desktop notification.
 Nil means never.  A sensible opt-in is (\"blocked\" \"done\")."
   :type '(repeat string)
   :group 'herdr)
-
-(defcustom herdr-agents-buffer-name "*herdr-agents*"
-  "Name of the agent status buffer."
-  :type 'string
-  :group 'herdr)
-
-(defconst herdr-agents-status-glyphs
-  '(("working" . "▶") ("blocked" . "⏸") ("done" . "✓") ("idle" . "·"))
-  "Glyph shown for each agent status.")
 
 ;;; Modeline segment
 
@@ -60,10 +58,7 @@ read.  Only the states worth acting on appear."
                          (when-let* ((n (alist-get status counts
                                                    nil nil #'equal)))
                            (when (> n 0)
-                             (format "%d%s" n
-                                     (alist-get status
-                                                herdr-agents-status-glyphs
-                                                "?" nil #'equal)))))
+                             (format "%d%s" n (herdr-tree-glyph status)))))
                        '("blocked" "working" "done")))))
     (if parts (concat "herdr:" (string-join parts)) "")))
 
@@ -149,101 +144,6 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
             (herdr-agents--notify
              (format "herdr: %s is %s" (or (alist-get 'agent pane) id) status)
              (or (alist-get 'terminal_title_stripped pane) id))))))))
-
-;;; The agents buffer
-
-(defvar herdr-agents-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "RET") #'herdr-agents-visit)
-    (define-key map "p" #'herdr-agents-prompt)
-    (define-key map "r" #'herdr-agents-read)
-    (define-key map "g" #'herdr-agents-refresh)
-    (define-key map "q" #'quit-window)
-    map)
-  "Keymap for `herdr-agents-mode'.")
-
-(define-derived-mode herdr-agents-mode special-mode "herdr-agents"
-  "Major mode listing herdr agents and their status."
-  (setq-local revert-buffer-function
-              (lambda (&rest _) (herdr-agents-refresh))))
-
-(defun herdr-agents--pane-at-point ()
-  "Return the pane id recorded on the current line."
-  (or (get-text-property (line-beginning-position) 'herdr-pane-id)
-      (user-error "herdr: no agent on this line")))
-
-(defun herdr-agents-visit ()
-  "Focus the agent on this line, and show its buffer if one exists."
-  (interactive)
-  (let ((id (herdr-agents--pane-at-point)))
-    (herdr-pane-focus id)
-    (when-let* ((buffer (and (fboundp 'herdr-term-buffer-for-pane)
-                             (herdr-term-buffer-for-pane id))))
-      (pop-to-buffer buffer))))
-
-(defun herdr-agents-prompt ()
-  "Prompt the agent on this line."
-  (interactive)
-  (herdr-agent-prompt (read-string "Prompt: ") (herdr-agents--pane-at-point)))
-
-(defun herdr-agents-read ()
-  "Read the agent on this line into a buffer."
-  (interactive)
-  (herdr-agent-read (herdr-agents--pane-at-point) "recent_unwrapped"))
-
-(defun herdr-agents--insert-tree (state)
-  "Insert the workspace, tab and pane tree for STATE."
-  (dolist (workspace (herdr-state-workspaces state))
-    (let ((workspace-id (alist-get 'workspace_id workspace)))
-      (insert (propertize (format "%s\n" (or (alist-get 'label workspace)
-                                             workspace-id))
-                          'face 'bold))
-      (dolist (pane (herdr-state-panes state))
-        (when (equal workspace-id (alist-get 'workspace_id pane))
-          (let* ((id (alist-get 'pane_id pane))
-                 (shell (herdr-state-shell-pane-p pane))
-                 (agent (if shell "shell*" (alist-get 'agent pane)))
-                 (status (unless shell (alist-get 'agent_status pane)))
-                 (glyph (if shell "~"
-                          (alist-get status herdr-agents-status-glyphs
-                                     " " nil #'equal))))
-            (insert
-             (propertize
-              (format "  %s %-10s %-9s %-12s %s\n"
-                      glyph (or agent "shell") (or status "")
-                      id
-                      (or (alist-get 'terminal_title_stripped pane) ""))
-              'herdr-pane-id id)))))
-      (insert "\n"))))
-
-(defun herdr-agents-refresh ()
-  "Redraw the agents buffer from the cache."
-  (interactive)
-  (when-let* ((buffer (get-buffer herdr-agents-buffer-name)))
-    (with-current-buffer buffer
-      (let ((inhibit-read-only t)
-            (line (line-number-at-pos)))
-        (erase-buffer)
-        (herdr-agents--insert-tree (herdr-state-current))
-        (goto-char (point-min))
-        (forward-line (1- line))))))
-
-;;;###autoload
-(defun herdr-agents ()
-  "Show herdr's agents and their status."
-  (interactive)
-  (let ((buffer (get-buffer-create herdr-agents-buffer-name)))
-    (with-current-buffer buffer
-      (unless (derived-mode-p 'herdr-agents-mode) (herdr-agents-mode))
-      (add-hook 'herdr-state-change-hook #'herdr-agents--refresh-hook))
-    (herdr-agents-refresh)
-    (pop-to-buffer buffer)))
-
-(defun herdr-agents--refresh-hook (&rest _)
-  "Refresh the agents buffer, if it is still alive."
-  (if (get-buffer herdr-agents-buffer-name)
-      (herdr-agents-refresh)
-    (remove-hook 'herdr-state-change-hook #'herdr-agents--refresh-hook)))
 
 (add-hook 'herdr-state-change-hook #'herdr-agents--maybe-notify)
 

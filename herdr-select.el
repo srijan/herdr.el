@@ -28,6 +28,18 @@
 (require 'herdr-rpc)
 (require 'herdr-term)
 
+;; The embark map below binds commands from `herdr-cmd', which requires
+;; this file — so they are declared rather than required.  These used to
+;; compile clean only by accident: `herdr-agents' required `herdr-cmd'
+;; and happened to be byte-compiled first, which loaded it into the
+;; compilation session for every later file.
+(declare-function herdr-pane-focus "herdr-cmd" (&optional pane-id))
+(declare-function herdr-pane-read "herdr-cmd"
+                  (&optional pane-id source lines))
+(declare-function herdr-pane-close "herdr-cmd" (&optional pane-id))
+(declare-function herdr-pane-zoom "herdr-cmd" (&optional pane-id))
+(declare-function herdr-agent-prompt "herdr-cmd" (text &optional target))
+
 (defconst herdr-select-create-new-shell "＋ new shell pane"
   "Sentinel entry offered by `herdr-select-available-shell'.
 Choosing it means \"make a fresh shell for me\" rather than naming an

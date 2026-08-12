@@ -3,6 +3,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'herdr-tree)
 (require 'herdr-agents)
 
 (defun herdr-agents-test--state (&rest specs)
@@ -45,19 +46,11 @@
     (should (equal 1 (alist-get "blocked" counts nil nil #'equal)))
     (should (null (alist-get "unknown" counts nil nil #'equal)))))
 
-(ert-deftest herdr-agents-tree-tags-lines-with-their-pane ()
-  "RET on a line needs to know which pane it names."
-  (with-temp-buffer
-    (herdr-agents--insert-tree
-     (herdr-state-from-snapshot
-      '((workspaces . (((workspace_id . "w1") (label . "web"))))
-        (panes . (((pane_id . "w1:p1") (agent . "claude")
-                   (agent_status . "blocked") (workspace_id . "w1")))))))
-    (goto-char (point-min))
-    (forward-line 1)
-    (should (equal "w1:p1"
-                   (get-text-property (line-beginning-position)
-                                      'herdr-pane-id)))))
+(ert-deftest herdr-agents-segment-uses-the-shared-glyphs ()
+  "The modeline and the dispatcher must not disagree about a status."
+  (should (equal (concat "herdr:1" (herdr-tree-glyph "blocked"))
+                 (herdr-agents--segment
+                  (herdr-agents-test--state '("w1:p1" "claude" "blocked"))))))
 
 (ert-deftest herdr-agents-segment-ignores-adopted-shells ()
   "An adopted shell has a buffer but is not an agent; it must not count."

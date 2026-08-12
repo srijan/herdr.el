@@ -29,6 +29,12 @@
 (declare-function herdr-project "herdr" ())
 (autoload 'herdr-project "herdr" nil t)
 
+;; `herdr-agents' lives in herdr-dispatch.  Autoloaded rather than
+;; required so this file does not drag in magit-section, and so the two
+;; never form a load cycle once the dispatcher gains its own menu.
+(declare-function herdr-agents "herdr-dispatch" ())
+(autoload 'herdr-agents "herdr-dispatch" nil t)
+
 (defun herdr-transient-tui-p ()
   "Return non-nil when herdr's own layout is on screen.
 
