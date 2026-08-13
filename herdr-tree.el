@@ -13,10 +13,16 @@
 ;; cache into a nested list of (TYPE VALUE LINE CHILDREN); `herdr-dispatch'
 ;; walks that list emitting magit sections.
 ;;
-;; Kept separate from the renderer for one concrete reason: `make test'
-;; runs under `emacs -Q -L .', where magit-section is not on the load
-;; path.  A model that the hermetic suite cannot reach is a model that
-;; does not get tested, and nearly all the logic worth testing is here.
+;; Kept separate from the renderer, and loadable without magit-section.
+;; The original reason was that `make test' ran under `emacs -Q -L .'
+;; where magit-section was not on the load path, so a model living in
+;; herdr-dispatch.el would not have been tested at all; that reason is
+;; gone — test/herdr-deps.el finds the dependency and nothing skips —
+;; but the separation earns its keep on its own.  Everything here is a
+;; pure function of the state cache, testable by comparing values,
+;; while the renderer can only be tested by inserting into a buffer and
+;; reading text properties back.  Keeping the two apart is what lets
+;; nearly all the logic be tested the cheap way.
 
 ;;; Code:
 
