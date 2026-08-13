@@ -60,6 +60,27 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
     (should (string-match-p "/tmp/herdr.el" line))
     (should (string-match-p (herdr-tree-glyph "blocked") line))))
 
+(ert-deftest herdr-tree-counts-children-in-parentheses ()
+  "magit\\='s idiom, because the dashboard is read next to magit-status.
+
+`Unstaged changes (1)\\=' is a heading that owns a countable number of
+children; `.emacs.d (2)\\=' says the same thing about the same kind of
+line.  A `2 panes\\=' column in the middle of the line said it too, but
+said it in a place the eye has to travel to and in a shape shared with
+the leaf rows, which own nothing.  Both halves are asserted: the count is
+in parentheses on the label, and the column it replaced is gone rather
+than duplicated beside it."
+  (let* ((worktrees '(("w1" . (((path . "/tmp/wt") (branch . "feat/x"))))))
+         (workspace (car (herdr-tree-build (herdr-tree-test--state) worktrees)))
+         (children (nth 3 workspace))
+         (tab (car children))
+         (worktrees-node (car (last children))))
+    (should (string-match-p "herdr\\.el (3)" (nth 2 workspace)))
+    (should (string-match-p "agents (2)" (nth 2 tab)))
+    (should (string-match-p "worktrees (1)" (nth 2 worktrees-node)))
+    (should-not (string-match-p "panes" (nth 2 workspace)))
+    (should-not (string-match-p "panes" (nth 2 tab)))))
+
 (ert-deftest herdr-tree-collapsed-idle-section-shows-no-glyph ()
   "Same omit-idle rule as the modeline, so the two never disagree."
   (let* ((tabs (nth 3 (car (herdr-tree-build (herdr-tree-test--state) nil))))
@@ -74,6 +95,67 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
     (should (string-match-p "working" pane))
     (should (string-match-p "w1:p1" pane))
     (should (string-match-p "fixing tests" pane))))
+
+;;; Faces
+
+(defun herdr-tree-test--face-of (line text)
+  "Return the face LINE carries where TEXT begins in it."
+  (get-text-property (string-match text line) 'face line))
+
+(ert-deftest herdr-tree-colours-a-pane-row-by-its-status ()
+  "Status is the one field worth finding without reading.
+
+The glyph and the word take the same face, which turns the leading
+column into a strip you can read down; blocked and working must not
+share one, or the strip says only \"something is happening\"."
+  (let* ((tabs (nth 3 (car (herdr-tree-build (herdr-tree-test--state) nil))))
+         (panes (nth 3 (car tabs)))
+         (working (nth 2 (car panes)))
+         (blocked (nth 2 (nth 1 panes))))
+    (should (eq (herdr-tree-status-face "working")
+                (herdr-tree-test--face-of working "working")))
+    (should (eq (herdr-tree-status-face "blocked")
+                (herdr-tree-test--face-of blocked "blocked")))
+    (should-not (eq (herdr-tree-status-face "working")
+                    (herdr-tree-status-face "blocked")))
+    ;; The glyph leads with the same colour as the word it stands for.
+    (should (eq (herdr-tree-status-face "working")
+                (get-text-property 0 'face working)))
+    (should (eq (herdr-tree-status-face "blocked")
+                (get-text-property 0 'face blocked)))))
+
+(ert-deftest herdr-tree-dims-the-fields-that-are-not-the-news ()
+  "The pane id and the terminal title are context, not the message.
+
+Built-in faces rather than colours of our own, so a theme keeps working;
+asserting the face name is what would catch a hardcoded colour creeping
+back in."
+  (let* ((workspace (car (herdr-tree-build (herdr-tree-test--state) nil)))
+         (line (nth 2 workspace))
+         (pane (nth 2 (car (nth 3 (car (nth 3 workspace)))))))
+    (should (eq 'font-lock-comment-face
+                (herdr-tree-test--face-of line "/tmp/herdr\\.el")))
+    (should (eq 'shadow (herdr-tree-test--face-of pane "w1:p1")))
+    (should (eq 'font-lock-doc-face
+                (herdr-tree-test--face-of pane "fixing tests")))
+    ;; The rollup glyph on a collapsed heading keeps its status colour.
+    (should (eq (herdr-tree-status-face "blocked")
+                (get-text-property (1- (length line)) 'face line)))))
+
+(ert-deftest herdr-tree-faces-do-not-make-two-equal-trees-differ ()
+  "Text properties must stay invisible to `equal\\='.
+
+`herdr-dispatch-refresh\\=' skips a redraw when the tree it just built
+equals the one on screen, and the tree tests above compare lines with
+`equal\\=' and `string-match-p\\='.  Both would be wrong if a face could
+change the identity of a string — which is the reason faces can live
+here at all rather than in the renderer."
+  (let ((state (herdr-tree-test--state)))
+    (should (equal (herdr-tree-build state nil) (herdr-tree-build state nil)))
+    (should (equal "working" (substring-no-properties
+                              (herdr-tree--faced "working" 'warning))))
+    (should (equal (herdr-tree--faced "working" 'warning)
+                   (herdr-tree--faced "working" 'success)))))
 
 (ert-deftest herdr-tree-agent-column-widens-to-fit-the-longest-label ()
   "A fixed column truncates nothing — `%-Ns\\=' never cuts a longer

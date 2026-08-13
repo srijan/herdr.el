@@ -34,6 +34,37 @@ so the two surfaces cannot disagree about what a status looks like.")
   "Return the glyph for STATUS, or a space when it has none."
   (alist-get status herdr-tree-status-glyphs " " nil #'equal))
 
+(defconst herdr-tree-status-faces
+  '(("blocked" . warning) ("working" . font-lock-keyword-face)
+    ("done" . success) ("idle" . shadow))
+  "Face shown for each agent status.
+
+Built-in faces rather than colours of our own, so that the dashboard
+follows whatever theme is loaded instead of fighting it.  The four are
+chosen for what each state asks of you: blocked wants attention and gets
+the face Emacs already uses to ask for it, working is the one state that
+is going somewhere, done is the good ending, and idle is the state most
+lines are in most of the time and so is the one worth dimming.")
+
+(defun herdr-tree-status-face (status)
+  "Return the face for STATUS, or nil when it has none."
+  (alist-get status herdr-tree-status-faces nil nil #'equal))
+
+(defun herdr-tree--faced (text face)
+  "Return TEXT carrying FACE, or TEXT unchanged when FACE is nil.
+
+Faces are applied here, where the fields are still separate values,
+rather than in the renderer, which receives one already-formatted and
+column-aligned line per node and could only recover the fields from it
+by guessing at offsets.  It costs the renderer nothing: `equal\\=' ignores
+text properties on strings, so neither the tree tests that compare lines
+nor the unchanged-tree check in `herdr-dispatch-refresh\\=' can see them.
+
+The magit faces are the exception and stay in the renderer: herdr-tree
+is loadable — and tested — without magit-section on the load path, so it
+cannot name anything magit-section defines."
+  (if face (propertize text 'face face) text))
+
 (defconst herdr-tree-noteworthy-statuses '("blocked" "working" "done")
   "Statuses worth showing on a collapsed section.
 Idle is omitted for the same reason the modeline omits it: a marker that
@@ -42,7 +73,8 @@ is always on screen stops being read.")
 (defun herdr-tree--rollup (status)
   "Return the glyph for STATUS on a collapsed section, or an empty string."
   (if (member status herdr-tree-noteworthy-statuses)
-      (herdr-tree-glyph status)
+      (herdr-tree--faced (herdr-tree-glyph status)
+                         (herdr-tree-status-face status))
     ""))
 
 (defun herdr-tree-status-counts (state)
@@ -101,18 +133,31 @@ session of short labels does not look cramped either."
                  (herdr-state-panes state))))
 
 (defun herdr-tree--pane-node (state pane width)
-  "Return the node for PANE in STATE, its agent column WIDTH wide."
-  (let ((id (alist-get 'pane_id pane))
-        (shell (herdr-state-shell-pane-p pane)))
+  "Return the node for PANE in STATE, its agent column WIDTH wide.
+
+A pane row is a leaf: the renderer inserts it as ordinary content rather
+than as a section heading, so the faces here are all the shape it gets.
+The status governs both the glyph and the word, which makes the leading
+column a colour strip you can read down without reading any of the
+words."
+  (let* ((id (alist-get 'pane_id pane))
+         (shell (herdr-state-shell-pane-p pane))
+         (status (if shell "" (or (alist-get 'agent_status pane) "")))
+         (face (herdr-tree-status-face status)))
     (list 'herdr-pane id
           (string-trim-right
            (format (format "%%s %%-%ds %%-8s %%-8s %%s" width)
-                   (if shell "~" (herdr-tree-glyph
-                                  (alist-get 'agent_status pane)))
+                   (if shell
+                       (herdr-tree--faced "~" 'shadow)
+                     (herdr-tree--faced (herdr-tree-glyph
+                                         (alist-get 'agent_status pane))
+                                        face))
                    (herdr-tree--agent-label state pane)
-                   (if shell "" (or (alist-get 'agent_status pane) ""))
-                   id
-                   (or (alist-get 'terminal_title_stripped pane) "")))
+                   (herdr-tree--faced status face)
+                   (herdr-tree--faced id 'shadow)
+                   (herdr-tree--faced
+                    (or (alist-get 'terminal_title_stripped pane) "")
+                    'font-lock-doc-face)))
           nil)))
 
 (defun herdr-tree--panes-in-tab (state tab-id width)
@@ -148,9 +193,10 @@ keeps every pane reachable no matter what the tab cache knows."
   (let ((id (alist-get 'tab_id tab)))
     (list 'herdr-tab id
           (string-trim-right
-           (format "%-24s %s %s"
-                   (or (alist-get 'label tab) id)
-                   (format "%s panes" (or (alist-get 'pane_count tab) 0))
+           (format "%-28s %s"
+                   (format "%s (%s)"
+                           (or (alist-get 'label tab) id)
+                           (or (alist-get 'pane_count tab) 0))
                    (herdr-tree--rollup (alist-get 'agent_status tab))))
           (herdr-tree--panes-in-tab state id width))))
 
@@ -167,11 +213,13 @@ so it is marked rather than repeated."
   (let ((open (alist-get 'open_workspace_id worktree)))
     (list 'herdr-worktree (alist-get 'path worktree)
           (string-trim-right
-           (format "%-24s %s"
+           (format "%-28s %s"
                    (or (alist-get 'branch worktree)
                        (alist-get 'label worktree)
                        "?")
-                   (if open (format "open as %s" open) "")))
+                   (if open
+                       (herdr-tree--faced (format "open as %s" open) 'shadow)
+                     "")))
           nil)))
 
 (defun herdr-tree--worktrees-node (workspace-id worktrees)
@@ -184,13 +232,20 @@ not here."
   (when-let* ((entry (assoc workspace-id worktrees))
               (found (cdr entry)))
     (list 'herdr-worktrees workspace-id
-          (format "worktrees %s" (length found))
+          (format "worktrees (%s)" (length found))
           (mapcar #'herdr-tree--worktree-node found))))
 
 (defun herdr-tree--workspace-node (state workspace worktrees width)
   "Return the node for WORKSPACE in STATE, including WORKTREES.
 WIDTH is the agent column width, computed once in `herdr-tree-build\\='
-and threaded down to every pane in this workspace."
+and threaded down to every pane in this workspace.
+
+The pane count rides in parentheses on the label — `repo (3)\\=' — rather
+than as a `3 panes\\=' column of its own.  That is magit's idiom for the
+same thing (`Unstaged changes (1)\\='), and it is the shape that reads as
+a container: a heading that owns a countable number of children, told
+apart at a glance from the leaf rows that own none.  The tab and
+worktrees headings are counted the same way for the same reason."
   (let* ((id (alist-get 'workspace_id workspace))
          (tabs (herdr-tree--tabs-in-workspace state id))
          ;; One tab is not structure.  Unnamed tabs are labelled by
@@ -208,10 +263,13 @@ and threaded down to every pane in this workspace."
          (worktree-node (herdr-tree--worktrees-node id worktrees)))
     (list 'herdr-workspace id
           (string-trim-right
-           (format "%-24s %-28s %s %s"
-                   (or (alist-get 'label workspace) id)
-                   (or (herdr-state-workspace-directory state id) "")
-                   (format "%s panes" (or (alist-get 'pane_count workspace) 0))
+           (format "%-28s %-30s %s"
+                   (format "%s (%s)"
+                           (or (alist-get 'label workspace) id)
+                           (or (alist-get 'pane_count workspace) 0))
+                   (herdr-tree--faced
+                    (or (herdr-state-workspace-directory state id) "")
+                    'font-lock-comment-face)
                    (herdr-tree--rollup (alist-get 'agent_status workspace))))
           (if worktree-node (append children (list worktree-node)) children))))
 

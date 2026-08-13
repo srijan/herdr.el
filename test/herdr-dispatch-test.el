@@ -42,11 +42,20 @@
 `w2' keeps its tab level because it has more than one tab.  Between them
 every node type the renderer must handle appears.")
 
-(defun herdr-dispatch-test--type-at (text)
-  "Return the type of the section whose line contains TEXT."
+(defun herdr-dispatch-test--section-at (text)
+  "Return the section whose line contains TEXT."
   (goto-char (point-min))
   (search-forward text)
-  (oref (magit-current-section) type))
+  (magit-current-section))
+
+(defun herdr-dispatch-test--type-at (text)
+  "Return the type of the section whose line contains TEXT."
+  (oref (herdr-dispatch-test--section-at text) type))
+
+(defun herdr-dispatch-test--face-at (text)
+  "Return the face on the first character of the line holding TEXT."
+  (herdr-dispatch-test--section-at text)
+  (get-text-property (line-beginning-position) 'face))
 
 (ert-deftest herdr-dispatch-renders-every-line ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
@@ -112,6 +121,97 @@ special-casing for the flattened shape."
       (should (= tab-indent flattened-pane-indent))
       (should (< tab-indent nested-pane-indent))
       (should (< flattened-pane-indent nested-pane-indent)))))
+
+;;; Headings and leaves
+
+(ert-deftest herdr-dispatch-heads-containers-only ()
+  "Only a container gets a heading; a leaf is content.
+
+Every node used to be inserted with `magit-insert-heading', which is why
+the buffer read as a wall of same-weight text: `magit-section-heading' on
+every line distinguishes nothing, and magit-section treats a heading as
+the foldable part of a section, so leaves with nothing to fold were
+offered as foldable too.
+
+The `content' slot is the seam.  `magit-insert-heading' is the only thing
+that sets it, and everything downstream — the fold indicator, the
+heading keymap, `magit-section-content-p' — keys on it, so it is the
+assertion that catches a leaf promoted back to a heading no matter how
+the promotion is spelled."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (dolist (text '("herdr.el" "main" "worktrees 1"))
+      (should (oref (herdr-dispatch-test--section-at text) content)))
+    (dolist (text '("w1:p1" "w2:p2" "open as w2"))
+      (should-not (oref (herdr-dispatch-test--section-at text) content)))))
+
+(ert-deftest herdr-dispatch-faces-container-headings-and-leaves-differently ()
+  "The `content' slot is invisible; the face is what the user reads.
+
+A heading whose face said nothing was the reported problem, so the
+difference is asserted where it shows: `magit-section-heading' begins a
+container line and does not begin a leaf line."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (dolist (text '("herdr.el" "main" "worktrees 1"))
+      (should (eq 'magit-section-heading (herdr-dispatch-test--face-at text))))
+    (dolist (text '("w1:p1" "w2:p2" "open as w2"))
+      (should-not (eq 'magit-section-heading
+                      (herdr-dispatch-test--face-at text))))))
+
+(ert-deftest herdr-dispatch-keeps-a-faced-field-and-still-heads-the-rest ()
+  "`magit-insert-heading' faces the whole string, but only if no part of
+it is faced already — so one dimmed field in a heading line would
+otherwise cost the whole line its heading face.  Both halves are
+asserted from one line: the propertised field keeps the face herdr-tree
+gave it, and the characters around it read as a heading."
+  (herdr-dispatch-test-with-buffer
+      (list (list 'herdr-workspace "w1"
+                  (concat "repo (1) " (propertize "/tmp/repo" 'face 'shadow))
+                  nil))
+    (goto-char (point-min))
+    (should (eq 'magit-section-heading (get-text-property (point) 'face)))
+    (search-forward "/tmp/repo")
+    (should (eq 'shadow (get-text-property (match-beginning 0) 'face)))))
+
+(ert-deftest herdr-dispatch-gives-every-node-its-own-section ()
+  "Presentation changed; resolution did not.
+
+A leaf that stopped being a heading must not stop being a section: every
+verb in this buffer resolves the object under point by walking up from
+`magit-current-section', so a pane row folded into its workspace's
+section would answer `RET', `k' and `R' with the workspace.  Type and
+value are checked for all five node types, leaves included, because that
+pair is the entire interface the verbs have to the tree."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (dolist (spec '(("herdr.el"    herdr-workspace "w1")
+                    ("w1:p1"       herdr-pane      "w1:p1")
+                    ("main"        herdr-tab       "w2:t1")
+                    ("w2:p2"       herdr-pane      "w2:p2")
+                    ("worktrees 1" herdr-worktrees "w1")
+                    ("open as w2"  herdr-worktree  "/tmp/herdr.el-fix")))
+      (let ((section (herdr-dispatch-test--section-at (nth 0 spec))))
+        (should (eq (nth 1 spec) (oref section type)))
+        (should (equal (nth 2 spec) (oref section value)))))))
+
+(ert-deftest herdr-dispatch-separates-top-level-workspaces-with-a-blank-line ()
+  "Workspaces are set apart the way magit sets its sections apart.
+
+The gap goes between them rather than after each, so the buffer does not
+end in one, and outside the section rather than inside it, so folding a
+workspace does not take the gap with it and run the collapsed heading
+into the next workspace.  Asserting it sits past the first workspace's
+`end' is what says \"outside\"; a blank line printed as the section's
+last line would satisfy a test that only looked at the text."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((first (herdr-dispatch-test--section-at "herdr.el")))
+      (goto-char (point-min))
+      (search-forward "api")
+      (forward-line -1)
+      (should (looking-at-p "^$"))
+      (should (>= (point) (oref first end))))
+    ;; Not before the first, and not after the last.
+    (goto-char (point-min))
+    (should-not (looking-at-p "^$"))
+    (should-not (string-match-p "\n\n\\'" (buffer-string)))))
 
 ;;; Refresh
 
@@ -805,7 +905,7 @@ to redraw."
                             (branch . "feat/x")
                             (open_workspace_id . nil))))))
         (sit-for 0.2)
-        (should (string-match-p "worktrees 1" (buffer-string)))
+        (should (string-match-p "worktrees (1)" (buffer-string)))
         (should (string-match-p "feat/x" (buffer-string)))))))
 
 (ert-deftest herdr-dispatch-several-replies-cost-one-redraw ()
@@ -1012,13 +1112,14 @@ that no longer exists."
 (ert-deftest herdr-dispatch-a-reply-that-never-comes-is-cured-by-g ()
   "A request that is never answered must not wedge its workspace forever.
 
-`herdr-rpc-call-async' has no timeout, unlike `herdr-rpc-call'.  A server
-that accepts the connection and then never replies therefore leaves the
-pending marker set for the life of the Emacs session — and that marker is
-exactly what stops the workspace being asked again, so the workspace
-shows no worktrees for the rest of the session.  \\[herdr-dispatch-refresh]
-has to be able to break that, which means clearing the pending set and
-not merely the cache.
+`herdr-dispatch--fetch-worktrees' arms `herdr-rpc-timeout', so a request
+that goes unanswered does eventually come back as an error — but only
+after that timeout, and until it does the pending marker stays set, which
+is exactly what stops the workspace being asked again.  This test stands
+in that window: the reply is simply never delivered, so the workspace
+shows no worktrees and no keystroke may have to wait the timeout out.
+\\[herdr-dispatch-refresh] has to be able to break that, which means
+clearing the pending set and not merely the cache.
 
 Bumping the generation while doing so is not optional, and the tail of
 this test is what says so: the abandoned reply is delivered afterwards,
@@ -1189,9 +1290,9 @@ closes that gap."
         (with-current-buffer buffer
           (herdr-dispatch-mode)
           (herdr-dispatch-refresh)
-          (should (string-match-p "worktrees 1" (buffer-string)))
+          (should (string-match-p "worktrees (1)" (buffer-string)))
           (should (eq 'herdr-worktrees
-                      (herdr-dispatch-test--type-at "worktrees 1")))
+                      (herdr-dispatch-test--type-at "worktrees (1)")))
           (should (eq 'herdr-worktree
                       (herdr-dispatch-test--type-at "feat/x"))))
       (kill-buffer buffer))))
@@ -1243,6 +1344,114 @@ a static buffer never meets the erase that broke this."
       (search-forward "web")
       (should (equal (cl-evenp i)
                      (and (oref (magit-current-section) hidden) t))))))
+
+;;; Fold indicators and the current-section highlight
+
+(defun herdr-dispatch-test--fold-glyph (text)
+  "Return the fold indicator drawn beside the line holding TEXT, or nil.
+The indicator is a margin overlay carrying a `display' property, which is
+where the character actually ends up — reading it back out is the only
+way to tell a configured indicator from a drawn one."
+  (goto-char (point-min))
+  (search-forward text)
+  (goto-char (line-beginning-position))
+  (seq-some (lambda (overlay)
+              (when (eq 'margin (overlay-get overlay 'magit-vis-indicator))
+                (aref (cadr (get-text-property
+                             0 'display (overlay-get overlay 'before-string)))
+                      0)))
+            (overlays-in (point) (1+ (point)))))
+
+(defun herdr-dispatch-test--hidden-p (text)
+  "Return non-nil when the line holding TEXT is invisible on screen."
+  (goto-char (point-min))
+  (search-forward text)
+  (and (invisible-p (point)) t))
+
+(ert-deftest herdr-dispatch-marks-foldable-headings-in-any-frame ()
+  "The default indicators are illegible in a graphical frame and absent
+from a terminal one.
+
+`magit-section-visibility-indicators' defaults to fringe bitmaps in
+graphical frames — off past the window edge, and low-contrast under many
+themes — and to an ellipsis appended to collapsed headings in terminal
+frames, which marks nothing at all on the expanded ones.  herdr never set
+it, so both applied.
+
+A character in the left margin is the one form both frame types can
+draw, which is why the same pair is given for each; the margin must have
+room for it, or the overlay is silently dropped."
+  (herdr-dispatch-test-with-dispatcher
+    (should (local-variable-p 'magit-section-visibility-indicators))
+    (should (equal herdr-dispatch-fold-indicators
+                   magit-section-visibility-indicators))
+    (should (equal 2 (length magit-section-visibility-indicators)))
+    (dolist (pair magit-section-visibility-indicators)
+      (should (characterp (car pair)))
+      (should (characterp (cdr pair)))
+      (should-not (equal (car pair) (cdr pair))))
+    (should (> left-margin-width 0))))
+
+(ert-deftest herdr-dispatch-draws-fold-indicators-on-a-fresh-render ()
+  "magit writes indicators in `magit-section-show' and
+`magit-section-hide' and nowhere else, so a buffer that has only ever
+been drawn has none — configuring the option is not the same as showing
+one.  A leaf has nothing to fold and must stay unmarked."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (should (equal (cdar herdr-dispatch-fold-indicators)
+                   (herdr-dispatch-test--fold-glyph "web")))
+    (should-not (herdr-dispatch-test--fold-glyph "w1:p1"))))
+
+(ert-deftest herdr-dispatch-a-fold-survives-a-redraw-in-full ()
+  "The `hidden' slot survived a redraw; nothing else did.
+
+`magit-insert-section' restores the slot from the visibility cache but
+never acts on it, so a folded workspace came back with its panes listed
+under it while the slot still said it was folded — and the next toggle
+therefore appeared to do nothing, because it hid a section the buffer had
+already forgotten was open.  The existing fold test reads the slot, which
+is exactly the half that was never broken; what is asserted here is the
+screen: the panes stay invisible and the heading keeps the collapsed
+glyph."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (should-not (herdr-dispatch-test--hidden-p "w1:p1"))
+    (goto-char (point-min))
+    (search-forward "web")
+    (magit-section-hide (magit-current-section))
+    (should (herdr-dispatch-test--hidden-p "w1:p1"))
+    (should (equal (caar herdr-dispatch-fold-indicators)
+                   (herdr-dispatch-test--fold-glyph "web")))
+    (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
+    (herdr-dispatch-refresh)
+    (should (herdr-dispatch-test--hidden-p "w1:p1"))
+    (should (equal (caar herdr-dispatch-fold-indicators)
+                   (herdr-dispatch-test--fold-glyph "web")))))
+
+(ert-deftest herdr-dispatch-highlights-the-section-at-point ()
+  "magit-section wires this up itself, and the point is that we add nothing.
+
+`magit-section-mode' puts `magit-section-post-command-hook' on the
+buffer-local `post-command-hook', and that calls
+`magit-section-update-highlight' after every command; `herdr-dispatch-mode'
+derives from it and so inherits the whole arrangement.  Adding a hook of
+our own would have been a second highlighter fighting the first.
+
+The hook is asserted because it is the mechanism, and the overlay because
+the mechanism has to reach a leaf: a pane row is no longer a heading, and
+the highlight faces headings and bodies through different branches of
+`magit-section-highlight'."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (should (memq #'magit-section-post-command-hook post-command-hook))
+    (goto-char (point-min))
+    (search-forward "w1:p2")
+    (magit-section-update-highlight t)
+    (should (seq-some (lambda (overlay)
+                        (eq 'magit-section-highlight
+                            (overlay-get overlay 'font-lock-face)))
+                      (overlays-at (point))))))
 
 (ert-deftest herdr-dispatch-open-worktree-focuses-an-already-open-worktree ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes

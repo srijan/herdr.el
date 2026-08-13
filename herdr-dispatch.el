@@ -139,49 +139,170 @@ tells itself apart from a redraw of an empty session.")
 Lowercase letters are the read-only verbs; each acts on whatever the
 line under point names, so no key needs a target of its own.")
 
+(defconst herdr-dispatch-fold-indicators
+  (let ((pair (if (char-displayable-p ?▾) '(?▸ . ?▾) '(?> . ?v))))
+    (list pair pair))
+  "Value `magit-section-visibility-indicators\\=' takes in the dispatcher.
+
+The same margin characters for graphical and terminal frames, which is
+neither half of the default.  That default is
+`(magit-fringe-bitmap> . magit-fringe-bitmapv)\\=' in a graphical frame —
+an arrow in the left fringe, which several themes render at such low
+contrast that it reads as nothing at all, and which is off past the
+window edge rather than beside the text it describes — and an ellipsis
+appended to collapsed headings in a terminal frame, which marks the
+collapsed sections and leaves the expandable ones unmarked.  So on the
+default the two frame types disagree about what a foldable line even
+looks like, and neither answer is legible.
+
+A character indicator is drawn in the left margin instead, which
+terminal frames have and fringes they do not, so both frame types show
+the same `▸\\=' beside a collapsed heading and `▾\\=' beside an expanded
+one.  The margin has to be wide enough to hold it: see
+`herdr-dispatch-mode\\='.  Car before cdr because that is the order
+`magit-section-maybe-update-visibility-indicator\\=' reads them in —
+the car is what a hidden section gets.")
+
 (define-derived-mode herdr-dispatch-mode magit-section-mode "herdr"
   "Major mode for the herdr dispatcher."
   (setq-local revert-buffer-function
-              (lambda (&rest _) (herdr-dispatch-refresh t))))
+              (lambda (&rest _) (herdr-dispatch-refresh t)))
+  (setq-local magit-section-visibility-indicators
+              herdr-dispatch-fold-indicators)
+  ;; Two columns: one for the indicator, one of air between it and the
+  ;; text.  A margin of zero width silently drops margin overlays, which
+  ;; would leave the indicators configured and invisible.
+  (setq-local left-margin-width 2)
+  ;; `set-window-buffer' picks the width up when the buffer is next
+  ;; displayed, which covers opening the dashboard.  Windows already
+  ;; showing this buffer — the mode being re-run, or reverted — keep the
+  ;; margins they were given, so they are told directly.
+  (dolist (window (get-buffer-window-list (current-buffer) nil t))
+    (set-window-margins window left-margin-width right-margin-width)))
+
+(defun herdr-dispatch--heading (line)
+  "Return LINE with `magit-section-heading\\=' on its unfaced characters.
+
+`magit-insert-heading\\=' faces the whole string it is given, but only
+when no part of it is faced already: hand it a line carrying one
+propertised field and it inserts every character unchanged, so a single
+dimmed directory would cost the heading its heading face entirely.
+Filling in the gaps first makes the two compose — the fields herdr-tree
+faced keep their faces, and everything else reads as a heading."
+  (let ((line (copy-sequence line))
+        (start 0)
+        (length (length line)))
+    (while (< start length)
+      (let ((end (or (next-single-property-change start 'face line) length)))
+        (unless (get-text-property start 'face line)
+          (put-text-property start end 'face 'magit-section-heading line))
+        (setq start end)))
+    line))
+
+(defun herdr-dispatch--indent (line depth)
+  "Return LINE indented two columns per DEPTH."
+  (concat (make-string (* 2 depth) ?\s) line))
+
+(defun herdr-dispatch--insert-container (line depth)
+  "Insert LINE at DEPTH as the heading of the section being inserted.
+
+Containers — workspaces, tabs, the worktrees group — are the only nodes
+that get a heading.  A heading is what magit-section makes foldable and
+what carries the `magit-section-heading\\=' face, so making every node one
+spent both on nothing: the face said \"heading\" on every line in the
+buffer and therefore said nothing, and the fold indicator appeared
+beside leaves that have nothing to fold."
+  (magit-insert-heading (herdr-dispatch--heading
+                         (herdr-dispatch--indent line depth))))
+
+(defun herdr-dispatch--insert-leaf (line depth)
+  "Insert LINE at DEPTH as the body of the section being inserted.
+
+Plainly, without `magit-insert-heading\\=': a pane row and a worktree row
+are the content of the section above them, and it is the contrast with
+that section\\='s heading that makes the tree read as a tree.  The section
+itself is still created around this line, with its own type and value,
+because every verb resolves the object under point by walking up from
+`magit-current-section\\=' — a leaf folded into its parent\\='s section would
+answer `RET\\=', `k\\=' and `R\\=' with its parent."
+  (insert (herdr-dispatch--indent line depth) ?\n))
+
+(defun herdr-dispatch--apply-fold (section)
+  "Give SECTION the appearance its `hidden\\=' slot already claims.
+Returns SECTION, so that it can wrap the `magit-insert-section\\=' that
+produced it.
+
+`magit-insert-section\\=' restores that slot from
+`magit-section-visibility-cache\\=', but nothing acts on it: the
+invisibility overlay and the fold indicator are written by
+`magit-section-hide\\=' and `magit-section-show\\=', and a redraw calls
+neither.  So a folded workspace came back from every redraw with its
+panes on screen and its slot still claiming it was folded, which made
+the next \\[magit-section-toggle] on it appear to do nothing — it hid a
+section the buffer had already forgotten was open.  Adding the fold
+indicator without this would have made that visible rather than fixed:
+a `▸\\=' beside a heading whose children are plainly listed under it.
+
+Magit itself does not need this because its inserters defer hidden
+bodies through `magit-insert-section-body\\='.  That is not available
+here: a body that is never inserted has no sections in it, and
+`herdr-dispatch--position-restore\\=' has to find the section point was in
+whether or not its parent is folded."
+  (if (oref section hidden)
+      (magit-section-hide section)
+    (magit-section-maybe-update-visibility-indicator section))
+  section)
 
 (defun herdr-dispatch--insert-nodes (nodes &optional depth)
   "Insert NODES, each (TYPE VALUE LINE CHILDREN), as magit sections.
 
-DEPTH is the nesting level, defaulting to 0.  Each heading is prefixed
-with two spaces per DEPTH, so the hierarchy is visible on screen instead
-of every heading beginning at column 0 regardless of nesting — a pane
-parented directly to a workspace indents one level, a pane under a tab
-indents two, with no special-casing for either shape.
+DEPTH is the nesting level, defaulting to 0.  Each line is prefixed with
+two spaces per DEPTH, so the hierarchy is visible on screen instead of
+every line beginning at column 0 regardless of nesting — a pane parented
+directly to a workspace indents one level, a pane under a tab indents
+two, with no special-casing for either shape.
+
+Top-level nodes are separated by a blank line, the way magit separates
+the sections of a status buffer.  It goes between them rather than after
+each, so the buffer does not end in one, and outside the sections rather
+than inside, so folding a workspace does not swallow the gap that sets
+it apart from the next.
 
 `magit-insert-section\\=' takes its type as an unevaluated symbol, so the
 five types are spelled out rather than passed through.  A runtime `eval\\='
 would collapse these into one branch; five explicit branches byte-compile
 and do not need defending."
-  (let ((depth (or depth 0)))
+  (let ((depth (or depth 0))
+        (separate nil))
     (dolist (node nodes)
       (let ((value (nth 1 node))
-            (line (concat (make-string (* 2 depth) ?\s) (nth 2 node)))
+            (line (nth 2 node))
             (children (nth 3 node)))
+        (when (and separate (= depth 0)) (insert ?\n))
+        (setq separate t)
         (pcase (nth 0 node)
           ('herdr-workspace
-           (magit-insert-section (herdr-workspace value)
-             (magit-insert-heading line)
-             (herdr-dispatch--insert-nodes children (1+ depth))))
+           (herdr-dispatch--apply-fold
+            (magit-insert-section (herdr-workspace value)
+              (herdr-dispatch--insert-container line depth)
+              (herdr-dispatch--insert-nodes children (1+ depth)))))
           ('herdr-tab
-           (magit-insert-section (herdr-tab value)
-             (magit-insert-heading line)
-             (herdr-dispatch--insert-nodes children (1+ depth))))
+           (herdr-dispatch--apply-fold
+            (magit-insert-section (herdr-tab value)
+              (herdr-dispatch--insert-container line depth)
+              (herdr-dispatch--insert-nodes children (1+ depth)))))
           ('herdr-pane
            (magit-insert-section (herdr-pane value)
-             (magit-insert-heading line)
+             (herdr-dispatch--insert-leaf line depth)
              (herdr-dispatch--insert-nodes children (1+ depth))))
           ('herdr-worktrees
-           (magit-insert-section (herdr-worktrees value)
-             (magit-insert-heading line)
-             (herdr-dispatch--insert-nodes children (1+ depth))))
+           (herdr-dispatch--apply-fold
+            (magit-insert-section (herdr-worktrees value)
+              (herdr-dispatch--insert-container line depth)
+              (herdr-dispatch--insert-nodes children (1+ depth)))))
           ('herdr-worktree
            (magit-insert-section (herdr-worktree value)
-             (magit-insert-heading line)
+             (herdr-dispatch--insert-leaf line depth)
              (herdr-dispatch--insert-nodes children (1+ depth)))))))))
 
 ;;; The object at point
@@ -718,23 +839,37 @@ already keeps idle out of the modeline segment."
 (defun herdr-dispatch--position-at (position)
   "Return (IDENT . COLUMN) naming the section and column at POSITION, or nil.
 Section identity rather than a line number: a pane closing above point
-used to move you to a different agent than the one you were reading."
+used to move you to a different agent than the one you were reading.
+
+Columns are counted as if nothing were folded; see
+`herdr-dispatch--position-restore\\=' for why."
   (save-excursion
-    (goto-char position)
-    (when-let* ((section (magit-current-section)))
-      (cons (magit-section-ident section) (current-column)))))
+    (let ((buffer-invisibility-spec nil))
+      (goto-char position)
+      (when-let* ((section (magit-current-section)))
+        (cons (magit-section-ident section) (current-column))))))
 
 (defun herdr-dispatch--position-restore (position)
   "Return where POSITION now lands, or nil when its section is gone.
 POSITION is a (IDENT . COLUMN) pair from `herdr-dispatch--position-at'.
 The column is restored within the section\\='s heading line and clamped to
 that line\\='s end, so a redraw keeps the horizontal place as well as the
-vertical one — going to the section start alone jumps you to column 0."
+vertical one — going to the section start alone jumps you to column 0.
+
+Both halves count columns with `buffer-invisibility-spec\\=' unbound,
+because a line inside a folded section has no width at all while the
+fold is in force: `current-column\\=' there answers for the visible line
+the fold collapsed it into, and `move-to-column\\=' walks straight past
+the whole hidden region into the next visible line.  Point would come
+back from a redraw somewhere else entirely — which is the failure this
+whole pair exists to prevent, and which only became reachable once
+`herdr-dispatch--apply-fold\\=' made folds survive a redraw."
   (when-let* ((section (magit-get-section (car position))))
     (save-excursion
-      (goto-char (oref section start))
-      (move-to-column (cdr position))
-      (point))))
+      (let ((buffer-invisibility-spec nil))
+        (goto-char (oref section start))
+        (move-to-column (cdr position))
+        (point)))))
 
 (defun herdr-dispatch-refresh (&optional force)
   "Redraw the dispatcher from the cache, keeping point and fold state.
@@ -782,7 +917,8 @@ the manual cure for a `worktree.list\\=' that failed."
                  (here (herdr-dispatch--position-at (point))))
             (erase-buffer)
             (magit-insert-section (herdr-root)
-              (magit-insert-heading header)
+              (magit-insert-heading (herdr-dispatch--heading header))
+              (insert ?\n)
               (herdr-dispatch--insert-nodes tree))
             (when-let* ((position (and here
                                        (herdr-dispatch--position-restore here))))
