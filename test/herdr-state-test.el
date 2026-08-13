@@ -188,8 +188,12 @@ went on showing the old name."
     (should (equal "web" (alist-get 'label (car (herdr-state-workspaces state)))))))
 
 (ert-deftest herdr-state-reduce-workspace-renamed-for-an-unknown-id-is-a-noop ()
-  (let ((next (herdr-state-reduce (herdr-state-test--seed) "workspace_renamed"
-                                  '((workspace_id . "w9") (label . "api")))))
+  (let* ((state (herdr-state-test--seed))
+         (next (herdr-state-reduce state "workspace_renamed"
+                                   '((workspace_id . "w9") (label . "api")))))
+    ;; The very state object, not a copy of it: an event that changes
+    ;; nothing must be indistinguishable from one that never arrived.
+    (should (eq state next))
     (should (= 1 (length (herdr-state-workspaces next))))
     (should (equal "web" (alist-get 'label (car (herdr-state-workspaces next)))))))
 
@@ -208,8 +212,10 @@ went on showing the old name."
     (should (equal "1" (alist-get 'label (car (herdr-state-tabs state)))))))
 
 (ert-deftest herdr-state-reduce-tab-renamed-for-an-unknown-id-is-a-noop ()
-  (let ((next (herdr-state-reduce (herdr-state-test--seed) "tab_renamed"
-                                  '((tab_id . "w9:t9") (label . "build")))))
+  (let* ((state (herdr-state-test--seed))
+         (next (herdr-state-reduce state "tab_renamed"
+                                   '((tab_id . "w9:t9") (label . "build")))))
+    (should (eq state next))
     (should (= 1 (length (herdr-state-tabs next))))
     (should (equal "1" (alist-get 'label (car (herdr-state-tabs next)))))))
 
@@ -227,7 +233,11 @@ went on showing the old name."
 
 (ert-deftest herdr-state-reduce-tab-moved-places-it-by-insert-index ()
   "`insert_index' counts among the moved tab's own workspace, so the
-tabs of every other workspace must stay exactly where they were."
+tabs of every other workspace must stay exactly where they were.
+
+A backward move — index 0, from third among w1's tabs — so the answer
+is the same whether herdr counts the index against the list with the
+moved tab still in it or already out of it."
   (let ((next (herdr-state-reduce
                (herdr-state-test--tab-seed) "tab_moved"
                '((type . "tab_moved") (tab_id . "w1:t3")
@@ -242,18 +252,51 @@ tabs of every other workspace must stay exactly where they were."
                    (herdr-state-test--tab-order next)))))
 
 (ert-deftest herdr-state-reduce-tab-moved-folds-in-the-tabs-it-carries ()
-  "The TabInfo the event ships is fresher than the cache's."
+  "The TabInfo the event ships is fresher than the cache's.
+Backward move again, so this asserts the fold without also asserting
+the reading of `insert_index' that is still unverified."
   (let* ((next (herdr-state-reduce
                 (herdr-state-test--tab-seed) "tab_moved"
                 '((tab_id . "w1:t2") (workspace_id . "w1")
-                  (insert_index . 2)
+                  (insert_index . 0)
                   (tabs . [((tab_id . "w1:t2") (workspace_id . "w1")
                             (label . "renamed"))]))))
          (tab (seq-find (lambda (candidate)
                           (equal "w1:t2" (alist-get 'tab_id candidate)))
                         (herdr-state-tabs next))))
     (should (equal "renamed" (alist-get 'label tab)))
-    (should (equal '("w1:t1" "w2:t1" "w1:t3" "w1:t2")
+    (should (equal '("w1:t2" "w2:t1" "w1:t1" "w1:t3")
+                   (herdr-state-test--tab-order next)))))
+
+(ert-deftest herdr-state-reduce-tab-moved-forward-pins-an-unverified-reading ()
+  "UNVERIFIED: this fixes one of two possible readings of `insert_index'.
+
+Only forward moves — to a position after the tab's own — can tell them
+apart.  `herdr-state--move-within' indexes against the group with the
+tab already removed, so w1:t1 to index 2 among (t1 t2 t3) gives
+\(t2 t3 t1).  If herdr instead counts against the group with the tab
+still in it, the answer is (t2 t1 t3).
+
+Nothing has been measured either way: provoking one means calling
+`tab.move' on a live session, which was out of bounds here.  One real
+`tab_moved' watched read-only on the event stream settles it.  Until
+then this test exists to be found and corrected, not to certify the
+behaviour — change it, do not delete it, if the other reading turns out
+to be right."
+  (let ((next (herdr-state-reduce
+               (herdr-state-test--tab-seed) "tab_moved"
+               '((tab_id . "w1:t1") (workspace_id . "w1")
+                 (insert_index . 2) (tabs . [])))))
+    (should (equal '("w1:t2" "w2:t1" "w1:t3" "w1:t1")
+                   (herdr-state-test--tab-order next)))))
+
+(ert-deftest herdr-state-reduce-tab-moved-for-an-unknown-id-is-a-noop ()
+  (let* ((state (herdr-state-test--tab-seed))
+         (next (herdr-state-reduce state "tab_moved"
+                                   '((tab_id . "w9:t9") (workspace_id . "w9")
+                                     (insert_index . 0) (tabs . [])))))
+    (should (eq state next))
+    (should (equal '("w1:t1" "w2:t1" "w1:t2" "w1:t3")
                    (herdr-state-test--tab-order next)))))
 
 (ert-deftest herdr-state-reduce-tab-moved-is-pure ()
@@ -282,7 +325,11 @@ tabs of every other workspace must stay exactly where they were."
 
 (ert-deftest herdr-state-reduce-workspace-moved-places-it-by-insert-index ()
   "`workspace.move' takes an id and an index and the event echoes both,
-so the index is what decides where the workspace lands."
+so the index is what decides where the workspace lands.
+
+A backward move — w4 from the end to index 1 — which both readings of
+`insert_index' agree on; see
+`herdr-state-reduce-workspace-moved-forward-pins-an-unverified-reading'."
   (let ((next (herdr-state-reduce
                (herdr-state-test--ws-seed) "workspace_moved"
                `((type . "workspace_moved") (workspace_id . "w4")
@@ -291,14 +338,35 @@ so the index is what decides where the workspace lands."
     (should (equal '("w1" "w4" "w2" "w3") (herdr-state-test--ws-order next)))))
 
 (ert-deftest herdr-state-reduce-workspace-moved-folds-in-fresh-info ()
-  "The WorkspaceInfo the event carries refreshes labels across the move."
+  "The WorkspaceInfo the event carries refreshes labels across the move.
+Backward move, so the fold is asserted without the placement reading
+riding along on it."
   (let* ((next (herdr-state-reduce
                 (herdr-state-test--ws-seed) "workspace_moved"
-                `((workspace_id . "w2") (insert_index . 3)
+                `((workspace_id . "w2") (insert_index . 0)
                   (workspaces . [((workspace_id . "w2") (label . "renamed"))]))))
          (w2 (seq-find (lambda (w) (equal "w2" (alist-get 'workspace_id w)))
                        (herdr-state-workspaces next))))
     (should (equal "renamed" (alist-get 'label w2)))
+    (should (equal '("w2" "w1" "w3" "w4") (herdr-state-test--ws-order next)))))
+
+(ert-deftest herdr-state-reduce-workspace-moved-forward-pins-an-unverified-reading ()
+  "UNVERIFIED: this fixes one of two possible readings of `insert_index'.
+
+`herdr-state--move-within' counts the index against the list with the
+moved workspace already taken out, so w2 to index 3 of (w1 w2 w3 w4)
+gives (w1 w3 w4 w2).  Counting against the list with w2 still in it
+gives (w1 w3 w2 w4) instead.  Only a forward move can tell them apart.
+
+Nothing has been measured: provoking one means calling
+`workspace.move' on a live session, which was out of bounds here.  A
+single real `workspace_moved' watched read-only on the event stream
+settles it.  This test is here to be found and corrected if the other
+reading is right — correct it, do not delete it."
+  (let ((next (herdr-state-reduce
+               (herdr-state-test--ws-seed) "workspace_moved"
+               `((workspace_id . "w2") (insert_index . 3)
+                 (workspaces . [])))))
     (should (equal '("w1" "w3" "w4" "w2") (herdr-state-test--ws-order next)))))
 
 (ert-deftest herdr-state-reduce-workspace-moved-is-pure ()
@@ -308,7 +376,16 @@ so the index is what decides where the workspace lands."
                                   (workspaces . [])))))
     (should (equal '("w1" "w2" "w3" "w4") (herdr-state-test--ws-order state)))))
 
+(ert-deftest herdr-state-reduce-workspace-moved-for-an-unknown-id-is-a-noop ()
+  (let* ((state (herdr-state-test--ws-seed))
+         (next (herdr-state-reduce state "workspace_moved"
+                                   `((workspace_id . "w9") (insert_index . 0)
+                                     (workspaces . [])))))
+    (should (eq state next))
+    (should (equal '("w1" "w2" "w3" "w4") (herdr-state-test--ws-order next)))))
+
 (ert-deftest herdr-state-reduce-workspace-moved-clamps-a-past-the-end-index ()
+  "Clamping puts it at the end under either reading of the index."
   (let ((next (herdr-state-reduce
                (herdr-state-test--ws-seed) "workspace_moved"
                `((workspace_id . "w1") (insert_index . 99) (workspaces . [])))))

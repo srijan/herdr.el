@@ -260,7 +260,15 @@ workspace\\='s tabs while the cache holds every workspace\\='s tabs in one
 flat list.
 
 An ID no entry carries leaves ITEMS alone; an INDEX past the end is
-clamped.  Like `herdr-state--upsert\\=', ITEMS is not mutated."
+clamped.  Like `herdr-state--upsert\\=', ITEMS is not mutated.
+
+INDEX counts against the group with the moved entry ALREADY REMOVED,
+which is the usual convention but is NOT VERIFIED against herdr.  It
+only matters for a forward move — moving an entry to a position after
+its own — where the other reading, counting against the list including
+the entry, lands it one slot earlier.  Backward moves are identical
+under both.  One real `tab.move\\=' watched on the event stream would
+settle it; until then the tests say plainly which of the two they pin."
   (let* ((group (seq-filter predicate items))
          (moved (seq-find (lambda (item) (equal id (alist-get key item))) group)))
     (if (not moved)
@@ -383,19 +391,21 @@ events use dots, so both spellings appear here deliberately."
        ;; and so cannot be misread, whereas whether that array is the
        ;; whole new ordering or only the workspaces it touched is not
        ;; something the schema says.
-       (dolist (workspace (append (alist-get 'workspaces data) nil))
-         (setf (herdr-state-workspaces next)
-               (herdr-state--upsert (herdr-state-workspaces next)
-                                    'workspace_id
-                                    (alist-get 'workspace_id workspace)
-                                    workspace)))
-       (setf (herdr-state-workspaces next)
-             (herdr-state--move-within (herdr-state-workspaces next)
-                                       'workspace_id
-                                       (alist-get 'workspace_id data)
-                                       (alist-get 'insert_index data)
-                                       (lambda (_workspace) t)))
-       next)
+       (let ((workspaces (herdr-state-workspaces state)))
+         (dolist (workspace (append (alist-get 'workspaces data) nil))
+           (setq workspaces
+                 (herdr-state--upsert workspaces 'workspace_id
+                                      (alist-get 'workspace_id workspace)
+                                      workspace)))
+         (setq workspaces
+               (herdr-state--move-within workspaces 'workspace_id
+                                         (alist-get 'workspace_id data)
+                                         (alist-get 'insert_index data)
+                                         (lambda (_workspace) t)))
+         (if (eq workspaces (herdr-state-workspaces state))
+             state
+           (setf (herdr-state-workspaces next) workspaces)
+           next)))
 
       ("workspace_closed"
        (setf (herdr-state-workspaces next)
@@ -456,18 +466,21 @@ events use dots, so both spellings appear here deliberately."
        ;; among the tabs of `workspace_id' alone, since that is what
        ;; `tab.move' means by it, while the cache holds every
        ;; workspace's tabs in one list.
-       (dolist (tab (append (alist-get 'tabs data) nil))
-         (setf (herdr-state-tabs next)
-               (herdr-state--upsert (herdr-state-tabs next) 'tab_id
-                                    (alist-get 'tab_id tab) tab)))
-       (let ((workspace-id (alist-get 'workspace_id data)))
-         (setf (herdr-state-tabs next)
+       (let ((tabs (herdr-state-tabs state))
+             (workspace-id (alist-get 'workspace_id data)))
+         (dolist (tab (append (alist-get 'tabs data) nil))
+           (setq tabs (herdr-state--upsert tabs 'tab_id
+                                           (alist-get 'tab_id tab) tab)))
+         (setq tabs
                (herdr-state--move-within
-                (herdr-state-tabs next) 'tab_id (alist-get 'tab_id data)
+                tabs 'tab_id (alist-get 'tab_id data)
                 (alist-get 'insert_index data)
                 (lambda (tab)
-                  (equal workspace-id (alist-get 'workspace_id tab))))))
-       next)
+                  (equal workspace-id (alist-get 'workspace_id tab)))))
+         (if (eq tabs (herdr-state-tabs state))
+             state
+           (setf (herdr-state-tabs next) tabs)
+           next)))
 
       ("tab_closed"
        (setf (herdr-state-tabs next)
@@ -487,16 +500,16 @@ events use dots, so both spellings appear here deliberately."
 (defcustom herdr-state-settle-delay 0.4
   "Seconds after connecting before the cache is reconciled with the server.
 
-`events.subscribe' replays, but it replays at most ONE RETAINED EVENT
+`events.subscribe\\=' replays, but it replays at most ONE RETAINED EVENT
 PER SUBSCRIBED TYPE — last-value retention, not history.  Measured
 against 0.8.0: subscribing to all 24 global types replayed 8 events in
-about 4 ms, and subscribing to `pane.updated' alone in a window that
+about 4 ms, and subscribing to `pane.updated\\=' alone in a window that
 carried 662 of them replayed exactly one.  The bound is structural, so
 the replay is over long before this delay expires whatever the session
 is doing.
 
 Long enough, then, to let the retained events land before one
-`pane.list' checks the result; see `herdr-state--settle'."
+`pane.list\\=' checks the result; see `herdr-state--settle\\='."
   :type 'number
   :group 'herdr)
 
