@@ -137,15 +137,16 @@ Adopted shells get buffers but are **not** treated as agents: they stay out of t
 the agent picker and notifications, since a shell has no lifecycle. They show as `shell*` with a
 `~` glyph in `*herdr-agents*`.
 
-**Adoption suppresses herdr's own agent detection for that pane.** Reporting an agent takes
-lifecycle authority, so the reported label outranks the detector: start Claude inside an adopted
-shell and the pane stays labelled `shell`. herdr.el compensates by reading what the detector
-concluded — `agent.explain` still reports it — and relabelling the pane accordingly. That runs on
-the poll; `M-x herdr-promote-shell` (`P G`) does it now.
+**Adoption does not suppress herdr's own agent detection.** Reporting and detection operate
+independently in 0.8.0, and detection wins: start Claude inside a pane adopted as `shell` and
+herdr relabels it `claude` a few seconds later, of its own accord. Nothing is needed from you,
+and nothing is needed from herdr.el.
 
-Do not try to fix this with `pane.release_agent` or `pane.clear_agent_authority`. Detection binds
-when an agent starts and does not re-run, so releasing leaves the pane with *no* agent rather than
-the one plainly running in it, and the only way back is restarting the agent.
+This is worth stating plainly because the opposite was believed here for a long time, and the
+code carried a poll to compensate for it — `agent.explain` on every adopted shell on every
+directory poll, 936 calls in one session and three quarters of all the RPC traffic herdr.el
+made, to force a relabelling that herdr was already doing. There was a `herdr-promote-shell`
+command to trigger it by hand; both are gone.
 
 The visible cost is one row in herdr's own sidebar, in its agents section, labelled `shell`. That
 section's membership rule is simply "has a reported agent", and herdr's sidebar does not list
@@ -157,27 +158,34 @@ non-agent panes at all — so there is no "plain shell" row for it to be instead
 The design rests on behaviour probed from a live herdr 0.8.0 rather than from documentation.
 Recorded here because most of it is not written down anywhere else.
 
+Some of it was probed against an older herdr and later turned out to be wrong. Those rows are
+**corrected in place rather than removed**, with the superseded claim still visible — deleting
+one only means the next reader re-derives it from the same weak evidence, which is exactly how
+four of them survived as long as they did.
+
 | Behaviour | Finding |
 |---|---|
 | RPC connections | **One request per connection.** The server writes one response, then closes. No multiplexing, no id correlation. |
 | `events.subscribe` | The one long-lived call. Acks `subscription_started`, then streams. |
-| **Subscribe replays history** | Subscribing to an *idle* server returned **54 past events**; a real startup produced about 150. The cache is primed silently and listeners are notified once. |
-| **`pane_updated` coalesces** | Driving a pane through working → blocked → idle produced **3** per-pane events but only **1** `pane_updated`. Global events alone silently lose status transitions, so per-pane `pane.agent_status_changed` subscriptions are required. |
+| **Subscribe replays one event per type** | Not history. `events.subscribe` answers with the **last retained event of each subscribed type** and nothing older: 8 events in ~4 ms across all 24 global types, and exactly **1** when subscribing to `pane.updated` alone in a window that carried 662 of them. ~~Subscribing to an idle server returned 54 past events; a real startup produced about 150.~~ That earlier count was measured wrong, and the 0.4s "wait for quiet, then announce once" window built on it swallowed **533 events over 54 seconds** of a real timeline — the modeline and dashboard frozen for a minute after every connect. Every event now reaches listeners as it lands. |
+| **`pane_updated` is output-coupled** | It does **not** coalesce (~~3 per-pane events produced only 1 `pane_updated`~~). It fires about **7.5/s** carrying a full `PaneInfo`, `agent_status` included — but it is tied to title and output, so it stops firing exactly when an agent goes **idle**, which is the transition worth knowing about. Lag from the per-pane event reporting idle to the global stream reflecting it: **6.18s and 31.79s**. Hence the second connection carrying per-pane `pane.agent_status_changed`, which has no global form. |
 | Throughput | Not a concern for either backend. A **12.2 MB** pane dump reached Emacs as **17 KB** (`session`) / **24 KB** (`agent-windows`), completing in 0.2s. herdr's VT only emits visible-frame diffs. |
-| `agent attach` | Streams one pane full-screen; coexists with a session client; **exclusive per pane**; refuses panes without a detected agent. |
+| `agent attach` | Streams one pane full-screen; coexists with a session client; **exclusive per pane**; still refuses a pane with no agent in 0.8.0 (`agent_not_found`), which is what keeps adoption necessary. |
 | Attach needs a window | The client needs a window when it starts and dies if that window is *deleted*; being merely hidden is fine, so a buried terminal keeps running with its scrollback. A zero-sized PTY renders nothing. |
-| **Replay leaves ghosts** | Priming ends after a fixed quiet period, so a bursty replay can end it early and later `pane_created` events resurrect long-closed panes. Nothing removes them afterwards, so the pane set is reconciled against `pane.list` on a poll. |
-| **Adoption outranks detection** | `pane.report_agent` takes lifecycle authority, so an adopted pane keeps its label even once a real agent starts in it. `agent.explain` still reports what the detector concluded, which is what promotion reads. Releasing authority does *not* restore detection — it binds at agent start and does not re-run. |
+| **Retention leaves ghosts** | The retained `pane.created` is for whatever pane was made last, so subscribing resurrects it even if it closed minutes ago — verified. It folds away only because retained events arrive in **subscription-list order**, not chronological order, and `pane.created` is listed before `pane.closed`. Nothing in the protocol guarantees that, so the pane set is reconciled against `pane.list` once after connecting and on a poll thereafter. |
+| **Detection outranks adoption** | Reporting an agent does **not** suppress detection; herdr's own docs now say the two operate independently. Measured: a pane reported as `shell` was relabelled `claude` by herdr about **3s** after Claude started in it, over the reported label, unasked. ~~`pane.report_agent` takes lifecycle authority, so an adopted pane keeps its label.~~ That was true of an older herdr and is the premise the deleted `herdr-promote-shell` poll rested on. |
 | Focus is shared | One focused pane per session, not per client. Navigating in Emacs moves the focus in any attached TUI too. |
 | OSC | **Not** forwarded — herdr's VT consumes OSC 7 and OSC 133. Beware the false positive: sending the escapes inline makes the shell echo the command text, which contains the same characters. |
 | cwd tracking | herdr tracks it **itself** — `pane.cwd` follows a `cd` within about a second. But it publishes **no event** for it: a `cd` emits only `layout_updated` noise, so directory tracking has to poll (debounced off the event stream, with a slow backstop timer). |
 | Shell panes | `pane.report_agent` makes a plain shell pane attachable, which is how adoption works. |
 | `pane.read` shape | Text is nested under a `read` object, not a top-level field. |
+| Rename and move events are flat | They carry **no nested record**. `workspace_renamed` is `{workspace_id, label}`; `tab_renamed` adds `workspace_id`; the two move events send `{id, insert_index, <array of fresh records>}`; `pane_agent_detected` is `{pane_id, workspace_id, agent?, final_status?, released?}`. Reading a `workspace`/`tab`/`pane` object out of any of them — as this package did — silently drops the event. |
+| Terminal titles animate | Claude runs a spinner glyph and a second counter inside the title, so `terminal_title_stripped` changes several times a second: **662 of 662** `pane_updated` events differed in it, against 11 that differed in `agent_status`. It is a volatile field, not a stable label, and must not be treated as one when diffing panes. |
 | JSON arrays | Emacs's `json-serialize` cannot distinguish a list of alists from one alist. Array parameters must be vectors or `events.subscribe` is rejected. |
 
 ## Commands
 
-34 curated commands cover the methods worth a keybinding; `M-x herdr-call` reaches all
+33 curated commands cover the methods worth a keybinding; `M-x herdr-call` reaches all
 **89**, prompting for each parameter from the server's own schema. Nothing is out of reach and
 there is no generated 89-entry menu.
 
@@ -193,8 +201,7 @@ Worth knowing about:
 - **`herdr-agent-wait`** and **`herdr-pane-wait-for-output`** — asynchronous, so Emacs stays
   responsive. "Tell me when the dev server prints `Listening on`" is one command.
 - **`herdr-project`** — focus or create the herdr workspace for the current `project.el` project.
-- **`herdr-adopt-shell`** / **`herdr-release-shell`** / **`herdr-promote-shell`** — see Adopting a
-  shell, above.
+- **`herdr-adopt-shell`** / **`herdr-release-shell`** — see Adopting a shell, above.
 
 Terminal buffers track their pane's working directory (`herdr-term-track-directory`), so
 `find-file` and `compile` from a herdr buffer start in the right place.
