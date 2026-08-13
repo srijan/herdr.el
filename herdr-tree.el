@@ -214,6 +214,30 @@ keeps every pane reachable no matter what the tab cache knows."
                 (equal workspace-id (alist-get 'workspace_id tab)))
               (herdr-state-tabs state)))
 
+(defun herdr-tree-linked-worktree-p (worktree)
+  "Return non-nil when WORKTREE is a linked worktree, not the main checkout.
+
+`worktree.list\\=' answers with the repository\\='s own checkout as well as
+its linked worktrees, and marks which is which in the REQUIRED
+`is_linked_worktree\\=' field.  Measured against a live session, every
+workspace answered with exactly one entry and that entry was itself —
+workspace, branch, `is_linked_worktree\\=', `open_workspace_id\\=':
+
+    w7  .emacs.d            main     false  \"w7\"
+    wA  gmc-rearchitecture  develop  false  \"wA\"
+    wJ  srijan.ch           main     false  \"wJ\"
+
+So `open_workspace_id\\=' cannot tell the two apart — for the main
+checkout it names the very workspace whose listing this is, which is why
+resolving a worktree row through it still had `k\\=' removing the
+workspace point was standing inside.  This field is the one that can.
+
+Absent reads as not linked, which drops the row.  The field is required,
+so absence means a reply the schema does not describe; erring towards
+dropping costs a row that the workspace heading one line above already
+shows, and erring the other way costs the workspace."
+  (and (alist-get 'is_linked_worktree worktree) t))
+
 (defun herdr-tree--worktree-node (worktree)
   "Return the node for WORKTREE.
 A worktree already open as a workspace is shown above as that workspace,
@@ -233,12 +257,20 @@ so it is marked rather than repeated."
 (defun herdr-tree--worktrees-node (workspace-id worktrees)
   "Return the worktrees node for WORKSPACE-ID, or nil when it has none.
 
-Nil covers both \\='none were found\\=' and \\='none have been fetched yet\\=':
-a workspace with zero worktrees has no section worth drawing either way.
-The distinction between the two lives in the cache that builds WORKTREES,
-not here."
+Only the linked worktrees; see `herdr-tree-linked-worktree-p\\=' for what
+the other kind is and what listing it cost.  A workspace whose repository
+has no linked worktrees at all is therefore the ordinary case rather than
+an unusual one, and it gets no section: what a `worktrees (1)\\=' heading
+listed there was the workspace itself, one line above and already on
+screen.
+
+Nil covers three things now — \\='none were found\\=', \\='none have been
+fetched yet\\=' and \\='none of what was found is a worktree of its own\\='.
+A workspace with nothing to show has no section worth drawing whichever
+of those it is, and the distinction between the first two lives in the
+cache that builds WORKTREES rather than here."
   (when-let* ((entry (assoc workspace-id worktrees))
-              (found (cdr entry)))
+              (found (seq-filter #'herdr-tree-linked-worktree-p (cdr entry))))
     (list 'herdr-worktrees workspace-id
           (format "worktrees (%s)" (length found))
           (mapcar #'herdr-tree--worktree-node found))))
