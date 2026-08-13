@@ -28,6 +28,7 @@
 
 (require 'seq)
 (require 'subr-x)
+(require 'regexp-opt)
 (require 'herdr-state)
 
 (defconst herdr-tree-status-glyphs
@@ -161,7 +162,7 @@ session of short labels does not look cramped either."
          (mapcar (lambda (pane) (length (herdr-tree--agent-label state pane)))
                  (herdr-state-panes state))))
 
-(defconst herdr-tree-spinner-glyphs "◐◑"
+(defconst herdr-tree-spinner-glyphs '(?◐ ?◑)
   "Characters an agent animates at the head of its terminal title.
 
 Claude spins a half-circle glyph there while it works, and the animation
@@ -175,7 +176,14 @@ agent animating a different glyph would go unstripped, which costs a
 redraw a second on that pane and nothing else; adding its glyph here is
 the whole fix.  Guessing at the rest of the ◐◑◒◓ family would cost
 nothing either, but it would put unmeasured characters in a constant
-whose entire value is that it was measured.")
+whose entire value is that it was measured.
+
+A list of characters rather than a string, because
+`herdr-tree--steady-title\\=' builds a regexp character class out of it and
+`regexp-opt-charset\\=' is what quotes one correctly.  Interpolating a
+string here directly was one `]\\=', `-\\=' or `^\\=' away from a regexp
+that silently matched something else — and this is a constant whose
+docstring invites editing.")
 
 (defun herdr-tree--steady-title (title)
   "Return TITLE with any animated spinner glyph taken off the front.
@@ -196,10 +204,14 @@ spinner is in the text being drawn.  Fixing either one alone leaves the
 other.
 
 Only a leading run is stripped, and only of the glyphs themselves plus
-the space that follows: a title is otherwise the agent\\='s own words and
-is not ours to edit."
+whatever whitespace follows them: a title is otherwise the agent\\='s own
+words and is not ours to edit.  Nothing is stripped from a title that
+does not begin with a glyph, so the whitespace clause cannot reach a
+title on its own."
   (replace-regexp-in-string
-   (concat "\\`[" herdr-tree-spinner-glyphs "]+[[:space:]]*") "" title))
+   (concat "\\`" (regexp-opt-charset herdr-tree-spinner-glyphs)
+           "+[[:space:]]*")
+   "" title))
 
 (defun herdr-tree--pane-node (state pane width)
   "Return the node for PANE in STATE, its agent column WIDTH wide.
