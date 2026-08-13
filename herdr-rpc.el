@@ -158,36 +158,67 @@ timeout."
       (when (process-live-p proc)
         (delete-process proc)))))
 
-(defun herdr-rpc-call-async (method params callback)
+(defun herdr-rpc-call-async (method params callback &optional timeout)
   "Call METHOD with PARAMS, invoking CALLBACK when the response arrives.
 CALLBACK receives (RESULT ERROR).  Exactly one is non-nil; ERROR is the
 server's error alist, with keys `code' and `message'.  Returns the
 process, which may be deleted to abandon the call.
 
+TIMEOUT is in seconds and is optional.  Nil, the default, waits
+indefinitely — the behaviour every caller had before TIMEOUT existed.
+When non-nil, a timer is armed for TIMEOUT seconds; if it fires before a
+reply has arrived, the process is deleted and CALLBACK is invoked once
+with an error alist whose `code' is \"timeout\".  A reply that arrives
+first cancels the timer, and deleting the process afterwards must not
+produce a second callback — both paths go through the same `fired' guard
+that already gives the sentinel path its exactly-once behaviour.
+
 Used for methods that block server-side — `agent.wait' and
-`pane.wait_for_output' — so that Emacs stays responsive."
+`pane.wait_for_output' — so that Emacs stays responsive.  Those two
+callers deliberately pass no TIMEOUT: they bind the wait server-side via
+`timeout_ms', and a client-side TIMEOUT here would race that bound
+rather than back it up."
   (let* ((chunks nil)
          (fired nil)
-         (finish
-          (lambda ()
+         (timer nil)
+         (fire
+          (lambda (result error)
             (unless fired
               (setq fired t)
-              (let ((text (apply #'concat (nreverse chunks))))
-                (condition-case err
-                    (let* ((payload (herdr-rpc-decode
-                                     (car (split-string text "\n" t))))
-                           (server-error (alist-get 'error payload)))
-                      (if server-error
-                          (funcall callback nil server-error)
-                        (funcall callback (alist-get 'result payload) nil)))
-                  (error
-                   (funcall callback nil
-                            `((code . "bad_response")
-                              (message . ,(error-message-string err)))))))))))
+              (when timer
+                (cancel-timer timer)
+                (setq timer nil))
+              (funcall callback result error))))
+         (finish
+          (lambda ()
+            (let ((text (apply #'concat (nreverse chunks))))
+              (condition-case err
+                  (let* ((payload (herdr-rpc-decode
+                                   (car (split-string text "\n" t))))
+                         (server-error (alist-get 'error payload)))
+                    (if server-error
+                        (funcall fire nil server-error)
+                      (funcall fire (alist-get 'result payload) nil)))
+                (error
+                 (funcall fire nil
+                          `((code . "bad_response")
+                            (message . ,(error-message-string err))))))))))
     (let ((proc (herdr-rpc-connect
                  (format "herdr-rpc-async-%s" method)
                  (lambda (_proc chunk) (push chunk chunks))
                  (lambda (_proc _event) (funcall finish)))))
+      (when timeout
+        (setq timer
+              (run-at-time
+               timeout nil
+               (lambda ()
+                 (setq timer nil)
+                 (funcall fire nil
+                          `((code . "timeout")
+                            (message . ,(format "no response from herdr for %s within %ss"
+                                                method timeout))))
+                 (when (process-live-p proc)
+                   (delete-process proc))))))
       (process-send-string proc (herdr-rpc-encode (herdr-rpc--next-id)
                                                   method params))
       proc)))

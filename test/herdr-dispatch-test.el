@@ -718,7 +718,7 @@ meant to."
 
 (defvar herdr-dispatch-test--async nil
   "Async calls captured by `herdr-dispatch-test-with-async', oldest first.
-Each is (METHOD PARAMS CALLBACK).")
+Each is (METHOD PARAMS CALLBACK TIMEOUT).")
 
 (defmacro herdr-dispatch-test-with-async (&rest body)
   "Run BODY with `herdr-rpc-call-async' captured rather than performed.
@@ -730,10 +730,10 @@ can stand in it — is one BODY can hold open for as long as it likes."
   (declare (indent 0) (debug t))
   `(let ((herdr-dispatch-test--async nil))
      (cl-letf (((symbol-function 'herdr-rpc-call-async)
-                (lambda (method params callback)
+                (lambda (method params callback &optional timeout)
                   (setq herdr-dispatch-test--async
                         (append herdr-dispatch-test--async
-                                (list (list method params callback))))
+                                (list (list method params callback timeout))))
                   'process))
                ((symbol-function 'herdr-rpc-call)
                 (lambda (&rest _)
@@ -857,6 +857,48 @@ and the assertion would no longer be about placeholders at all."
       (herdr-dispatch-test--reply
        1 '((worktrees . (((path . "/tmp/api-spike") (branch . "spike"))))))
       (should (assoc "w1" herdr-dispatch--worktrees))
+      (dotimes (_ 19) (herdr-dispatch-refresh))
+      (should (equal '("/tmp/web/" "/tmp/api/")
+                     (herdr-dispatch-test--requested)))
+      (herdr-dispatch-refresh t)
+      (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/web/")
+                     (herdr-dispatch-test--requested))))))
+
+(ert-deftest herdr-dispatch-fetch-worktrees-passes-the-rpc-timeout ()
+  "Every `worktree.list' must arm the client-side timeout.
+
+`herdr-rpc-call-async' hangs forever with no TIMEOUT, which is exactly
+the bug a never-answered listing produced.  `herdr-rpc-timeout' is the
+existing, user-configurable value the synchronous path already uses, so
+the async fetch here should use the same one rather than inventing a
+second timeout to keep in sync with it."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (let ((herdr-rpc-timeout 7.5))
+      (herdr-dispatch-test-with-async
+        (herdr-dispatch-refresh t)
+        (should (equal '(7.5 7.5) (mapcar (lambda (call) (nth 3 call))
+                                          herdr-dispatch-test--async)))))))
+
+(ert-deftest herdr-dispatch-a-timed-out-reply-caches-as-an-error-and-g-cures-it ()
+  "A never-answered `worktree.list' now surfaces as an ordinary error reply.
+
+Before this task, a hung request left the pending marker set for the life
+of the session, and `g' had no reply to work with — clearing the marker
+was the whole cure.  Now `herdr-rpc-call-async' itself times out and
+hands the callback a `code' of \"timeout\", which is just data to
+`herdr-dispatch--worktrees-received': it is handled by the exact same
+path as `not_found' in the test above, and `g' still cures it the same
+way.  Nothing about the recovery machinery needed to change for that to
+be true — this test is what confirms it rather than assumes it."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (herdr-dispatch-test-with-async
+      (herdr-dispatch-refresh t)
+      (herdr-dispatch-test--reply
+       0 nil '((code . "timeout") (message . "no response from herdr")))
+      (herdr-dispatch-test--reply
+       1 '((worktrees . (((path . "/tmp/api-spike") (branch . "spike"))))))
+      (should (assoc "w1" herdr-dispatch--worktrees))
+      (should-not (cdr (assoc "w1" herdr-dispatch--worktrees)))
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested)))

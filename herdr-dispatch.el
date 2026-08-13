@@ -321,6 +321,14 @@ at all can signal here and now, so that is turned into the same failure
 the callback already handles rather than being allowed to escape into a
 redraw.
 
+Passes `herdr-rpc-timeout\\=' as the client-side TIMEOUT, unlike the
+callers in herdr-cmd.el: those block server-side on purpose and bind
+themselves there, but nothing here is willing to wait out a server that
+accepted the connection and never answers.  A timeout arrives at
+`herdr-dispatch--worktrees-received\\=' as an ordinary error, which is
+what lets `herdr-dispatch--retry-unanswered-worktrees\\=' cure it the same
+way it cures any other failed listing.
+
 `error\\=' rather than `herdr-error\\=', because two different signals are
 reachable: an unreachable socket is a `herdr-error\\=' with code
 \"no_server\", while a peer that closed between connecting and sending
@@ -346,7 +354,8 @@ callback cannot hide in here."
            "worktree.list" `((cwd . ,directory))
            (lambda (result error)
              (herdr-dispatch--worktrees-received
-              workspace-id generation (alist-get 'worktrees result) error)))
+              workspace-id generation (alist-get 'worktrees result) error))
+           herdr-rpc-timeout)
         (error
          (herdr-dispatch--worktrees-received
           workspace-id generation nil
@@ -401,11 +410,14 @@ repository that genuinely has no worktrees keeps its entry, so
 \\[herdr-dispatch-refresh] does not re-ask the whole session.
 
 A request still in flight counts as unanswered, and this is the only
-thing that can rescue one.  `herdr-rpc-call-async\\=' has no timeout — a
-server that accepts the connection and never replies leaves the pending
-marker set for as long as Emacs runs, and the marker is precisely what
-stops the workspace being asked again.  Clearing it here is what makes
-\\[herdr-dispatch-refresh] a cure for that rather than a no-op.
+thing that can rescue one before its own timeout would.
+`herdr-dispatch--fetch-worktrees\\=' passes `herdr-rpc-timeout\\=', so a
+server that accepts the connection and never replies now surfaces on its
+own as a timeout error a few seconds later — but until it does, the
+pending marker is exactly what stops the workspace being asked again, and
+a user who presses \\[herdr-dispatch-refresh] should not have to wait out
+that window.  Clearing it here is what makes the keystroke an immediate
+cure rather than a no-op until the timeout catches up.
 
 The generation must move with it.  Clearing the marker while a reply is
 still on the wire is the same race `herdr-dispatch--forget-worktrees\\='
