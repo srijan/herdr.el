@@ -3,6 +3,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 (require 'herdr-schema)
 
 (defvar herdr-schema-test--fixture
@@ -64,6 +65,145 @@
   (herdr-schema-test-with-fixture
     (should (null (herdr-schema-params "no.such.method")))
     (should (null (herdr-schema-required "no.such.method")))))
+
+;;; The nullable shape, and the types nothing asked for
+
+(ert-deftest herdr-schema-resolves-a-nullable-any-of-behind-a-ref ()
+  "Optional parameters arrive as anyOf [<the real thing>, null].
+
+That shape occurs sixteen times in this schema — it is how herdr spells
+\"optional\" for anything that is not a bare scalar — and nothing
+exercised it.  `pane.swap''s `direction' is one: without unwrapping the
+anyOf and then the `$ref' behind it, the parameter has no type and no
+enum at all, and `herdr-call' offers a free-text prompt where exactly
+four values are legal."
+  (herdr-schema-test-with-fixture
+    (should (eq 'enum (herdr-schema-param-type "pane.swap" "direction")))
+    (should (member "left" (herdr-schema-enum "pane.swap" "direction")))
+    ;; Resolution must not land on the null branch, which is the other
+    ;; thing picking the wrong element of the anyOf would do.
+    (should-not (equal "null" (alist-get 'type (herdr-schema-param
+                                                "pane.swap" "direction"))))))
+
+(ert-deftest herdr-schema-maps-every-declared-type ()
+  "number, object and array had no test, so the arm for each could answer
+nil unnoticed — which is how `herdr-call' comes to prompt for a JSON
+object as though it were a plain string."
+  (herdr-schema-test-with-fixture
+    (should (eq 'string (herdr-schema-param-type "pane.read" "pane_id")))
+    (should (eq 'boolean (herdr-schema-param-type "pane.split" "focus")))
+    (should (eq 'integer (herdr-schema-param-type "pane.read" "lines")))
+    (should (eq 'number (herdr-schema-param-type "pane.split" "ratio")))
+    (should (eq 'object (herdr-schema-param-type "workspace.create" "env")))
+    (should (eq 'array (herdr-schema-param-type "agent.send_keys" "keys")))
+    (should-not (herdr-schema-param-type "pane.read" "no_such_param"))))
+
+;;; Prompting, one branch per JSON type
+
+(ert-deftest herdr-schema-read-param-prompts-by-declared-type ()
+  "Each type gets the prompt that can express it, and an empty answer
+omits the parameter rather than sending an empty string, a zero, or a
+JSON parse error."
+  (herdr-schema-test-with-fixture
+    (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "12"))
+              ((symbol-function 'completing-read) (lambda (&rest _) "visible"))
+              ((symbol-function 'y-or-n-p) (lambda (&rest _) t)))
+      (should (equal "visible" (herdr-schema-read-param "pane.read" "source")))
+      (should (eq t (herdr-schema-read-param "pane.split" "focus")))
+      (should (equal 12 (herdr-schema-read-param "pane.read" "lines")))
+      (should (equal "12" (herdr-schema-read-param "pane.read" "pane_id"))))
+    ;; A declined boolean is false on the wire, not absence.
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) nil)))
+      (should (eq :false (herdr-schema-read-param "pane.split" "focus"))))
+    ;; Objects and arrays are read as JSON, not as text.
+    (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "{\"A\": 1}")))
+      (should (equal 1 (alist-get 'A (herdr-schema-read-param
+                                      "workspace.create" "env")))))
+    (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "[\"a\"]")))
+      (should (equal '("a") (herdr-schema-read-param
+                             "agent.send_keys" "keys"))))
+    (cl-letf (((symbol-function 'read-string) (lambda (&rest _) ""))
+              ((symbol-function 'completing-read) (lambda (&rest _) "")))
+      (dolist (case '(("pane.read" "source") ("pane.read" "lines")
+                      ("pane.read" "pane_id") ("workspace.create" "env")))
+        (should-not (apply #'herdr-schema-read-param case))))))
+
+(ert-deftest herdr-schema-read-param-says-which-prompts-are-optional ()
+  "Being asked for five things with no way to tell which may be skipped
+is what makes `herdr-call' with a prefix argument unusable."
+  (herdr-schema-test-with-fixture
+    (let (prompts)
+      (cl-letf (((symbol-function 'read-string)
+                 (lambda (prompt &rest _) (push prompt prompts) "")))
+        (herdr-schema-read-param "pane.read" "pane_id")
+        (herdr-schema-read-param "pane.read" "lines"))
+      (let ((for-lines (nth 0 prompts))
+            (for-pane (nth 1 prompts)))
+        (should (string-match-p "optional" for-lines))
+        (should-not (string-match-p "optional" for-pane))
+        (should (string-match-p "pane_id" for-pane))))))
+
+;;; The cache is only good for the version it came from
+
+(ert-deftest herdr-schema-refetches-when-the-server-version-moved ()
+  "A cache kept across a herdr upgrade means the drift test checks the
+old schema and reports no drift, which is the one thing it exists to
+find."
+  (let ((herdr-schema--cache '((schemas . nil)))
+        (herdr-schema--cache-version "0.8.0")
+        (herdr-schema-cache-file "/herdr-no-such-cache-file.json")
+        fetched)
+    (cl-letf (((symbol-function 'herdr-schema--server-version)
+               (lambda () "0.9.0"))
+              ((symbol-function 'herdr-schema--fetch)
+               (lambda () (setq fetched t herdr-schema--cache 'fresh))))
+      (herdr-schema)
+      (should fetched)
+      (should (equal "0.9.0" herdr-schema--cache-version)))))
+
+(ert-deftest herdr-schema-keeps-a-cache-the-server-still-matches ()
+  "Shelling out to herdr on every schema question is the cost this cache
+exists to avoid."
+  (let ((herdr-schema--cache '((schemas . nil)))
+        (herdr-schema--cache-version "0.9.0")
+        fetched)
+    (cl-letf (((symbol-function 'herdr-schema--server-version)
+               (lambda () "0.9.0"))
+              ((symbol-function 'herdr-schema--fetch)
+               (lambda () (setq fetched t))))
+      (herdr-schema)
+      (should-not fetched))
+    ;; An unreachable server is not evidence that the cache is stale.
+    (cl-letf (((symbol-function 'herdr-schema--server-version) (lambda () nil))
+              ((symbol-function 'herdr-schema--fetch)
+               (lambda () (setq fetched t))))
+      (herdr-schema)
+      (should-not fetched))))
+
+(ert-deftest herdr-schema-fetch-shells-out-and-fails-loudly ()
+  "The command is `herdr api schema --json', and a non-zero exit is an
+error with a code rather than a silent nil: everything downstream would
+otherwise see an empty schema and report that herdr has no methods."
+  (let ((herdr-schema--cache nil)
+        (herdr-schema-cache-file
+         (expand-file-name "herdr-schema-fetch-test.json"
+                           temporary-file-directory))
+        args)
+    (unwind-protect
+        (progn
+          (cl-letf (((symbol-function 'call-process)
+                     (lambda (program _in _buf _display &rest rest)
+                       (setq args rest)
+                       (insert "{\"protocol\": 17, \"schemas\": {}}")
+                       (ignore program)
+                       0)))
+            (herdr-schema--fetch))
+          (should (equal '("api" "schema" "--json") args))
+          (should (file-readable-p herdr-schema-cache-file))
+          (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 3)))
+            (let ((err (should-error (herdr-schema--fetch) :type 'herdr-error)))
+              (should (equal "schema_unavailable" (herdr-error-code err))))))
+      (ignore-errors (delete-file herdr-schema-cache-file)))))
 
 (provide 'herdr-schema-test)
 ;;; herdr-schema-test.el ends here

@@ -263,5 +263,63 @@ command no longer dead-ends with an error."
   (should (string-match-p
            "split" (herdr-select--annotate-pane herdr-select-create-new-shell))))
 
+;;; Every glyph, and the two annotators nothing exercised
+
+(ert-deftest herdr-select-glyphs-every-status-distinctly ()
+  "One status was covered and the other four were not, so swapping
+working, done and idle around went unnoticed.  All five are asked for,
+and asserted to be distinct — a mapping that answers the same glyph for
+two statuses says nothing on screen."
+  (let ((glyphs (mapcar #'herdr-select--status-glyph
+                        '("working" "blocked" "done" "idle" "no-such-status"))))
+    (should (equal '("▶" "⏸" "✓" "·" " ") glyphs))
+    (should (= 5 (length (delete-dups (copy-sequence glyphs)))))))
+
+(ert-deftest herdr-select-annotates-a-workspace-by-its-own-id ()
+  "The annotator matches rows on `workspace_id'; reading any other field
+annotates every workspace with the first one's label."
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot
+          '((workspaces . (((workspace_id . "w1") (label . "first")
+                            (pane_count . 3))
+                           ((workspace_id . "w2") (label . "second")
+                            (pane_count . 1))))))))
+    (should (string-match-p "second" (herdr-select--annotate-workspace "w2")))
+    (should (string-match-p "1 panes" (herdr-select--annotate-workspace "w2")))
+    (should (string-match-p "first" (herdr-select--annotate-workspace "w1")))
+    (should (string-match-p "3 panes" (herdr-select--annotate-workspace "w1")))
+    (should (equal "" (herdr-select--annotate-workspace "w9")))))
+
+(ert-deftest herdr-select-annotates-a-tab-by-its-own-id ()
+  "The same defect, in the same shape, one function down."
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot
+          '((tabs . (((tab_id . "w1:t1") (label . "build") (pane_count . 2))
+                     ((tab_id . "w1:t2") (label . "edit") (pane_count . 5))))))))
+    (should (string-match-p "edit" (herdr-select--annotate-tab "w1:t2")))
+    (should (string-match-p "5 panes" (herdr-select--annotate-tab "w1:t2")))
+    (should (string-match-p "build" (herdr-select--annotate-tab "w1:t1")))
+    (should (equal "" (herdr-select--annotate-tab "w9:t9")))))
+
+(ert-deftest herdr-select-read-refuses-an-empty-candidate-list ()
+  "An empty completion prompt looks broken rather than empty, so the
+error names herdr instead."
+  (should-error (herdr-select--read "x: " nil 'herdr-pane #'ignore)
+                :type 'user-error))
+
+(ert-deftest herdr-select-read-tags-its-table-with-category-and-annotator ()
+  "The category is what marginalia and embark key off, and the annotator
+is the only reason the picker shows anything but bare ids."
+  (let (table)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt collection &rest _) (setq table collection) "a")))
+      (herdr-select--read "x: " '("a" "b") 'herdr-pane
+                          #'herdr-select--annotate-pane))
+    (let ((metadata (funcall table "" nil 'metadata)))
+      (should (eq 'herdr-pane (alist-get 'category (cdr metadata))))
+      (should (eq #'herdr-select--annotate-pane
+                  (alist-get 'annotation-function (cdr metadata)))))
+    (should (equal '("a" "b") (funcall table "" nil t)))))
+
 (provide 'herdr-select-test)
 ;;; herdr-select-test.el ends here

@@ -223,5 +223,103 @@ brief calls out by name — would show up as a second, later call."
    (herdr-rpc-encode "1" "events.subscribe"
                      '((subscriptions . (((type . "a")) ((type . "b"))))))))
 
+;;; Cleanup, and the codes that say which failure it was
+
+(ert-deftest herdr-rpc-call-deletes-its-process-however-it-ends ()
+  "Every synchronous call leaves a connection behind unless it is deleted.
+
+The old test for this counted callbacks, which cannot see a leaked
+process at all: there is no callback on the synchronous path, and a
+connection nobody closed goes on holding a file descriptor silently
+until Emacs runs out of them.  `delete-process' is spied on instead, on
+both the answered path and the one that signals."
+  (let (deleted)
+    (cl-letf* ((real (symbol-function 'delete-process))
+               ((symbol-function 'delete-process)
+                (lambda (proc)
+                  ;; The fake server deletes its own connections through
+                  ;; the same function, so only the client side counts.
+                  (when (and (processp proc)
+                             (string-prefix-p "herdr-rpc-" (process-name proc)))
+                    (push proc deleted))
+                  (funcall real proc))))
+      ;; Held open by the server, so the timeout path is the one that
+      ;; has to clean up.
+      (let ((herdr-rpc-timeout 0.3))
+        (herdr-test-with-server (lambda (_req) (cons nil t))
+          (should-error (herdr-rpc-call "ping") :type 'herdr-error)))
+      (should (= 1 (length deleted)))
+      (should-not (memq (car deleted) (process-list))))))
+
+(ert-deftest herdr-rpc-call-distinguishes-an-empty-answer-from-a-timeout ()
+  "Two silences with different causes, and the code is how they are told
+apart at the point of failure rather than in a debugger.
+
+A server that closes the connection without writing has answered
+nothing; one that holds it open has not answered yet.  Both surface as
+\"no response\", so the message cannot carry the difference and the code
+has to."
+  ;; Closed without writing.
+  (herdr-test-with-server (lambda (_req) (cons nil nil))
+    (let ((err (should-error (herdr-rpc-call "ping") :type 'herdr-error)))
+      (should (equal "empty_response" (herdr-error-code err)))
+      (should (string-match-p "ping" (herdr-error-message err)))))
+  ;; Accepted and held open, saying nothing.
+  (herdr-test-with-server (lambda (_req) (cons nil t))
+    (let* ((herdr-rpc-timeout 0.3)
+           (err (should-error (herdr-rpc-call "ping") :type 'herdr-error)))
+      (should (equal "timeout" (herdr-error-code err))))))
+
+(ert-deftest herdr-rpc-call-async-reports-unparseable-output-as-bad-response ()
+  "A reply that is not JSON must reach the callback as an error with a
+code of its own, not escape as a Lisp signal out of a process filter,
+where nothing is left to catch it."
+  (herdr-test-with-server
+      (lambda (_req) (cons "this is not json\n" nil))
+    (let (calls got-error)
+      (herdr-rpc-call-async "ping" nil
+                            (lambda (_result err)
+                              (setq calls (1+ (or calls 0)) got-error err)))
+      (let ((deadline (+ (float-time) 5)))
+        (while (and (not calls) (< (float-time) deadline))
+          (accept-process-output nil 0.05)))
+      (should (equal 1 calls))
+      (should (equal "bad_response" (alist-get 'code got-error))))))
+
+(ert-deftest herdr-rpc-call-async-deletes-the-process-it-abandons ()
+  "Timing out and leaving the connection open abandons nothing.
+
+The sibling test asserts the callback fires once with a timeout code,
+which a version that never deleted the process would also satisfy — the
+connection would simply stay open for the rest of the session.  So the
+process itself is asked."
+  (herdr-test-with-server (lambda (_req) (cons nil t))
+    (let (calls)
+      (let ((proc (herdr-rpc-call-async
+                   "agent.wait" nil
+                   (lambda (&rest _) (setq calls (1+ (or calls 0))))
+                   0.2)))
+        (let ((deadline (+ (float-time) 5)))
+          (while (and (not calls) (< (float-time) deadline))
+            (accept-process-output nil 0.05)))
+        (should (equal 1 calls))
+        (should-not (process-live-p proc))))))
+
+(ert-deftest herdr-rpc-ids-are-unique-across-calls ()
+  "Two requests carrying the same id are indistinguishable in a log and
+ambiguous to anything that correlates them.  Read back in the same
+breath the counter would look right however it behaved, so the ids are
+compared across two separate calls to a server that records them."
+  (let (ids)
+    (herdr-test-with-server
+        (lambda (req)
+          (push (alist-get 'id req) ids)
+          (cons (herdr-test-ok req '((type . "ok"))) nil))
+      (herdr-rpc-call "ping")
+      (herdr-rpc-call "ping")
+      (herdr-rpc-call "ping"))
+    (should (= 3 (length ids)))
+    (should (= 3 (length (delete-dups (copy-sequence ids)))))))
+
 (provide 'herdr-rpc-test)
 ;;; herdr-rpc-test.el ends here
