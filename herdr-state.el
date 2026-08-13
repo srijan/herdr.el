@@ -60,7 +60,15 @@ is \"resync\" and DATA is nil.")
     "pane.created" "pane.closed" "pane.updated" "pane.focused"
     "pane.moved" "pane.exited" "pane.agent_detected"
     "layout.updated")
-  "Subscriptions that carry no pane id and so never need rebuilding.")
+  "Subscriptions that carry no pane id and so never need rebuilding.
+
+Order matters, so do not sort this.  `events.subscribe\\=' answers with
+the last retained event of each type before it starts streaming, and it
+emits them in the order the types are listed here rather than in the
+order they happened.  A retained `pane.created\\=' for a closed pane
+therefore folds away only because `pane.closed\\=' is listed after it.
+`herdr-state-reconcile-panes\\=' is what makes that safe rather than
+lucky, but the ordering is still the first line of defence.")
 
 ;;; The state object
 
@@ -332,26 +340,26 @@ events use dots, so both spellings appear here deliberately."
 
 ;;; Live connections
 
-(defcustom herdr-state-prime-quiet 0.4
-  "Seconds of event-stream silence that end the priming window.
+(defcustom herdr-state-settle-delay 0.4
+  "Seconds after connecting before the cache is reconciled with the server.
 
-`events.subscribe' replays history: subscribing to an idle server
-returned 54 past events here, and a real startup produced roughly 150.
-The cache converges correctly because the replay is ordered, but firing
-`herdr-state-change-hook' for every replayed event would make each
-consumer redraw a hundred times before showing anything true.  So the
-hook is suppressed until the stream goes quiet, then a snapshot settles
-the cache authoritatively and listeners are notified once."
+`events.subscribe' replays, but it replays at most ONE RETAINED EVENT
+PER SUBSCRIBED TYPE — last-value retention, not history.  Measured
+against 0.8.0: subscribing to all 24 global types replayed 8 events in
+about 4 ms, and subscribing to `pane.updated' alone in a window that
+carried 662 of them replayed exactly one.  The bound is structural, so
+the replay is over long before this delay expires whatever the session
+is doing.
+
+Long enough, then, to let the retained events land before one
+`pane.list' checks the result; see `herdr-state--settle'."
   :type 'number
   :group 'herdr)
 
 (defvar herdr-state--current (herdr-state-empty)
   "The live cache.")
 
-(defvar herdr-state--priming nil
-  "Non-nil while the subscription replay is still draining.")
-
-(defvar herdr-state--prime-timer nil)
+(defvar herdr-state--settle-timer nil)
 
 (defvar herdr-state--global-process nil)
 (defvar herdr-state--pane-process nil)
@@ -366,52 +374,53 @@ the cache authoritatively and listeners are notified once."
 
 (defun herdr-state--dispatch (kind data)
   "Fold event KIND with DATA into the cache and notify listeners.
-While priming, the fold still happens but listeners are not notified;
-see `herdr-state-prime-quiet'."
+
+Every event notifies, including the handful replayed on subscribe.
+This used to hold the hook back until the stream had been silent for
+0.4s, on the belief that subscribing replayed a hundred and fifty
+events of history.  It does not — the replay is
+bounded at one retained event per subscribed type — while the live
+stream's median gap between events is 0.105s, so a quiet-based window
+never closed: simulated against a real 200-second timeline it held the
+hook for 54.3 seconds and swallowed 533 events to absorb a replay of 8.
+That is a minute of frozen modeline and dashboard after every connect,
+which is precisely when an agent is most likely to be working."
   (setq herdr-state--current (herdr-state-reduce herdr-state--current kind data))
-  (if herdr-state--priming
-      (herdr-state--defer-prime-end)
-    (run-hook-with-args 'herdr-state-change-hook kind data)))
+  (run-hook-with-args 'herdr-state-change-hook kind data))
 
-(defun herdr-state--defer-prime-end ()
-  "Push the end of the current priming phase out by `herdr-state-prime-quiet'.
+(defun herdr-state--schedule-settle ()
+  "Arrange the one post-connect reconcile, replacing any pending one."
+  (when herdr-state--settle-timer
+    (cancel-timer herdr-state--settle-timer))
+  (setq herdr-state--settle-timer
+        (run-at-time herdr-state-settle-delay nil #'herdr-state--settle)))
 
-Priming runs in two phases because rebuilding connection B replays as
-well.  Phase `settle' drains the initial replay and then rebuilds B
-against an authoritative snapshot; phase `quiet' drains B's own replay
-and finally announces."
-  (when herdr-state--prime-timer
-    (cancel-timer herdr-state--prime-timer))
-  (setq herdr-state--prime-timer
-        (run-at-time herdr-state-prime-quiet nil
-                     (if (eq herdr-state--priming 'settle)
-                         #'herdr-state--settle-priming
-                       #'herdr-state--finish-priming))))
+(defun herdr-state--settle ()
+  "Reconcile the pane set once the retained events have landed, then realign B.
 
-(defun herdr-state--settle-priming ()
-  "Snapshot authoritatively, realign connection B, then wait out its replay."
-  (setq herdr-state--prime-timer nil)
+Both halves earn their place even though the replay is small.
+
+Reconciling: one of the retained events is a `pane.created' for whatever
+pane was created last, and for a long-closed pane that is a ghost.  The
+observed replay folds correctly only because `pane.created' precedes
+`pane.closed' in `herdr-state-global-subscriptions' — retained events
+arrive in subscription-list order, not chronological order — so a ghost
+is one list edit away at any time, and it is a ghost that shows up in
+every picker and cannot be navigated to.  `pane.list' is authoritative
+and settles it either way.
+
+Realigning connection B afterwards, not before: reconciling is what
+makes the pane set final, and B carries one subscription per pane."
+  (setq herdr-state--settle-timer nil)
   (when herdr-state--running
-    (condition-case nil
-        (setq herdr-state--current
-              (herdr-state-from-snapshot
-               (alist-get 'snapshot (herdr-rpc-call "session.snapshot"))))
-      (herdr-error nil))
-    (setq herdr-state--priming 'quiet)
-    (herdr-state--open-pane-stream)
-    (herdr-state--defer-prime-end)))
-
-(defun herdr-state--finish-priming ()
-  "Leave the priming window and notify listeners once.
-
-Reconciles first: the replay this window exists to absorb is exactly
-what leaves ghost panes behind, so waiting for the next poll would mean
-the first pickers of the session show panes that no longer exist."
-  (setq herdr-state--prime-timer nil
-        herdr-state--priming nil)
-  (when herdr-state--running
+    ;; The replayed pane events have already queued a debounced rebuild
+    ;; of B through `herdr-state--note-pane-set-change'; drop it, since
+    ;; the rebuild below is the same work against a better pane set.
+    (when herdr-state--resubscribe-timer
+      (cancel-timer herdr-state--resubscribe-timer)
+      (setq herdr-state--resubscribe-timer nil))
     (herdr-state-reconcile-panes)
-    (run-hook-with-args 'herdr-state-change-hook "resync" nil)))
+    (herdr-state--open-pane-stream)))
 
 (defun herdr-state--handle-line (line)
   "Handle one NDJSON LINE from an event connection."
@@ -529,10 +538,11 @@ A vector, because `subscriptions' is a JSON array."
   (when herdr-state--running
     (condition-case nil
         (progn
-          ;; Reconnecting replays too, so re-enter the priming window.
-          (setq herdr-state--priming 'settle)
           (herdr-state--open-streams)
-          (herdr-state--defer-prime-end)
+          ;; A disconnect of any length loses events that cannot be
+          ;; replayed, so the settle after reconnecting is a resync as
+          ;; much as a ghost sweep.
+          (herdr-state--schedule-settle)
           (setq herdr-state--reconnect-delay nil))
       (herdr-error (herdr-state--schedule-reconnect)))))
 
@@ -567,16 +577,21 @@ Two problems this solves, both of which leave the cache wrong in ways
 the event stream cannot correct on its own.
 
 Directory changes are never announced: herdr tracks cwd accurately, but
-a `cd\=' produces no `pane_updated\=', only unrelated `layout_updated\='
+a `cd\\=' produces no `pane_updated\\=', only unrelated `layout_updated\\='
 traffic.
 
-Worse, panes can linger.  `events.subscribe\=' replays history, and
-priming ends after a fixed quiet period — so a bursty replay can end
-priming early, and `pane_created\=' events for long-closed panes then
-fold in after the settling snapshot, resurrecting them.  Those ghosts
-show up in every picker and cannot be navigated to.
+Worse, panes can linger.  `events.subscribe\\=' retains the last event of
+each subscribed type and replays it, so a `pane_created\\=' for a pane
+closed long ago is delivered as though it were news — verified against
+0.8.0, where a pane created and closed minutes earlier came back on
+every fresh subscription.  The matching `pane_closed\\=' is retained too
+and happens to arrive after it, but only because retained events come in
+subscription-list order and `pane.created\\=' precedes `pane.closed\\=' in
+`herdr-state-global-subscriptions\\='.  Nothing enforces that, and the
+ghosts it would otherwise leave show up in every picker and cannot be
+navigated to.
 
-One `pane.list\=' answers both: it is the authoritative set, so panes
+One `pane.list\\=' answers both: it is the authoritative set, so panes
 missing from it are dropped, panes new to us are added, and directories
 are refreshed in the same pass.  Returns non-nil when anything changed."
   (when-let* ((panes (ignore-errors
@@ -653,12 +668,11 @@ longer exist is worse than one extra round trip."
           (setq herdr-state--current
                 (herdr-state-from-snapshot
                  (alist-get 'snapshot (herdr-rpc-call "session.snapshot"))))
-          ;; Announce the snapshot immediately so consumers paint something
-          ;; true, then swallow the subscription replay that follows.
+          ;; Announce the snapshot immediately so consumers paint
+          ;; something true before any event arrives.
           (run-hook-with-args 'herdr-state-change-hook "resync" nil)
-          (setq herdr-state--priming 'settle)
           (herdr-state--open-streams)
-          (herdr-state--defer-prime-end))
+          (herdr-state--schedule-settle))
       (herdr-error
        (setq herdr-state--running nil)
        (remove-hook 'herdr-state-change-hook #'herdr-state--note-pane-set-change)
@@ -672,14 +686,13 @@ longer exist is worse than one extra round trip."
     (herdr-state--close proc))
   (dolist (timer (list herdr-state--reconnect-timer
                        herdr-state--resubscribe-timer
-                       herdr-state--prime-timer))
+                       herdr-state--settle-timer))
     (when timer (cancel-timer timer)))
   (setq herdr-state--global-process nil
         herdr-state--pane-process nil
         herdr-state--reconnect-timer nil
         herdr-state--resubscribe-timer nil
-        herdr-state--prime-timer nil
-        herdr-state--priming nil
+        herdr-state--settle-timer nil
         herdr-state--reconnect-delay nil
         herdr-state--current (herdr-state-empty)))
 

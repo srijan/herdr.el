@@ -123,14 +123,17 @@
           (should (= 1 (length (herdr-state-agents (herdr-state-current))))))
       (herdr-state-stop))))
 
-(ert-deftest herdr-state-priming-suppresses-the-change-hook ()
-  "Replayed events must fold into the cache without notifying listeners.
-herdr replays history on subscribe — 54 events on an idle server here —
-so an unsuppressed hook would fire once per replayed event."
+(ert-deftest herdr-state-every-event-notifies-listeners ()
+  "No event is swallowed, replayed ones included.
+
+The hook used to be suppressed until the stream fell silent for 0.4s,
+to absorb a replay believed to be about 150 events of history.  The
+replay is one retained event per subscribed type — 8 in 4 ms across all
+24 — while the live stream's median gap is 0.105s, so on a real
+timeline that window held the hook for 54.3 seconds and swallowed 533
+events.  Anything that reintroduces a suppression window fails here."
   (let* ((events nil)
          (herdr-state--current (herdr-state-empty))
-         (herdr-state--priming 'settle)
-         (herdr-state--prime-timer nil)
          (herdr-state-change-hook
           (list (lambda (kind data) (push (cons kind data) events))))
          (proc (herdr-state-live-test--proc)))
@@ -140,27 +143,58 @@ so an unsuppressed hook would fire once per replayed event."
            proc (concat "{\"event\":\"pane_created\",\"data\":{\"pane\":"
                         "{\"pane_id\":\"w1:p1\"}}}\n"
                         "{\"event\":\"pane_created\",\"data\":{\"pane\":"
-                        "{\"pane_id\":\"w1:p2\"}}}\n"))
-          ;; Folded in...
+                        "{\"pane_id\":\"w1:p2\"}}}\n"
+                        "{\"event\":\"pane_focused\",\"data\":"
+                        "{\"pane_id\":\"w1:p2\"}}\n"))
           (should (= 2 (length (herdr-state-panes herdr-state--current))))
-          ;; ...but silently.
-          (should (null events)))
-      (when herdr-state--prime-timer (cancel-timer herdr-state--prime-timer))
+          (should (equal '("pane_created" "pane_created" "pane_focused")
+                         (mapcar #'car (reverse events)))))
       (delete-process proc))))
 
-(ert-deftest herdr-state-not-priming-notifies-per-event ()
-  (let* ((events nil)
-         (herdr-state--current (herdr-state-empty))
-         (herdr-state--priming nil)
-         (herdr-state-change-hook
-          (list (lambda (kind data) (push (cons kind data) events))))
-         (proc (herdr-state-live-test--proc)))
-    (unwind-protect
-        (progn
-          (herdr-state--filter
-           proc "{\"event\":\"pane_created\",\"data\":{\"pane\":{\"pane_id\":\"w1:p1\"}}}\n")
-          (should (= 1 (length events))))
-      (delete-process proc))))
+(ert-deftest herdr-state-settle-reconciles-ghost-panes-away ()
+  "Connecting must end with the pane set the server actually has.
+
+`events.subscribe\\=' retains the last event of each subscribed type, so a
+fresh subscription replays a `pane_created\\=' for whatever pane was made
+last — a ghost, when that pane closed minutes ago.  The retained
+`pane_closed\\=' folds it away only because `pane.created\\=' happens to be
+listed before `pane.closed\\=' in `herdr-state-global-subscriptions\\=';
+nothing in the protocol guarantees it.  So the settle after connecting
+reconciles, and rebuilds connection B afterwards so its per-pane
+subscriptions name the reconciled set rather than the ghost."
+  (let (subscribed)
+    (herdr-test-with-server
+        (lambda (req)
+          (pcase (alist-get 'method req)
+            ("pane.list"
+             (cons (herdr-test-ok req '((type . "pane_list")
+                                        (panes . [((pane_id . "w1:p1")
+                                                   (cwd . "/tmp"))])))
+                   nil))
+            ("events.subscribe"
+             (setq subscribed (alist-get 'subscriptions (alist-get 'params req)))
+             (cons (herdr-test-ok req '((type . "subscription_started"))) t))
+            (_ (cons (herdr-test-ok req '((type . "ok"))) nil))))
+      (let ((herdr-state--running t)
+            (herdr-state--pane-process nil)
+            (herdr-state--resubscribe-timer nil)
+            (herdr-state--settle-timer nil)
+            (herdr-state--current
+             (herdr-state-from-snapshot
+              '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))
+                          ((pane_id . "w1:ghost"))))))))
+        (unwind-protect
+            (progn
+              (herdr-state--settle)
+              (should (equal '("w1:p1")
+                             (herdr-state-pane-ids herdr-state--current)))
+              (let ((deadline (+ (float-time) 5)))
+                (while (and (null subscribed) (< (float-time) deadline))
+                  (accept-process-output nil 0.05)))
+              (should (equal '("w1:p1")
+                             (mapcar (lambda (s) (alist-get 'pane_id s))
+                                     subscribed))))
+          (herdr-state--close herdr-state--pane-process))))))
 
 ;;; Reconciling the pane set against the server
 
