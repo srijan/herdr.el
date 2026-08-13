@@ -162,10 +162,50 @@ transition into a status nobody asked to hear about."
         (herdr-agents--maybe-notify))
       (should (= 2 (length notified))))))
 
+(ert-deftest herdr-agents-does-not-announce-an-agent-that-was-already-blocked ()
+  "The regression the `previous' guard exists to stop happens at startup,
+not on a change.
+
+The sequence test above never puts the guard on the path: its first
+sighting is `working', which nobody opted into, so the
+`herdr-notify-statuses' membership test already answers no and the guard
+is never what decided.  Here the first sighting is `blocked' — a status
+that IS opted into — so the only thing standing between it and a desktop
+notification is having no `previous' to compare against.  Dropping that
+conjunct fires one notification per agent on every Emacs start, every
+reconnect and every resync.
+
+The statuses are still recorded, or the first real transition afterwards
+would be swallowed as though it were another first sighting."
+  (let ((herdr-agents--last-status (make-hash-table :test 'equal))
+        (herdr-notify-statuses '("blocked" "done"))
+        notified)
+    (cl-letf (((symbol-function 'herdr-agents--notify)
+               (lambda (&rest _) (push t notified))))
+      (let ((herdr-state--current
+             (herdr-agents-test--state '("w1:p1" "claude" "blocked")
+                                       '("w1:p2" "codex" "done"))))
+        (herdr-agents--maybe-notify))
+      (should-not notified)
+      (should (= 2 (hash-table-count herdr-agents--last-status)))
+      ;; And the transition that follows is still news.
+      (let ((herdr-state--current
+             (herdr-agents-test--state '("w1:p1" "claude" "done")
+                                       '("w1:p2" "codex" "done"))))
+        (herdr-agents--maybe-notify))
+      (should (= 1 (length notified))))))
+
 (ert-deftest herdr-agents-notifies-nothing-when-nothing-is-opted-into ()
   "Nil `herdr-notify-statuses' means never, and must not even record —
 opting in later should then treat what is already on screen as history
-rather than as news."
+rather than as news.
+
+Asserting only that nothing was announced does not test the outer guard
+at all: with the list nil the membership test inside answers no for
+every status anyway, so the guard could be `(when t)' and this would
+still hold.  What separates the two is the recording, which happens
+above the membership test and below the guard — so the table is what is
+asked about."
   (let ((herdr-agents--last-status (make-hash-table :test 'equal))
         (herdr-notify-statuses nil)
         notified)
@@ -174,7 +214,8 @@ rather than as news."
       (let ((herdr-state--current
              (herdr-agents-test--state '("w1:p1" "claude" "blocked"))))
         (herdr-agents--maybe-notify))
-      (should-not notified))))
+      (should-not notified)
+      (should (= 0 (hash-table-count herdr-agents--last-status))))))
 
 (ert-deftest herdr-agents-mode-line-mode-unhooks-itself-when-turned-off ()
   "Leaving the refresh on the state hook keeps recomputing a segment
