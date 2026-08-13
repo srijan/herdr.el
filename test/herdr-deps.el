@@ -1,0 +1,132 @@
+;;; herdr-deps.el --- Put herdr's external dependencies on the load path -*- lexical-binding: t; -*-
+
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
+;;; Commentary:
+
+;; Loaded by every Makefile target before anything else, so that
+;; `emacs -Q' — which initialises no package system and reads no user
+;; init — can still find magit-section and transient.
+;;
+;; What this replaces.  herdr-dispatch.el requires magit-section, and
+;; `make test' used to cope by letting the dispatcher tests skip
+;; themselves when the library was absent, while `make compile' left
+;; the file out of the compile set for the same reason.  Measured on
+;; this checkout, a bare `make test' ran 325 tests and skipped 97 of
+;; them — every skip a `herdr-dispatch-' test, which is to say the
+;; whole dashboard — and reported success.  The guard was spelled
+;; `(require 'magit-section nil t)', which cannot tell an absent
+;; dependency from a broken one, so a magit-section that failed to
+;; load read as a skip too.
+;;
+;; magit-section is a declared dependency in herdr.el's
+;; `Package-Requires'.  A declared dependency that a third of the suite
+;; silently arranges to do without is not a dependency, so it is found
+;; here instead, and failing to find it is a hard error naming the
+;; escape hatch.  Nothing skips.
+
+;;; Code:
+
+(require 'seq)
+
+(defconst herdr-deps-libraries
+  '("magit-section" "transient" "compat" "dash" "llama" "cond-let")
+  "Libraries herdr needs that Emacs does not ship.
+
+magit-section and transient are the two herdr itself requires; the rest
+are magit-section's own dependencies, which have to be reachable for it
+to load at all.  A library on this list that cannot be found is not by
+itself an error — magit-section's dependency set differs between
+versions, and demanding all six would break on a version that needs
+five.  `herdr-deps-required-libraries' is what must be found.")
+
+(defconst herdr-deps-required-libraries '("magit-section" "transient")
+  "Libraries whose absence stops the build.
+These two are named in a `Package-Requires' header; the rest of
+`herdr-deps-libraries' is whatever those two happen to pull in.")
+
+(defun herdr-deps-roots ()
+  "Return the directories under which installed packages are looked for.
+
+Each is a directory of package directories rather than a load-path entry
+itself; see `herdr-deps-directories'.
+
+The first entry is relative to this checkout rather than to any home
+directory: elpaca clones a package into `var/elpaca/sources/NAME' and
+builds it into `var/elpaca/builds/NAME', so from the repository root
+`../../builds/' names the built copies of everything installed
+alongside herdr, wherever the user keeps their configuration.  The rest
+cover the same question asked of `user-emacs-directory' — elpaca again,
+then package.el, then straight.el — for a checkout that lives somewhere
+else entirely."
+  (let ((repository (expand-file-name
+                     ".." (file-name-directory
+                           (or load-file-name buffer-file-name
+                               default-directory)))))
+    (list (expand-file-name "../../builds/" repository)
+          (expand-file-name "var/elpaca/builds/" user-emacs-directory)
+          (expand-file-name "elpa/" user-emacs-directory)
+          (expand-file-name "straight/build/" user-emacs-directory))))
+
+(defun herdr-deps-directories ()
+  "Return every directory that might hold an installed package.
+
+The immediate subdirectories of `herdr-deps-roots', which is the shape
+all three package managers share: one directory per package, named for
+it and — under package.el — for its version, so the names cannot be
+predicted and the directory listing is what answers instead."
+  (seq-mapcat (lambda (root)
+                (when (file-directory-p root)
+                  (seq-filter #'file-directory-p
+                              (directory-files root t "\\`[^.]" t))))
+              (herdr-deps-roots)))
+
+(defun herdr-deps-locate (library directories)
+  "Return the directory in DIRECTORIES holding LIBRARY, or nil.
+Compiled or not: a package manager that has byte-compiled the library
+and deleted nothing is the ordinary case, and either file makes the
+directory the right load-path entry."
+  (seq-find (lambda (directory)
+              (or (file-exists-p (expand-file-name (concat library ".el")
+                                                   directory))
+                  (file-exists-p (expand-file-name (concat library ".elc")
+                                                   directory))))
+            directories))
+
+(defun herdr-deps-add-to-load-path ()
+  "Put every library in `herdr-deps-libraries' on `load-path'.
+
+Libraries `locate-library' already answers for are left alone, so an
+EXTRA_LOAD_PATH given on the command line wins outright over anything
+found by searching — the Makefile puts it on the load path before this
+file is loaded.  Returns the directories added."
+  (delq nil
+        (let ((directories (herdr-deps-directories)))
+          (mapcar (lambda (library)
+                    (unless (locate-library library)
+                      (when-let* ((found (herdr-deps-locate library
+                                                            directories)))
+                        (add-to-list 'load-path found)
+                        found)))
+                  herdr-deps-libraries))))
+
+(defun herdr-deps-ensure ()
+  "Make herdr's external dependencies loadable, or fail saying how to.
+
+An error rather than a warning, and raised while the load path is still
+the only thing that has happened: a missing dependency that is allowed
+past this point becomes a suite that skips a third of itself and passes,
+which is the failure this file exists to end."
+  (herdr-deps-add-to-load-path)
+  (dolist (library herdr-deps-required-libraries)
+    (unless (locate-library library)
+      (error "herdr: cannot find %s.  Searched %s.  Supply it with
+  make <target> EXTRA_LOAD_PATH=\"/path/to/%s /path/to/its/deps\""
+             library
+             (mapconcat #'identity (herdr-deps-roots) ", ")
+             library))))
+
+(herdr-deps-ensure)
+
+(provide 'herdr-deps)
+;;; herdr-deps.el ends here

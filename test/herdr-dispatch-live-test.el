@@ -5,6 +5,11 @@
 (require 'ert)
 (require 'herdr-rpc)
 (require 'herdr-state)
+;; Unconditionally, for the reason given at the top of
+;; herdr-dispatch-test.el: `test/herdr-deps.el' has already put
+;; magit-section on the load path, so a `(require 'magit-section nil t)'
+;; here would only turn a broken dependency back into a silent skip.
+(require 'herdr-dispatch)
 
 (defun herdr-dispatch-live-test--server-p ()
   "Return non-nil when a herdr server is reachable."
@@ -15,9 +20,7 @@
 Asserts the session holds exactly the workspaces it started with, so a
 create path that leaks is caught here rather than in the user\\='s session."
   :tags '(:live)
-  (skip-unless (and (herdr-dispatch-live-test--server-p)
-                    (require 'magit-section nil t)))
-  (require 'herdr-dispatch)
+  (skip-unless (herdr-dispatch-live-test--server-p))
   (let* ((before (mapcar (lambda (w) (alist-get 'workspace_id w))
                          (alist-get 'workspaces
                                     (alist-get 'snapshot

@@ -7,25 +7,27 @@
 (require 'herdr-tree)
 (require 'herdr-test-helper)
 
-;; magit-section is a hard dependency of herdr-dispatch and is not on the
-;; load path under `emacs -Q -L .', which is what `make test' uses.  The
-;; tree model is covered hermetically in herdr-tree-test; these tests
-;; cover the renderer and only run where the dependency exists.
-(when (require 'magit-section nil t)
-  (require 'herdr-dispatch))
+;; Required outright rather than guarded.  These tests used to open with
+;; `(when (require 'magit-section nil t) (require 'herdr-dispatch))' and
+;; every one of them with a `skip-unless', which made a bare `make test'
+;; skip 97 of 325 tests — all of them these — and report success.  It
+;; also made a magit-section that failed to load indistinguishable from
+;; one that was not installed, so a broken dependency read as a skip.
+;; `test/herdr-deps.el' now finds magit-section before any test file is
+;; loaded, and fails loudly when it cannot, so there is nothing left
+;; here to be conditional about.
+(require 'herdr-dispatch)
 
 (defmacro herdr-dispatch-test-with-buffer (nodes &rest body)
   "Render NODES into a temporary dispatcher buffer and run BODY there."
   (declare (indent 1) (debug t))
-  `(progn
-     (skip-unless (featurep 'magit-section))
-     (with-temp-buffer
-       (herdr-dispatch-mode)
-       (let ((inhibit-read-only t))
-         (magit-insert-section (herdr-root)
-           (herdr-dispatch--insert-nodes ,nodes)))
-       (goto-char (point-min))
-       ,@body)))
+  `(with-temp-buffer
+     (herdr-dispatch-mode)
+     (let ((inhibit-read-only t))
+       (magit-insert-section (herdr-root)
+         (herdr-dispatch--insert-nodes ,nodes)))
+     (goto-char (point-min))
+     ,@body))
 
 (defconst herdr-dispatch-test--nodes
   '((herdr-workspace "w1" "herdr.el  /tmp/herdr.el  2 panes"
@@ -196,7 +198,6 @@ The control is what makes this test mean anything.  A field faced with
 without that, this test would pass just as happily in a buffer where
 fontification never ran at all, which is the failure mode of every test
 that tries to prove something about redisplay in batch."
-  (skip-unless (featurep 'magit-section))
   (let ((buffer (generate-new-buffer "herdr-fontification-test")))
     (unwind-protect
         (with-current-buffer buffer
@@ -300,21 +301,19 @@ set, the unanswered list and the generation counter are globals that
 outlive a buffer, and a test that left one behind would arrive in the
 next as a workspace mysteriously already asked for."
   (declare (indent 1) (debug t))
-  `(progn
-     (skip-unless (featurep 'magit-section))
-     (let ((herdr-state--current (herdr-state-from-snapshot ,snapshot))
-           (herdr-dispatch--worktrees nil)
-           (herdr-dispatch--worktrees-pending nil)
-           (herdr-dispatch--worktrees-unanswered nil)
-           (herdr-dispatch--worktrees-generation 0)
-           (herdr-dispatch--refresh-timer nil)
-           (buffer (get-buffer-create herdr-dispatch-buffer-name)))
-       (unwind-protect
-           (with-current-buffer buffer
-             (herdr-dispatch-mode)
-             ,@body)
-         (herdr-dispatch--cancel-refresh)
-         (when (buffer-live-p buffer) (kill-buffer buffer))))))
+  `(let ((herdr-state--current (herdr-state-from-snapshot ,snapshot))
+         (herdr-dispatch--worktrees nil)
+         (herdr-dispatch--worktrees-pending nil)
+         (herdr-dispatch--worktrees-unanswered nil)
+         (herdr-dispatch--worktrees-generation 0)
+         (herdr-dispatch--refresh-timer nil)
+         (buffer (get-buffer-create herdr-dispatch-buffer-name)))
+     (unwind-protect
+         (with-current-buffer buffer
+           (herdr-dispatch-mode)
+           ,@body)
+       (herdr-dispatch--cancel-refresh)
+       (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
 (defmacro herdr-dispatch-test-with-dispatcher (&rest body)
   "Run BODY in a real dispatcher buffer built from the test snapshot.
@@ -508,7 +507,6 @@ rather than a second test of the skip."
 
 (ert-deftest herdr-dispatch-refresh-hook-cancels-its-timer-with-the-buffer ()
   "A pending redraw must not outlive the buffer it would draw into."
-  (skip-unless (featurep 'magit-section))
   (let ((herdr-state-change-hook (list #'herdr-dispatch--refresh-hook))
         (buffer (get-buffer-create herdr-dispatch-buffer-name)))
     (unwind-protect
@@ -655,7 +653,6 @@ on which command ran, with which arguments, and in which order."
      (nreverse herdr-dispatch-test--messages)))
 
 (ert-deftest herdr-dispatch-protect-reports-a-server-error ()
-  (skip-unless (featurep 'magit-section))
   (let ((messages nil))
     (cl-letf (((symbol-function 'message)
                (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
@@ -666,7 +663,6 @@ on which command ran, with which arguments, and in which order."
 
 (ert-deftest herdr-dispatch-protect-passes-a-result-through ()
   "Protection must not cost the return value of the command it wraps."
-  (skip-unless (featurep 'magit-section))
   (should (equal 42 (herdr-dispatch--protect (lambda () 42)))))
 
 (ert-deftest herdr-dispatch-protect-reconciles-a-stale-cache-before-reporting ()
@@ -675,7 +671,6 @@ on which command ran, with which arguments, and in which order."
 Asserting only that some message appeared would pass against a wrapper
 that reported and left the dead pane on screen, which is the failure
 this branch exists to prevent — hence the ordering assertion."
-  (skip-unless (featurep 'magit-section))
   (let* ((calls nil)
          (messages
           (herdr-dispatch-test-with-messages
@@ -692,7 +687,6 @@ this branch exists to prevent — hence the ordering assertion."
 
 (ert-deftest herdr-dispatch-protect-leaves-a-good-cache-alone ()
   "Any error but `not_found' says nothing about the cache; do not redraw."
-  (skip-unless (featurep 'magit-section))
   (let* ((calls nil)
          (messages
           (herdr-dispatch-test-with-messages
@@ -708,7 +702,6 @@ this branch exists to prevent — hence the ordering assertion."
 
 (ert-deftest herdr-dispatch-protect-points-at-the-fix-for-no-server ()
   "A dead server has one cure, and the message names it instead of a code."
-  (skip-unless (featurep 'magit-section))
   (should (equal '("herdr: not running (M-x herdr-start)")
                  (herdr-dispatch-test-with-messages
                    (herdr-dispatch--protect
@@ -843,7 +836,6 @@ answer rather than an approximate one."
                        (herdr-dispatch-visit)))))))
 
 (ert-deftest herdr-dispatch-binds-the-read-only-verbs ()
-  (skip-unless (featurep 'magit-section))
   (should (eq #'herdr-dispatch-visit
               (lookup-key herdr-dispatch-mode-map (kbd "RET"))))
   (should (eq #'herdr-dispatch-prompt
@@ -1274,7 +1266,6 @@ correct it.
 Returning to a dashboard that is already open is the other half, and it
 must not forget: that would make every invocation of the command a full
 refetch of the session."
-  (skip-unless (featurep 'magit-section))
   (let ((herdr-state--current
          (herdr-state-from-snapshot herdr-dispatch-test--worktree-snapshot))
         (herdr-state-change-hook nil)
@@ -1317,7 +1308,6 @@ The answers, the questions still outstanding and the failures all go, and
 the generation moves so that the outstanding ones cannot come back.
 Anything less leaves a workspace that is neither cached, nor pending, nor
 asked again."
-  (skip-unless (featurep 'magit-section))
   (let ((herdr-dispatch--worktrees '(("w1" . (ignored))))
         (herdr-dispatch--worktrees-pending '("w2"))
         (herdr-dispatch--worktrees-unanswered '(("w3" . error)))
@@ -1329,7 +1319,6 @@ asked again."
     (should (equal 8 herdr-dispatch--worktrees-generation))))
 
 (ert-deftest herdr-dispatch-unrelated-events-keep-the-cache ()
-  (skip-unless (featurep 'magit-section))
   (let ((herdr-dispatch--worktrees '(("w1" . (ignored))))
         (herdr-dispatch--worktrees-generation 7))
     (herdr-dispatch--invalidate-worktrees "pane_updated" nil)
@@ -1344,7 +1333,6 @@ hand-written fixture; `herdr-dispatch--worktrees' is nil in all of them,
 so nothing has ever pushed a real cache entry through
 `herdr-dispatch-refresh' -> `herdr-tree-build' -> the renderer.  This
 closes that gap."
-  (skip-unless (featurep 'magit-section))
   (let ((herdr-state--current
          (herdr-state-from-snapshot herdr-dispatch-test--snapshot))
         (herdr-dispatch--worktrees
@@ -1587,14 +1575,12 @@ worktree's directory, and asserting the exact params reaching
                          (herdr-dispatch-open-worktree))))))))
 
 (ert-deftest herdr-dispatch-binds-question-mark-to-the-transient ()
-  (skip-unless (featurep 'magit-section))
   (should (eq #'herdr-transient
               (lookup-key herdr-dispatch-mode-map "?"))))
 
 ;;; Rename
 
 (ert-deftest herdr-dispatch-rename-dispatches-on-section-type ()
-  (skip-unless (featurep 'magit-section))
   (let ((called nil))
     (cl-letf (((symbol-function 'herdr-pane-rename)
                (lambda (label id) (setq called (list 'pane label id))))
@@ -1605,7 +1591,6 @@ worktree's directory, and asserting the exact params reaching
         (should (equal '(pane "new" "w1:p1") called))))))
 
 (ert-deftest herdr-dispatch-rename-on-a-workspace-renames-the-workspace ()
-  (skip-unless (featurep 'magit-section))
   (let ((called nil))
     (cl-letf (((symbol-function 'herdr-workspace-rename)
                (lambda (label id) (setq called (list 'workspace label id))))
@@ -1736,7 +1721,6 @@ nothing may reach the server on the way out."
     (should-error (herdr-dispatch-close) :type 'user-error)))
 
 (ert-deftest herdr-dispatch-binds-the-mutating-verbs ()
-  (skip-unless (featurep 'magit-section))
   (should (eq #'herdr-dispatch-rename
               (lookup-key herdr-dispatch-mode-map "R")))
   (should (eq #'herdr-dispatch-close
@@ -1748,7 +1732,6 @@ nothing may reach the server on the way out."
 
 (ert-deftest herdr-dispatch-create-tab-focuses-the-workspace-first ()
   "tab.create takes no workspace_id, so the workspace has to be focused."
-  (skip-unless (featurep 'magit-section))
   (let ((calls nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
                (lambda (method params) (push (cons method params) calls) nil))
@@ -1763,7 +1746,6 @@ nothing may reach the server on the way out."
 
 (ert-deftest herdr-dispatch-create-pane-splits-a-pane-of-the-tab ()
   "pane.split needs a target_pane_id; a tab is not one."
-  (skip-unless (featurep 'magit-section))
   (let ((target nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
                (lambda (_method params)
@@ -1784,7 +1766,6 @@ state is built via `herdr-state-from-snapshot\\=' rather than mocking
 `herdr-state-panes\\=', because that accessor is a `cl-defstruct\\=' slot
 reader inlined at the call site, which a `cl-letf\\=' override of its
 symbol-function does not reach."
-  (skip-unless (featurep 'magit-section))
   (let ((target nil)
         (herdr-state--current
          (herdr-state-from-snapshot
@@ -1809,7 +1790,6 @@ symbol-function does not reach."
         (should (equal "w2:p2" target))))))
 
 (ert-deftest herdr-dispatch-create-reads-transient-arguments ()
-  (skip-unless (featurep 'magit-section))
   (should (equal "main" (herdr-dispatch--arg '("--base=main") "--base")))
   (should-not (herdr-dispatch--arg '("--base=main") "--label")))
 
@@ -1819,7 +1799,6 @@ own contract (see herdr-cmd-test.el) is that a blank string must not
 reach the server as one.  `herdr-dispatch-create-worktree' calls
 `herdr-rpc-call\\=' directly rather than through that command, so the
 same contract has to be reasserted here rather than inherited."
-  (skip-unless (featurep 'magit-section))
   (let ((params nil)
         (transient-current-command 'herdr-dispatch-create))
     (cl-letf (((symbol-function 'herdr-rpc-call)
@@ -1838,7 +1817,6 @@ same contract has to be reasserted here rather than inherited."
 
 (ert-deftest herdr-dispatch-create-workspace-uses-the-directory-argument-when-set ()
   "--directory short-circuits both the point-derived default and the prompt."
-  (skip-unless (featurep 'magit-section))
   (let ((called nil)
         (transient-current-command 'herdr-dispatch-create))
     (cl-letf (((symbol-function 'herdr-workspace-create)
@@ -1981,7 +1959,6 @@ split would reintroduce the very rejection this path exists to avoid.
 Asserted against the wire, because the failure is a call that should not
 be made and no return value would show it: the whole conversation is the
 split, the start, and the focus that surfaces it."
-  (skip-unless (featurep 'magit-section))
   (let ((methods nil)
         (transient-current-command 'herdr-dispatch-create))
     (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) t))
@@ -2048,7 +2025,6 @@ A `user-error\\=' fails this test rather than being swallowed, since
         (should (equal "w1:p1" target))))))
 
 (ert-deftest herdr-dispatch-binds-the-create-verbs ()
-  (skip-unless (featurep 'magit-section))
   (should (eq #'herdr-dispatch-create
               (lookup-key herdr-dispatch-mode-map "c")))
   (should (eq #'herdr-dispatch-create-workspace
