@@ -1061,7 +1061,12 @@ a workspace is being drawn.  The request goes out whether or not this
 call redraws, and the reply schedules its own redraw rather than forcing
 one; see `herdr-dispatch--request-worktrees\\='.  FORCE additionally
 retries the workspaces whose last fetch could not be answered, which is
-the manual cure for a `worktree.list\\=' that failed."
+the manual cure for a `worktree.list\\=' that failed.
+
+A redraw that does happen restores the section highlight as well as
+point and folds; see the comment where it does.  The skip is the other
+half of keeping that highlight, and `herdr-tree--steady-title\\=' is what
+lets the skip engage at all while an agent is working."
   (interactive (list t))
   (when-let* ((buffer (get-buffer herdr-dispatch-buffer-name)))
     (with-current-buffer buffer
@@ -1102,7 +1107,23 @@ the manual cure for a `worktree.list\\=' that failed."
               (when-let* ((position
                            (and (cdr entry)
                                 (herdr-dispatch--position-restore (cdr entry)))))
-                (set-window-point (car entry) position))))
+                (set-window-point (car entry) position)))
+            ;; The highlight is an overlay on the text `erase-buffer'
+            ;; just took away, and nothing recreates it: magit refreshes
+            ;; it from `magit-section-post-command-hook', and a redraw
+            ;; driven by the event stream is not a command.  Verified,
+            ;; one overlay before a redraw and none after — so the line
+            ;; you were reading stopped being marked as such the moment
+            ;; anything in the session moved.
+            ;;
+            ;; After the point restores rather than before, because this
+            ;; highlights whatever `magit-current-section' answers, and
+            ;; that is read off point.  FORCE because the section under
+            ;; point is usually the same one as before the redraw, and
+            ;; the unforced path takes that as grounds to do nothing —
+            ;; which is exactly wrong here, where the section object is
+            ;; new and its overlay is gone.
+            (magit-section-update-highlight t))
           (setq herdr-dispatch--rendered-header header
                 herdr-dispatch--rendered-tree tree))
         ;; After the draw rather than before it: a reply must reach the

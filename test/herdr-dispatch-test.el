@@ -1607,6 +1607,109 @@ the highlight faces headings and bodies through different branches of
                             (overlay-get overlay 'font-lock-face)))
                       (overlays-at (point))))))
 
+(defun herdr-dispatch-test--highlighted-p ()
+  "Return non-nil when a section highlight overlay covers point."
+  (and (seq-some (lambda (overlay)
+                   (eq 'magit-section-highlight
+                       (overlay-get overlay 'font-lock-face)))
+                 (overlays-at (point)))
+       t))
+
+(defun herdr-dispatch-test--title-event (id title)
+  "Fold a `pane_updated' for pane ID carrying TITLE into the cache.
+The status is the one `herdr-dispatch-test--snapshot' already gives
+`w1:p1', so a sequence of these differs in the title and in nothing
+else — which is the whole point, and is not true of an event that
+quietly changes the status as well."
+  (setq herdr-state--current
+        (herdr-state-reduce herdr-state--current "pane_updated"
+                            `((pane . ((pane_id . ,id)
+                                       (agent . "claude")
+                                       (agent_status . "blocked")
+                                       (workspace_id . "w1")
+                                       (tab_id . "w1:t1")
+                                       (terminal_title_stripped . ,title)))))))
+
+(ert-deftest herdr-dispatch-a-redraw-restores-the-section-highlight ()
+  "A redraw used to leave the line you were reading unmarked.
+
+The highlight is an overlay on text `erase-buffer' takes away, and
+nothing recreates it: magit refreshes it from
+`magit-section-post-command-hook', and a redraw driven by the event
+stream is not a command.  Verified before this fix — one overlay before,
+zero after.
+
+The redraw here is driven by a rendered change rather than by FORCE, and
+no command runs between the two assertions, which is the shape the bug
+actually had: the dashboard redrawing itself out from under a user who
+pressed nothing."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (search-forward "w1:p2")
+    (magit-section-update-highlight t)
+    (should (herdr-dispatch-test--highlighted-p))
+    (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
+    (herdr-dispatch-refresh)
+    (goto-char (point-min))
+    (search-forward "w1:p2")
+    (should (herdr-dispatch-test--highlighted-p))))
+
+(ert-deftest herdr-dispatch-a-spinning-title-does-not-force-a-redraw ()
+  "The skip has to engage while an agent is working, which is when it matters.
+
+`terminal_title_stripped' carries Claude's animated spinner glyph and
+the dashboard renders it, so the tree used to differ on every
+`pane_updated' — several a second — and the unchanged-tree skip never
+engaged.  That is what made the redraw that destroys the highlight fire
+about once a second rather than rarely.
+
+Rebuilds are counted rather than buffer text compared, because a redraw
+that lays down the same characters is exactly what is being ruled out.
+A real status change is driven afterwards, so this cannot pass by the
+refresh having become incapable of redrawing at all."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (herdr-dispatch-test--title-event "w1:p1" "◐ Reviewing the herdr package")
+    (herdr-dispatch-refresh)
+    (should (equal 0 (herdr-dispatch-test-counting-rebuilds
+                       (dolist (glyph '("◑" "◐" "◑" "◐"))
+                         (herdr-dispatch-test--title-event
+                          "w1:p1" (concat glyph " Reviewing the herdr package"))
+                         (herdr-dispatch-refresh)))))
+    (should (equal 1 (herdr-dispatch-test-counting-rebuilds
+                       (herdr-dispatch-test--title-event
+                        "w1:p1" "Reviewing something else entirely")
+                       (herdr-dispatch-refresh))))))
+
+(ert-deftest herdr-dispatch-a-spinning-title-does-not-lose-the-highlight ()
+  "The other half of the same defect, at the level the user feels it.
+
+`herdr-dispatch-a-redraw-restores-the-section-highlight' covers the
+redraws that do happen.  This covers the ones that should not: with the
+spinner normalised away, a working agent's stream of `pane_updated'
+events costs no redraw at all, so the highlight is never destroyed in
+the first place.
+
+The title is established and the buffer drawn before the highlight is
+placed, so that the only thing varying afterwards is the glyph.  Both
+facts are asserted from the same run — nothing rebuilt, and the
+highlight still there — because a test that only counted rebuilds would
+pass over a refresh that had stopped drawing anything at all."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-test--title-event "w1:p1" "◐ Reviewing the herdr package")
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (search-forward "w1:p2")
+    (magit-section-update-highlight t)
+    (should (herdr-dispatch-test--highlighted-p))
+    (should (equal 0 (herdr-dispatch-test-counting-rebuilds
+                       (dolist (glyph '("◑" "◐" "◑" "◐"))
+                         (herdr-dispatch-test--title-event
+                          "w1:p1" (concat glyph " Reviewing the herdr package"))
+                         (herdr-dispatch-refresh)))))
+    (should (herdr-dispatch-test--highlighted-p))))
+
 (ert-deftest herdr-dispatch-open-worktree-focuses-an-already-open-worktree ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (let ((herdr-dispatch--worktrees

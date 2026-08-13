@@ -155,6 +155,46 @@ session of short labels does not look cramped either."
          (mapcar (lambda (pane) (length (herdr-tree--agent-label state pane)))
                  (herdr-state-panes state))))
 
+(defconst herdr-tree-spinner-glyphs "◐◑"
+  "Characters an agent animates at the head of its terminal title.
+
+Claude spins a half-circle glyph there while it works, and the animation
+reaches `terminal_title_stripped\\=' — the stripping is of ANSI, not of
+this.  Measured over one 60-second window on a working pane: 485 titles,
+239 of them \"◑ Debug webmentions from fed.brid.gy\", 238 the same line
+with \"◐\", and 8 with no glyph at all.
+
+Only those two were observed, so only those two are listed.  Another
+agent animating a different glyph would go unstripped, which costs a
+redraw a second on that pane and nothing else; adding its glyph here is
+the whole fix.  Guessing at the rest of the ◐◑◒◓ family would cost
+nothing either, but it would put unmeasured characters in a constant
+whose entire value is that it was measured.")
+
+(defun herdr-tree--steady-title (title)
+  "Return TITLE with any animated spinner glyph taken off the front.
+
+The dashboard renders the title, so the animation makes the rendered
+tree genuinely different on every event — several times a second while
+an agent works — and the unchanged-tree skip in `herdr-dispatch-refresh\\='
+therefore never engages.  That is what had the buffer being erased and
+rebuilt about once a second, which destroys the section highlight and
+costs the fold and point machinery a full round trip for no visible
+change.
+
+Note this is a different problem from the one
+`herdr-state-pane-significant-fields\\=' solves by leaving the title out.
+That governs whether a `pane.list\\=' reconcile counts as a change; this
+governs whether the RENDERED tree differs, and it does, because the
+spinner is in the text being drawn.  Fixing either one alone leaves the
+other.
+
+Only a leading run is stripped, and only of the glyphs themselves plus
+the space that follows: a title is otherwise the agent\\='s own words and
+is not ours to edit."
+  (replace-regexp-in-string
+   (concat "\\`[" herdr-tree-spinner-glyphs "]+[[:space:]]*") "" title))
+
 (defun herdr-tree--pane-node (state pane width)
   "Return the node for PANE in STATE, its agent column WIDTH wide.
 
@@ -177,7 +217,8 @@ words."
                    (herdr-tree--faced status face)
                    (herdr-tree--faced id 'shadow)
                    (herdr-tree--faced
-                    (or (alist-get 'terminal_title_stripped pane) "")
+                    (herdr-tree--steady-title
+                     (or (alist-get 'terminal_title_stripped pane) ""))
                     'font-lock-doc-face)))
           nil)))
 
