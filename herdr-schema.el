@@ -19,19 +19,17 @@
 ;; parameters the server recognises, so a herdr upgrade surfaces as a
 ;; failing test instead of a runtime error.
 ;;
-;; The schema is cached on disk and invalidated by server version.
+;; The schema is held for the session and invalidated by server version.
+;; There is no disk cache: `herdr api schema --json' prints the schema
+;; bundled in the binary without consulting the server, measured at 7ms,
+;; and nothing calls in here until you run `herdr-call' by hand.  A cache
+;; saving that is a 250K file and a staleness question for no gain.
 
 ;;; Code:
 
 (require 'json)
 (require 'subr-x)
 (require 'herdr-rpc)
-
-(defcustom herdr-schema-cache-file
-  (expand-file-name "herdr/schema.json" user-emacs-directory)
-  "Where to cache the herdr API schema between sessions."
-  :type 'file
-  :group 'herdr)
 
 (defvar herdr-schema--cache nil
   "Parsed schema, or nil when not yet loaded.")
@@ -42,7 +40,9 @@
 ;;; Loading
 
 (defun herdr-schema-load-file (path)
-  "Load and cache the schema stored at PATH."
+  "Load and cache the schema stored at PATH.
+Used by the tests to stand a captured schema up without a herdr on
+`exec-path'."
   (setq herdr-schema--cache
         (with-temp-buffer
           (insert-file-contents path)
@@ -50,7 +50,7 @@
   herdr-schema--cache)
 
 (defun herdr-schema--fetch ()
-  "Shell out to herdr for a fresh schema, caching it on disk."
+  "Shell out to herdr for a fresh schema."
   (with-temp-buffer
     (let ((status (call-process herdr-executable nil t nil
                                 "api" "schema" "--json")))
@@ -59,8 +59,6 @@
                 (list "schema_unavailable"
                       (format "%s api schema --json exited %s"
                               herdr-executable status))))
-      (make-directory (file-name-directory herdr-schema-cache-file) t)
-      (write-region (point-min) (point-max) herdr-schema-cache-file nil 'quiet)
       (setq herdr-schema--cache (herdr-rpc-decode (buffer-string))))))
 
 (defun herdr-schema--server-version ()
@@ -68,9 +66,10 @@
   (ignore-errors (alist-get 'version (herdr-rpc-call "ping"))))
 
 (defun herdr-schema ()
-  "Return the herdr API schema, loading and caching it if needed.
-The on-disk cache is reused only while the server reports the same
-version it was captured from."
+  "Return the herdr API schema, fetching it if needed.
+The schema is held for as long as the server reports the version it
+was captured from: `herdr update' mid-session drops it, so the drift
+test cannot check yesterday's schema and report no drift."
   (let ((version (herdr-schema--server-version)))
     (when (and herdr-schema--cache
                herdr-schema--cache-version
@@ -78,10 +77,7 @@ version it was captured from."
                (not (equal version herdr-schema--cache-version)))
       (setq herdr-schema--cache nil))
     (unless herdr-schema--cache
-      (if (and (file-readable-p herdr-schema-cache-file)
-               (equal version herdr-schema--cache-version))
-          (herdr-schema-load-file herdr-schema-cache-file)
-        (herdr-schema--fetch))
+      (herdr-schema--fetch)
       (setq herdr-schema--cache-version version)))
   herdr-schema--cache)
 

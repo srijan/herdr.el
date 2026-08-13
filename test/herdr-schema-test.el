@@ -151,7 +151,6 @@ old schema and reports no drift, which is the one thing it exists to
 find."
   (let ((herdr-schema--cache '((schemas . nil)))
         (herdr-schema--cache-version "0.8.0")
-        (herdr-schema-cache-file "/herdr-no-such-cache-file.json")
         fetched)
     (cl-letf (((symbol-function 'herdr-schema--server-version)
                (lambda () "0.9.0"))
@@ -171,10 +170,6 @@ The stub copies its answer for that reason: handed the same object, an
 `eq' would pass here and fail against a real server."
   (let ((herdr-schema--cache '((schemas . nil)))
         (herdr-schema--cache-version "0.9.0")
-        ;; Bound away from the default, which is a real file in the
-        ;; developer's own Emacs directory — read from there, this test
-        ;; passed for reasons that had nothing to do with the cache.
-        (herdr-schema-cache-file "/herdr-no-such-cache-file.json")
         fetched)
     (cl-letf (((symbol-function 'herdr-schema--server-version)
                (lambda () (copy-sequence "0.9.0")))
@@ -188,27 +183,6 @@ The stub copies its answer for that reason: handed the same object, an
                (lambda () (setq fetched t))))
       (herdr-schema)
       (should-not fetched))))
-
-(ert-deftest herdr-schema-reuses-the-disk-cache-across-sessions ()
-  "A fresh Emacs has no in-memory schema but usually has one on disk, and
-re-shelling out to herdr for it is a visible pause on the first command."
-  (let* ((file (expand-file-name "herdr-schema-disk-test.json"
-                                 temporary-file-directory))
-         (herdr-schema-cache-file file)
-         (herdr-schema--cache nil)
-         (herdr-schema--cache-version "0.9.0")
-         fetched)
-    (unwind-protect
-        (progn
-          (copy-file herdr-schema-test--fixture file t)
-          (cl-letf (((symbol-function 'herdr-schema--server-version)
-                     (lambda () (copy-sequence "0.9.0")))
-                    ((symbol-function 'herdr-schema--fetch)
-                     (lambda () (setq fetched t))))
-            (should (herdr-schema))
-            (should-not fetched)
-            (should (member "ping" (herdr-schema-methods)))))
-      (ignore-errors (delete-file file)))))
 
 (ert-deftest herdr-schema-resolve-picks-the-real-branch-whichever-way-round ()
   "Nothing promises the null branch comes second.
@@ -230,11 +204,19 @@ first, so the search and a plain `car' agree there."
 (ert-deftest herdr-schema-fetch-shells-out-and-fails-loudly ()
   "The command is `herdr api schema --json', and a non-zero exit is an
 error with a code rather than a silent nil: everything downstream would
-otherwise see an empty schema and report that herdr has no methods."
+otherwise see an empty schema and report that herdr has no methods.
+
+Nothing is written to disk.  The schema used to be cached at
+herdr/schema.json under `user-emacs-directory', which bought 7ms on a
+command you invoke by hand and cost a 250K file whose staleness had to
+be reasoned about — and whose read branch never once executed, because
+the version it compared against lived only in a `defvar' that started
+each session nil.  A scratch `user-emacs-directory' left empty by the
+fetch catches a reintroduction at that path; the `boundp' catches one
+at any other."
   (let ((herdr-schema--cache nil)
-        (herdr-schema-cache-file
-         (expand-file-name "herdr-schema-fetch-test.json"
-                           temporary-file-directory))
+        (user-emacs-directory
+         (file-name-as-directory (make-temp-file "herdr-schema-test" t)))
         args)
     (unwind-protect
         (progn
@@ -246,11 +228,12 @@ otherwise see an empty schema and report that herdr has no methods."
                        0)))
             (herdr-schema--fetch))
           (should (equal '("api" "schema" "--json") args))
-          (should (file-readable-p herdr-schema-cache-file))
+          (should-not (directory-files user-emacs-directory nil "\\`[^.]"))
+          (should-not (boundp 'herdr-schema-cache-file))
           (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 3)))
             (let ((err (should-error (herdr-schema--fetch) :type 'herdr-error)))
               (should (equal "schema_unavailable" (herdr-error-code err))))))
-      (ignore-errors (delete-file herdr-schema-cache-file)))))
+      (delete-directory user-emacs-directory t))))
 
 (provide 'herdr-schema-test)
 ;;; herdr-schema-test.el ends here
