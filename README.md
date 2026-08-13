@@ -219,7 +219,7 @@ terminal buffer and popping open a full-window dashboard would be the wrong move
 | Key | Action |
 | --- | --- |
 | `RET` | go to the thing at point |
-| `TAB` | fold; fetches a workspace's worktrees on first open |
+| `TAB` | fold |
 | `c` | create menu, with its parent taken from point |
 | `w` / `t` / `n` / `a` / `%` | create workspace / tab / pane / agent / worktree directly |
 | `p` | prompt the agent at point |
@@ -290,35 +290,36 @@ make test-live   # needs a running herdr; includes the schema drift test
 make compile     # byte-compile, warnings are errors
 ```
 
-### `EXTRA_LOAD_PATH`, and what bare `make test` leaves out
+### Dependencies, and `EXTRA_LOAD_PATH`
 
-Bare `make test` and `make compile` run against `emacs -Q -L .`, which has no third-party
-packages on its load path. That is deliberate — it keeps both targets meaningful on a
-checkout with nothing installed — but it means neither one covers the dispatcher:
+Both targets run against `emacs -Q -L .`, which initialises no package system and reads no
+init file, so `magit-section` and `transient` would not be on the load path at all. Every
+target therefore loads `test/herdr-deps.el` first, which searches the package directories
+`elpaca`, `package.el` and `straight.el` use and puts the dependencies there. Not finding
+`magit-section` or `transient` is a hard error naming `EXTRA_LOAD_PATH`. Nothing skips:
+`make test` runs the whole suite or fails saying why, and `make compile` compiles every
+source file including `herdr-dispatch.el`.
 
-- **`make test`** skips every test whose dependency is missing, currently ~60 of 250,
-  including the whole `herdr-dispatch` suite. The skips are reported, not hidden, but a
-  green bare run says nothing about `herdr-dispatch.el`.
-- **`make compile`** drops `herdr-dispatch.el` from its file list entirely, since
-  byte-compiling it without `magit-section` would only fail on the `require`. So the
-  largest file in the package never meets `byte-compile-error-on-warn` on a bare run.
+This is not how it used to work, and the difference is worth stating. The dispatcher tests
+used to skip themselves when `magit-section` was absent and `make compile` used to drop
+`herdr-dispatch.el` from its file list, so a bare `make test` ran 325 tests, skipped 97 —
+every one of them a dispatcher test — and reported success. A green bare run said nothing
+about the largest file in the package.
 
-Point `EXTRA_LOAD_PATH` at the dependencies to run and compile everything. It takes a
-space-separated list of directories, and with `straight`, `elpaca` or any other manager
-they are wherever that manager builds packages:
+`EXTRA_LOAD_PATH` still works and still wins. It is put on the load path ahead of the
+search, and the search only looks for what `locate-library` cannot already answer, so
+pointing it at a particular checkout tests against that checkout:
 
 ```bash
 B=~/.emacs.d/var/elpaca/builds   # adjust to your package manager
 DEPS="$B/magit-section $B/compat $B/dash $B/llama $B/transient $B/cond-let"
 
-make test    EXTRA_LOAD_PATH="$DEPS"   # 250 tests, 0 skipped
-make compile EXTRA_LOAD_PATH="$DEPS"   # all 12 files, warnings are errors
+make test    EXTRA_LOAD_PATH="$DEPS"
+make compile EXTRA_LOAD_PATH="$DEPS"
 ```
 
-All six directories are needed: `magit-section` is the dispatcher's own dependency, and
-`compat`, `dash`, `llama`, `transient` and `cond-let` are what it and `transient` pull in
-behind it. **Run this form before sending a change** — the bare targets will not tell you
-that you broke the dispatcher.
+All six directories: `magit-section` and `transient` are what herdr requires, and `compat`,
+`dash`, `llama` and `cond-let` are what those two pull in behind them.
 
 `make test-live` includes a drift test that checks every curated command's method and parameters
 against the running server's schema. herdr is young and its API will move; when it does, that test

@@ -57,8 +57,10 @@ every node type the renderer must handle appears.")
 
 (defun herdr-dispatch-test--face-at (text)
   "Return the face on the first character of the line holding TEXT.
-`font-lock-face\\=' rather than `face\\=', because `face\\=' is the property
-fontification deletes; see `herdr-tree--faced\\='."
+Read off `font-lock-face\\=', which the dashboard writes beside `face\\='
+on every faced character; the two are asserted to agree by
+`herdr-dispatch-writes-every-face-under-both-properties\\=', which is
+also where the reason both exist is written down."
   (herdr-dispatch-test--section-at text)
   (get-text-property (line-beginning-position) 'font-lock-face))
 
