@@ -258,8 +258,14 @@ which extra calls are right is the business of the tests above.
 stub signals `inhibited-interaction' at once.  Without it the reader
 blocks on the minibuffer, which under a tty is a hang rather than a
 failure — the test only failed cleanly because batch CI closes stdin.
-And every command is run before anything is asserted, so a run names
-every offender rather than stopping at the first."
+
+Every command is run before anything is asserted, so a run names every
+offender rather than stopping at the first — and a command can fail
+either way, so both are collected.  A wrong method literal fails
+silently, leaving the method off the wire; an unstubbed prompt signals.
+Collecting only the silent kind gave a docstring that promised a full
+list and a body that still stopped at the first command to raise, which
+is the very case this sentence describes."
   (let (missing)
     (dolist (entry herdr-cmd-methods)
       (let ((command (nth 0 entry))
@@ -306,18 +312,34 @@ every offender rather than stopping at the first."
                 (lambda (req)
                   (push (alist-get 'method req) wire)
                   (cons (herdr-test-ok req '((type . "ok"))) nil))
-              (call-interactively command)
-              ;; The wait commands go out through `herdr-rpc-call-async',
-              ;; so the request may not have reached the server yet.
-              ;; Settle until it has, on a wall-clock deadline rather
-              ;; than a fixed number of turns, which under load reads as
-              ;; a regression that is not there.
-              (let ((deadline (+ (float-time) 5)))
-                (while (and (not (member method wire))
-                            (< (float-time) deadline))
-                  (accept-process-output nil 0.02))))))
-        (unless (member method wire)
-          (push (cons command wire) missing))))
+              (condition-case err
+                  (progn
+                    (call-interactively command)
+                    ;; The two wait commands go out through
+                    ;; `herdr-rpc-call-async', so their request may not
+                    ;; have reached the server when the command returns.
+                    ;; Everything else is already on the wire: the fake
+                    ;; server's filter runs inside `herdr-rpc-call''s own
+                    ;; `accept-process-output' loop.  Measured, the
+                    ;; asynchronous pair need exactly one turn and
+                    ;; everything else needs none, so the deadline below
+                    ;; is forty times what the slow case wants.  It is a
+                    ;; deadline rather than a turn count because a turn
+                    ;; count under load reads as a regression that is not
+                    ;; there, and it is one second rather than five
+                    ;; because it is paid once per command that never
+                    ;; arrives: a wholesale breakage should cost this
+                    ;; suite half a minute and produce a complete list,
+                    ;; not run into the Makefile's own deadline.
+                    (let ((deadline (+ (float-time) 1)))
+                      (while (and (not (member method wire))
+                                  (< (float-time) deadline))
+                        (accept-process-output nil 0.02))))
+                (error
+                 (push (list command method (error-message-string err))
+                       missing))))))
+        (unless (or (member method wire) (assq command missing))
+          (push (list command method (nreverse wire)) missing))))
     (should-not missing)))
 
 ;;; Confirmations must not be left on screen
