@@ -1514,6 +1514,10 @@ or every visit pays for a full re-fetch."
               (herdr-agents)
               (should-not herdr-dispatch--worktrees)
               (should (equal 4 herdr-dispatch--worktrees-generation))
+              ;; The buffer it made has to be a dispatcher, or every key
+              ;; the dashboard binds lands in fundamental-mode.
+              (should (with-current-buffer herdr-dispatch-buffer-name
+                        (derived-mode-p 'herdr-dispatch-mode)))
               ;; Already open: reopening keeps what is known.
               (setq herdr-dispatch--worktrees '(("w1" . (fresh))))
               (herdr-agents)
