@@ -403,5 +403,63 @@ way from Go to."
   (should (equal '((display-buffer-reuse-window display-buffer-same-window))
                  (default-value 'herdr-display-action))))
 
+;;; Timer teardown must cancel, not merely forget
+
+;; Setting the variables to nil is not stopping the timers, and no test
+;; that watches `herdr-term--poll-directories' can tell the difference:
+;; the poll is guarded, so a spurious later fire is swallowed and the
+;; callback count comes out the same whether or not anything was
+;; cancelled.  Measured — dropping both `cancel-timer' calls below
+;; passed the whole suite.  These assert the cancellation itself.
+
+(ert-deftest herdr-term-stop-directory-timer-cancels-both-timers ()
+  "Teardown must reach the repeating poll and the pending debounce alike.
+Either one left running keeps firing at a torn-down backend for the rest
+of the session, and the leak is invisible until something it touches is
+gone."
+  (let ((cancelled nil)
+        (repeating (run-at-time 3600 nil #'ignore))
+        (debounce (run-at-time 3600 nil #'ignore)))
+    (unwind-protect
+        (let ((herdr-term--directory-timer repeating)
+              (herdr-term--directory-debounce-timer debounce))
+          (cl-letf (((symbol-function 'cancel-timer)
+                     (lambda (timer) (push timer cancelled))))
+            (herdr-term--stop-directory-timer))
+          (should (memq repeating cancelled))
+          (should (memq debounce cancelled))
+          (should (= 2 (length cancelled)))
+          (should-not herdr-term--directory-timer)
+          (should-not herdr-term--directory-debounce-timer))
+      (cancel-timer repeating)
+      (cancel-timer debounce))))
+
+(ert-deftest herdr-term-stop-directory-timer-has-nothing-to-cancel-when-idle ()
+  "Teardown runs whether or not tracking ever started, so a nil slot must
+not be handed to `cancel-timer', which signals on one."
+  (let ((herdr-term--directory-timer nil)
+        (herdr-term--directory-debounce-timer nil)
+        (cancelled nil))
+    (cl-letf (((symbol-function 'cancel-timer)
+               (lambda (timer) (push timer cancelled))))
+      (herdr-term--stop-directory-timer))
+    (should-not cancelled)))
+
+(ert-deftest herdr-term-schedule-directory-poll-cancels-before-it-rearms ()
+  "A burst of pane events must coalesce into one poll, not arm one each."
+  (let ((pending (run-at-time 3600 nil #'ignore))
+        (cancelled nil))
+    (unwind-protect
+        (let ((herdr-term-track-directory t)
+              (herdr-term--directory-debounce-timer pending))
+          (cl-letf (((symbol-function 'cancel-timer)
+                     (lambda (timer) (push timer cancelled)))
+                    ((symbol-function 'run-at-time)
+                     (lambda (&rest _) 'replacement)))
+            (herdr-term--schedule-directory-poll))
+          (should (equal (list pending) cancelled))
+          (should (eq 'replacement herdr-term--directory-debounce-timer)))
+      (cancel-timer pending))))
+
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here
