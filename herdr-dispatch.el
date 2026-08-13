@@ -139,13 +139,13 @@ tells itself apart from a redraw of an empty session.")
 Lowercase letters are the read-only verbs; each acts on whatever the
 line under point names, so no key needs a target of its own.")
 
-(defconst herdr-dispatch-fold-indicators
-  (let ((pair (if (char-displayable-p ?▾) '(?▸ . ?▾) '(?> . ?v))))
-    (list pair pair))
+(defcustom herdr-dispatch-fold-indicators nil
   "Value `magit-section-visibility-indicators\\=' takes in the dispatcher.
+Nil, the default, picks a pair per frame; see
+`herdr-dispatch--fold-indicators\\='.
 
 The same margin characters for graphical and terminal frames, which is
-neither half of the default.  That default is
+neither half of the magit default.  That default is
 `(magit-fringe-bitmap> . magit-fringe-bitmapv)\\=' in a graphical frame —
 an arrow in the left fringe, which several themes render at such low
 contrast that it reads as nothing at all, and which is off past the
@@ -161,14 +161,33 @@ the same `▸\\=' beside a collapsed heading and `▾\\=' beside an expanded
 one.  The margin has to be wide enough to hold it: see
 `herdr-dispatch-mode\\='.  Car before cdr because that is the order
 `magit-section-maybe-update-visibility-indicator\\=' reads them in —
-the car is what a hidden section gets.")
+the car is what a hidden section gets."
+  :type '(choice (const :tag "Choose a pair for the frame" nil)
+                 (repeat (cons character character)))
+  :group 'herdr)
+
+(defun herdr-dispatch--fold-indicators ()
+  "Return the fold indicators to use, honouring the user\\='s setting.
+
+Falls back to arrows, or to ASCII where the arrows cannot be drawn.
+That question is asked here, from `herdr-dispatch-mode\\=', rather than
+once at load: under `emacs --daemon\\=' the library is loaded before any
+frame exists, so a load-time `char-displayable-p\\=' is answered against
+no display at all and the ASCII fallback is then frozen for the life of
+the session.  Asking on mode entry answers against a frame the user
+actually has.  A daemon serving a graphical and a terminal frame at once
+still gets one answer per dashboard buffer, which is the best a
+buffer-local value can do."
+  (or herdr-dispatch-fold-indicators
+      (let ((pair (if (char-displayable-p ?▾) '(?▸ . ?▾) '(?> . ?v))))
+        (list pair pair))))
 
 (define-derived-mode herdr-dispatch-mode magit-section-mode "herdr"
   "Major mode for the herdr dispatcher."
   (setq-local revert-buffer-function
               (lambda (&rest _) (herdr-dispatch-refresh t)))
   (setq-local magit-section-visibility-indicators
-              herdr-dispatch-fold-indicators)
+              (herdr-dispatch--fold-indicators))
   ;; Two columns: one for the indicator, one of air between it and the
   ;; text.  A margin of zero width silently drops margin overlays, which
   ;; would leave the indicators configured and invisible.
@@ -176,7 +195,9 @@ the car is what a hidden section gets.")
   ;; `set-window-buffer' picks the width up when the buffer is next
   ;; displayed, which covers opening the dashboard.  Windows already
   ;; showing this buffer — the mode being re-run, or reverted — keep the
-  ;; margins they were given, so they are told directly.
+  ;; margins they were given, so they are told directly.  The right margin
+  ;; is passed through at whatever the buffer already had, since this mode
+  ;; has no use for one and setting it to nil would discard the user's.
   (dolist (window (get-buffer-window-list (current-buffer) nil t))
     (set-window-margins window left-margin-width right-margin-width)))
 
@@ -188,14 +209,24 @@ when no part of it is faced already: hand it a line carrying one
 propertised field and it inserts every character unchanged, so a single
 dimmed directory would cost the heading its heading face entirely.
 Filling in the gaps first makes the two compose — the fields herdr-tree
-faced keep their faces, and everything else reads as a heading."
+faced keep their faces, and everything else reads as a heading.
+
+`font-lock-face\\=' throughout, for the reason given in
+`herdr-tree--faced\\=': `face\\=' does not survive the first fontification
+of the line.  The property has to be the same one herdr-tree used, and
+not merely a surviving one — the gaps are found by looking for where
+that property is absent, so scanning for `face\\=' over a line faced with
+`font-lock-face\\=' would find no fields at all and paint the heading face
+straight over every one of them."
   (let ((line (copy-sequence line))
         (start 0)
         (length (length line)))
     (while (< start length)
-      (let ((end (or (next-single-property-change start 'face line) length)))
-        (unless (get-text-property start 'face line)
-          (put-text-property start end 'face 'magit-section-heading line))
+      (let ((end (or (next-single-property-change start 'font-lock-face line)
+                     length)))
+        (unless (get-text-property start 'font-lock-face line)
+          (put-text-property start end
+                             'font-lock-face 'magit-section-heading line))
         (setq start end)))
     line))
 

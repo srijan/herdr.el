@@ -53,9 +53,11 @@ every node type the renderer must handle appears.")
   (oref (herdr-dispatch-test--section-at text) type))
 
 (defun herdr-dispatch-test--face-at (text)
-  "Return the face on the first character of the line holding TEXT."
+  "Return the face on the first character of the line holding TEXT.
+`font-lock-face\\=' rather than `face\\=', because `face\\=' is the property
+fontification deletes; see `herdr-tree--faced\\='."
   (herdr-dispatch-test--section-at text)
-  (get-text-property (line-beginning-position) 'face))
+  (get-text-property (line-beginning-position) 'font-lock-face))
 
 (ert-deftest herdr-dispatch-renders-every-line ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
@@ -165,12 +167,76 @@ asserted from one line: the propertised field keeps the face herdr-tree
 gave it, and the characters around it read as a heading."
   (herdr-dispatch-test-with-buffer
       (list (list 'herdr-workspace "w1"
-                  (concat "repo (1) " (propertize "/tmp/repo" 'face 'shadow))
+                  (concat "repo (1) "
+                          (propertize "/tmp/repo" 'font-lock-face 'shadow))
                   nil))
     (goto-char (point-min))
-    (should (eq 'magit-section-heading (get-text-property (point) 'face)))
+    (should (eq 'magit-section-heading
+                (get-text-property (point) 'font-lock-face)))
     (search-forward "/tmp/repo")
-    (should (eq 'shadow (get-text-property (match-beginning 0) 'face)))))
+    (should (eq 'shadow
+                (get-text-property (match-beginning 0) 'font-lock-face)))))
+
+(ert-deftest herdr-dispatch-faces-survive-being-fontified ()
+  "A face has to be written where fontification will not delete it.
+
+`magit-section-mode\\=' sets `font-lock-defaults\\=', so
+`global-font-lock-mode\\=' — on by default — turns `font-lock-mode\\=' on in
+the dashboard, and the first thing done to a region before it is
+fontified is `font-lock-default-unfontify-region\\=', which removes `face\\='
+and does not remove `font-lock-face\\='.  Every face in this buffer
+therefore used to last exactly as long as it took redisplay to reach the
+line: drawn correctly, then repainted in the default face.  No test
+caught it, because they all read the property back in the same instant
+it was written, which is the one moment it is still there.
+
+The control is what makes this test mean anything.  A field faced with
+`face\\=' is rendered beside the others and asserted to LOSE its face —
+without that, this test would pass just as happily in a buffer where
+fontification never ran at all, which is the failure mode of every test
+that tries to prove something about redisplay in batch."
+  (skip-unless (featurep 'magit-section))
+  (let ((buffer (generate-new-buffer "herdr-fontification-test")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (herdr-dispatch-mode)
+          (font-lock-mode 1)
+          (let ((inhibit-read-only t))
+            (magit-insert-section (herdr-root)
+              (herdr-dispatch--insert-nodes
+               (list
+                (list 'herdr-workspace "w1"
+                      (concat "repo (1)  "
+                              (herdr-tree--faced "/tmp/repo"
+                                                 'font-lock-comment-face))
+                      (list (list 'herdr-pane "w1:p1"
+                                  (concat (herdr-tree--faced "blocked"
+                                                             'warning)
+                                          "  "
+                                          (propertize "CONTROL"
+                                                      'face 'shadow))
+                                  nil)))))))
+          (goto-char (point-min))
+          (should (search-forward "CONTROL" nil t))
+          (should (eq 'shadow (get-text-property (match-beginning 0) 'face)))
+          (font-lock-ensure)
+          ;; The control proves fontification reached these lines.
+          (goto-char (point-min))
+          (search-forward "CONTROL")
+          (should-not (get-text-property (match-beginning 0) 'face))
+          ;; Everything herdr draws is still there.
+          (goto-char (point-min))
+          (should (eq 'magit-section-heading
+                      (get-text-property (point) 'font-lock-face)))
+          (search-forward "/tmp/repo")
+          (should (eq 'font-lock-comment-face
+                      (get-text-property (match-beginning 0) 'font-lock-face)))
+          (goto-char (point-min))
+          (search-forward "blocked")
+          (should (eq 'warning
+                      (get-text-property (match-beginning 0)
+                                         'font-lock-face))))
+      (kill-buffer buffer))))
 
 (ert-deftest herdr-dispatch-gives-every-node-its-own-section ()
   "Presentation changed; resolution did not.
@@ -1383,7 +1449,7 @@ draw, which is why the same pair is given for each; the margin must have
 room for it, or the overlay is silently dropped."
   (herdr-dispatch-test-with-dispatcher
     (should (local-variable-p 'magit-section-visibility-indicators))
-    (should (equal herdr-dispatch-fold-indicators
+    (should (equal (herdr-dispatch--fold-indicators)
                    magit-section-visibility-indicators))
     (should (equal 2 (length magit-section-visibility-indicators)))
     (dolist (pair magit-section-visibility-indicators)
@@ -1392,6 +1458,28 @@ room for it, or the overlay is silently dropped."
       (should-not (equal (car pair) (cdr pair))))
     (should (> left-margin-width 0))))
 
+(ert-deftest herdr-dispatch-fold-indicators-are-chosen-per-frame-and-settable ()
+  "Asking at load time is asking the wrong frame.
+
+`herdr-dispatch-fold-indicators\\=' used to be a `defconst\\=' whose value
+came from `char-displayable-p\\=' as the library loaded.  Under
+`emacs --daemon\\=' that runs before any frame exists, so the answer is
+given for a display nobody is looking at and the ASCII fallback is then
+frozen for the whole session — and a `defconst\\=' cannot be customised
+out of it either, unlike the magit option it replaces.  The choice is
+now made on mode entry, and the user\\='s setting wins outright."
+  (herdr-dispatch-test-with-dispatcher
+    (let ((herdr-dispatch-fold-indicators '((?+ . ?-) (?+ . ?-))))
+      (should (equal '((?+ . ?-) (?+ . ?-)) (herdr-dispatch--fold-indicators)))
+      (herdr-dispatch-mode)
+      (should (equal '((?+ . ?-) (?+ . ?-))
+                     magit-section-visibility-indicators)))
+    ;; Nil, the default, still answers with a usable pair.
+    (let ((herdr-dispatch-fold-indicators nil))
+      (dolist (pair (herdr-dispatch--fold-indicators))
+        (should (characterp (car pair)))
+        (should (characterp (cdr pair)))))))
+
 (ert-deftest herdr-dispatch-draws-fold-indicators-on-a-fresh-render ()
   "magit writes indicators in `magit-section-show' and
 `magit-section-hide' and nowhere else, so a buffer that has only ever
@@ -1399,7 +1487,7 @@ been drawn has none — configuring the option is not the same as showing
 one.  A leaf has nothing to fold and must stay unmarked."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
-    (should (equal (cdar herdr-dispatch-fold-indicators)
+    (should (equal (cdar (herdr-dispatch--fold-indicators))
                    (herdr-dispatch-test--fold-glyph "web")))
     (should-not (herdr-dispatch-test--fold-glyph "w1:p1"))))
 
@@ -1421,12 +1509,12 @@ glyph."
     (search-forward "web")
     (magit-section-hide (magit-current-section))
     (should (herdr-dispatch-test--hidden-p "w1:p1"))
-    (should (equal (caar herdr-dispatch-fold-indicators)
+    (should (equal (caar (herdr-dispatch--fold-indicators))
                    (herdr-dispatch-test--fold-glyph "web")))
     (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
     (herdr-dispatch-refresh)
     (should (herdr-dispatch-test--hidden-p "w1:p1"))
-    (should (equal (caar herdr-dispatch-fold-indicators)
+    (should (equal (caar (herdr-dispatch--fold-indicators))
                    (herdr-dispatch-test--fold-glyph "web")))))
 
 (ert-deftest herdr-dispatch-highlights-the-section-at-point ()

@@ -62,8 +62,18 @@ nor the unchanged-tree check in `herdr-dispatch-refresh\\=' can see them.
 
 The magit faces are the exception and stay in the renderer: herdr-tree
 is loadable — and tested — without magit-section on the load path, so it
-cannot name anything magit-section defines."
-  (if face (propertize text 'face face) text))
+cannot name anything magit-section defines.
+
+The property is `font-lock-face\\=' rather than `face\\=', which is not a
+style choice.  `magit-section-mode\\=' sets `font-lock-defaults\\=', so
+`global-font-lock-mode\\=' turns `font-lock-mode\\=' on in the dashboard,
+and the first thing jit-lock does to a region is
+`font-lock-default-unfontify-region\\=' — which removes `face\\=' and does
+not remove `font-lock-face\\='.  A `face\\=' here therefore survives only
+until the line is first displayed, which is the whole of the time nobody
+is looking at it.  magit uses `font-lock-face\\=' throughout for the same
+reason."
+  (if face (propertize text 'font-lock-face face) text))
 
 (defconst herdr-tree-noteworthy-statuses '("blocked" "working" "done")
   "Statuses worth showing on a collapsed section.
@@ -149,9 +159,7 @@ words."
            (format (format "%%s %%-%ds %%-8s %%-8s %%s" width)
                    (if shell
                        (herdr-tree--faced "~" 'shadow)
-                     (herdr-tree--faced (herdr-tree-glyph
-                                         (alist-get 'agent_status pane))
-                                        face))
+                     (herdr-tree--faced (herdr-tree-glyph status) face))
                    (herdr-tree--agent-label state pane)
                    (herdr-tree--faced status face)
                    (herdr-tree--faced id 'shadow)

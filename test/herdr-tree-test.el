@@ -99,8 +99,10 @@ than duplicated beside it."
 ;;; Faces
 
 (defun herdr-tree-test--face-of (line text)
-  "Return the face LINE carries where TEXT begins in it."
-  (get-text-property (string-match text line) 'face line))
+  "Return the face LINE carries where TEXT begins in it.
+`font-lock-face\\=' rather than `face\\=', because `face\\=' is the property
+fontification deletes; see `herdr-tree--faced\\='."
+  (get-text-property (string-match text line) 'font-lock-face line))
 
 (ert-deftest herdr-tree-colours-a-pane-row-by-its-status ()
   "Status is the one field worth finding without reading.
@@ -120,9 +122,9 @@ share one, or the strip says only \"something is happening\"."
                     (herdr-tree-status-face "blocked")))
     ;; The glyph leads with the same colour as the word it stands for.
     (should (eq (herdr-tree-status-face "working")
-                (get-text-property 0 'face working)))
+                (get-text-property 0 'font-lock-face working)))
     (should (eq (herdr-tree-status-face "blocked")
-                (get-text-property 0 'face blocked)))))
+                (get-text-property 0 'font-lock-face blocked)))))
 
 (ert-deftest herdr-tree-dims-the-fields-that-are-not-the-news ()
   "The pane id and the terminal title are context, not the message.
@@ -140,7 +142,7 @@ back in."
                 (herdr-tree-test--face-of pane "fixing tests")))
     ;; The rollup glyph on a collapsed heading keeps its status colour.
     (should (eq (herdr-tree-status-face "blocked")
-                (get-text-property (1- (length line)) 'face line)))))
+                (get-text-property (1- (length line)) 'font-lock-face line)))))
 
 (ert-deftest herdr-tree-faces-do-not-make-two-equal-trees-differ ()
   "Text properties must stay invisible to `equal\\='.
