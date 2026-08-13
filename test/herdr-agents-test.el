@@ -3,6 +3,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 (require 'herdr-tree)
 (require 'herdr-agents)
 
@@ -92,6 +93,78 @@ every mode line."
 (ert-deftest herdr-agents-mode-line-string-is-risky ()
   "Without this its keymap and mouse properties are stripped."
   (should (get 'herdr-agents-mode-line-string 'risky-local-variable)))
+
+;;; Notifications fire on a transition, not on an observation
+
+(ert-deftest herdr-agents-notifies-only-when-a-status-changes ()
+  "The first sight of a status is not a change into it.
+
+`herdr-agents--maybe-notify' runs from `herdr-state-change-hook', so
+without its `previous' guard every agent already sitting blocked would
+announce itself the moment Emacs first heard about it, and again after
+every restart and every resync.  The function had no test at all, so
+dropping that guard passed the suite.
+
+The whole sequence is walked, because each step is a different branch:
+first sight, a real transition, the same status seen again, and a
+transition into a status nobody asked to hear about."
+  (let ((herdr-agents--last-status (make-hash-table :test 'equal))
+        (herdr-notify-statuses '("blocked" "done"))
+        notified)
+    (cl-letf (((symbol-function 'herdr-agents--notify)
+               (lambda (title body) (push (cons title body) notified))))
+      (let ((herdr-state--current
+             (herdr-agents-test--state '("w1:p1" "claude" "working"))))
+        (herdr-agents--maybe-notify))
+      (should-not notified)
+      (let ((herdr-state--current
+             (herdr-agents-test--state '("w1:p1" "claude" "blocked"))))
+        (herdr-agents--maybe-notify))
+      (should (= 1 (length notified)))
+      (should (string-match-p "claude" (car (car notified))))
+      (should (string-match-p "blocked" (car (car notified))))
+      ;; Seen again is not another transition.
+      (let ((herdr-state--current
+             (herdr-agents-test--state '("w1:p1" "claude" "blocked"))))
+        (herdr-agents--maybe-notify))
+      (should (= 1 (length notified)))
+      ;; A transition into a status nobody asked about stays quiet, but
+      ;; is still recorded, so the next one back is a transition again.
+      (let ((herdr-state--current
+             (herdr-agents-test--state '("w1:p1" "claude" "idle"))))
+        (herdr-agents--maybe-notify))
+      (should (= 1 (length notified)))
+      (let ((herdr-state--current
+             (herdr-agents-test--state '("w1:p1" "claude" "done"))))
+        (herdr-agents--maybe-notify))
+      (should (= 2 (length notified))))))
+
+(ert-deftest herdr-agents-notifies-nothing-when-nothing-is-opted-into ()
+  "Nil `herdr-notify-statuses' means never, and must not even record —
+opting in later should then treat what is already on screen as history
+rather than as news."
+  (let ((herdr-agents--last-status (make-hash-table :test 'equal))
+        (herdr-notify-statuses nil)
+        notified)
+    (cl-letf (((symbol-function 'herdr-agents--notify)
+               (lambda (&rest _) (push t notified))))
+      (let ((herdr-state--current
+             (herdr-agents-test--state '("w1:p1" "claude" "blocked"))))
+        (herdr-agents--maybe-notify))
+      (should-not notified))))
+
+(ert-deftest herdr-agents-mode-line-mode-unhooks-itself-when-turned-off ()
+  "Leaving the refresh on the state hook keeps recomputing a segment
+nothing shows, for the rest of the session."
+  (let ((herdr-state-change-hook nil)
+        (global-mode-string nil))
+    (cl-letf (((symbol-function 'herdr-agents--refresh-segment) #'ignore))
+      (herdr-agents-mode-line-mode 1)
+      (should (memq #'herdr-agents--refresh-segment herdr-state-change-hook))
+      (should (memq 'herdr-agents-mode-line-string global-mode-string))
+      (herdr-agents-mode-line-mode -1)
+      (should-not (memq #'herdr-agents--refresh-segment herdr-state-change-hook))
+      (should-not (memq 'herdr-agents-mode-line-string global-mode-string)))))
 
 (provide 'herdr-agents-test)
 ;;; herdr-agents-test.el ends here
