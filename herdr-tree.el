@@ -299,9 +299,12 @@ shows, and erring the other way costs the workspace."
   (and (alist-get 'is_linked_worktree worktree) t))
 
 (defun herdr-tree--worktree-node (worktree)
-  "Return the node for WORKTREE.
-A worktree already open as a workspace is shown above as that workspace,
-so it is marked rather than repeated."
+  "Return the node for WORKTREE, which is a linked worktree.
+
+`herdr-tree--worktrees-node\\=' has already dropped the repository\\='s own
+checkout, so `open_workspace_id\\=' here means what it appears to mean: a
+worktree herdr has opened as a workspace of its own.  That workspace is
+shown above, so the row is marked rather than repeated."
   (let ((open (alist-get 'open_workspace_id worktree)))
     (list 'herdr-worktree (alist-get 'path worktree)
           (string-trim-right
