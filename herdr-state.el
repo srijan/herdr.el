@@ -19,11 +19,23 @@
 ;; Connection B carries per-pane `pane.agent_status_changed'
 ;; subscriptions and is rebuilt whenever the set of panes changes.
 ;;
-;; Connection B exists because the global `pane_updated' event coalesces:
-;; driving a pane through working, blocked and idle produced three
-;; per-pane events but only one `pane_updated'.  Relying on the global
-;; stream alone would silently drop status transitions, which is exactly
-;; what the agents buffer is for.
+;; Connection B exists because `pane_updated' is title- and
+;; output-coupled, so it stops firing exactly when an agent stops
+;; working — which is the transition the agents buffer exists to show.
+;; While an agent is busy the global event fires about 7.5 times a
+;; second and carries a full PaneInfo, `agent_status' included; the
+;; moment it goes idle its title stops animating and its output stops,
+;; and nothing announces the change until something else disturbs the
+;; pane.  Measured lag from B reporting `idle' to A first reflecting it:
+;; 6.18s and 31.79s.
+;;
+;; (It does not coalesce, as the comment here used to claim.  The
+;; conclusion was right for the wrong reason, which is worse than being
+;; wrong, because it survives being checked against the wrong thing.)
+;;
+;; Structurally there is no alternative either: `pane.agent_status_changed'
+;; is one of only three pane-scoped subscription types and has no global
+;; form to subscribe to.
 ;;
 ;; Events missed during a disconnect cannot be replayed, so every
 ;; reconnect is followed by a full resync rather than an attempt to
