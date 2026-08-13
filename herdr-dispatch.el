@@ -596,12 +596,29 @@ whole instead."
 (defun herdr-dispatch--invalidate-worktrees (kind _data)
   "Drop the worktree cache when KIND changed the set of worktrees.
 Also unhooks from `herdr-state-change-hook\\=' once the dispatcher's buffer
-is gone, matching `herdr-dispatch--refresh-hook\\='.  Whole-cache rather
-than per-workspace: the events carry a worktree, not the workspace whose
-listing it belongs to, and the refetch is one asynchronous call per
-workspace."
+is gone, matching `herdr-dispatch--refresh-hook\\='.
+
+`workspace_closed\\=' belongs on this list even though it announces no
+worktree.  A cached listing outlived the workspace it described for the
+rest of the session, and `herdr-dispatch--worktree-at-point\\=' flattens
+every cached listing together before searching it, so a dead
+workspace\\='s entry could still supply the record a worktree row
+resolved to.
+
+Whole-cache rather than the closing workspace\\='s entry alone, which is
+the arrangement the worktree events already have and for one more
+reason besides theirs.  Theirs: the events carry a worktree, not the
+workspace whose listing it belongs to.  This one\\='s: every OTHER
+workspace\\='s listing carries `open_workspace_id\\=', so when a worktree
+workspace closes, its parent repository\\='s cached listing goes on
+saying \"open as wX\" for a workspace that no longer exists — and
+dropping only the closing workspace\\='s own entry would leave exactly
+that stale claim in place, on the row a user would then press RET on.
+
+The cost is one asynchronous `worktree.list\\=' per remaining workspace,
+on an event that fires when a workspace closes and at no other time."
   (when (member kind '("worktree_created" "worktree_opened"
-                       "worktree_removed"))
+                       "worktree_removed" "workspace_closed"))
     (herdr-dispatch--forget-worktrees))
   (unless (get-buffer herdr-dispatch-buffer-name)
     (remove-hook 'herdr-state-change-hook #'herdr-dispatch--invalidate-worktrees)))
