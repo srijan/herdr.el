@@ -127,22 +127,24 @@ than one extra round trip, and the cache can drift."
 
 (defun herdr-select--available-shell-ids (state)
   "Return the ids of panes in STATE that `agent.start' can take over.
-A pane is available when nothing real is running in it: it has no agent
-at all, or only the adopted-shell label.  Panes hosting a real agent are
-occupied, which is what `agent.start' rejects as \"not an available
-shell\"."
+A pane is available only when it has no agent at all.  The server
+refuses every pane carrying a reported agent — the adopted-shell label
+included, since adoption reports one — with \"not an available shell\",
+so an adopted shell offered here would buy nothing but that rejection.
+Reaching such a pane is still possible: release it, or take the
+`herdr-select-create-new-shell' entry and get a pane with no agent on
+it."
   (mapcar (lambda (pane) (alist-get 'pane_id pane))
-          (seq-filter (lambda (pane)
-                        (or (null (alist-get 'agent pane))
-                            (herdr-state-shell-pane-p pane)))
+          (seq-remove (lambda (pane) (alist-get 'agent pane))
                       (herdr-state-panes state))))
 
 (defun herdr-select-available-shell (&optional prompt)
   "Read where `agent.start' should run: an idle pane, or a fresh shell.
-Panes already running an agent are omitted, so the choice cannot land on
-a busy pane.  A trailing `herdr-select-create-new-shell' entry is always
-offered, so the picker never dead-ends even when every pane is busy —
-where the old behaviour was to error and send you off to split by hand.
+Panes carrying any agent are omitted, so the choice cannot land on one
+the server would refuse.  A trailing `herdr-select-create-new-shell'
+entry is always offered, so the picker never dead-ends even when every
+pane is busy — where the old behaviour was to error and send you off to
+split by hand.
 
 Returns a pane id, or the symbol `:create-new' when that entry is chosen;
 the caller splits a pane for it."

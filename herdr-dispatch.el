@@ -785,31 +785,106 @@ to the directory of the workspace at point."
                       `((label . ,(unless (string-empty-p label) label))
                         (focus . t)))))))
 
+(defun herdr-dispatch--first-pane-of (state key id)
+  "Return the id of the first pane in STATE whose KEY field equals ID.
+Nil when ID is nil, so this composes into a fallback chain."
+  (when id
+    (alist-get 'pane_id
+               (seq-find (lambda (pane) (equal id (alist-get key pane)))
+                         (herdr-state-panes state)))))
+
+(defun herdr-dispatch--split-target ()
+  "Return the pane a split at point should target, or nil.
+
+`pane.split' needs a pane, and most lines in the dashboard are not one,
+so a container resolves to a pane it holds: pane at point, else the
+first pane of the tab at point, else the first pane of the workspace at
+point.
+
+That last step is not redundant with the tab step.  A workspace with a
+single tab is rendered flattened — `herdr-tree' drops the tab level
+entirely and hangs the panes off the workspace — so a workspace heading
+in that shape encloses no `herdr-tab' section at all, and a chain that
+stops at tabs finds nothing on the one workspace shape that is most
+common.  Walking to the workspace is what makes the answer independent
+of which shape the tree happened to render."
+  (let ((state (herdr-state-current)))
+    (or (herdr-dispatch--value-at-point 'herdr-pane)
+        (herdr-dispatch--first-pane-of
+         state 'tab_id (herdr-dispatch--value-at-point 'herdr-tab))
+        (herdr-dispatch--first-pane-of
+         state 'workspace_id (herdr-dispatch--value-at-point 'herdr-workspace)))))
+
+(defun herdr-dispatch--require-split-target ()
+  "Return the pane a split at point should target, or refuse."
+  (or (herdr-dispatch--split-target)
+      (user-error "herdr: no pane here to split")))
+
+(defun herdr-dispatch--free-pane-at-point ()
+  "Return the pane at point when `agent.start' would take it, else nil.
+
+Only a pane with no agent at all qualifies.  The server refuses any pane
+carrying a reported agent — an adopted shell\\='s `herdr-shell-agent-name\\='
+label included — as \"not an available shell\", which is the
+`agent_pane_busy' this answer exists to keep the user away from.
+
+A pane on screen that the cache does not know is treated as unusable
+rather than assumed free: the cache is what the dashboard was drawn
+from, so a pane missing from it means the drawing is stale, and guessing
+free there is precisely the guess that produces the rejection."
+  (when-let* ((id (herdr-dispatch--value-at-point 'herdr-pane))
+              (pane (herdr-state-pane (herdr-state-current) id)))
+    (unless (alist-get 'agent pane) id)))
+
+(defun herdr-dispatch--read-agent-name (kind)
+  "Read the name for a new agent of KIND, defaulting to KIND.
+
+`agent.start' requires a name, so this prompt cannot be skipped — but it
+can cost one keystroke.  Terminal herdr never asks because running the
+agent yourself goes through detection, which names nothing; this is the
+other path, and the API makes the name mandatory on it.  KIND is the
+name you would have picked anyway for the first agent of its kind, and
+`agent.rename' is there for the rest."
+  (let ((name (read-string (format-prompt "Agent name" kind) nil nil kind)))
+    (if (string-empty-p name) kind name)))
+
 (herdr-dispatch-defverb herdr-dispatch-create-pane ()
-  "Split a pane in the tab at point.
-pane.split needs a pane to split, so a tab section splits its first."
-  (let ((target (or (herdr-dispatch--value-at-point 'herdr-pane)
-                    (when-let* ((tab (herdr-dispatch--value-at-point 'herdr-tab)))
-                      (alist-get 'pane_id
-                                 (seq-find (lambda (pane)
-                                             (equal tab (alist-get 'tab_id pane)))
-                                           (herdr-state-panes
-                                            (herdr-state-current))))))))
-    (unless target (user-error "herdr: no pane here to split"))
-    (herdr-cmd--follow-new-pane
-     (herdr-cmd--created-pane-id
-      (herdr-rpc-call "pane.split" `((direction . "right")
-                                     (target_pane_id . ,target)
-                                     (focus . t)))))))
+  "Split a new pane beside whatever pane point resolves to.
+See `herdr-dispatch--split-target' for how a workspace or tab heading
+resolves to one."
+  (herdr-cmd--follow-new-pane
+   (herdr-cmd--created-pane-id
+    (herdr-rpc-call "pane.split"
+                    `((direction . "right")
+                      (target_pane_id . ,(herdr-dispatch--require-split-target))
+                      (focus . t))))))
 
 (herdr-dispatch-defverb herdr-dispatch-create-agent ()
-  "Start an agent in the pane at point."
+  "Start an agent in the pane at point, or in a fresh pane beside it.
+
+The pane at point is used only when it has no agent.  Anywhere else —
+a busy pane, an adopted `shell\\=', a tab or workspace heading, a
+worktree row — a new pane is split for the agent instead, so `a\\=' has an
+answer everywhere in the buffer.  It used to refuse every line that was
+not a free pane, which is how pressing it on a shell pane reached the
+server only to be told the pane was busy.
+
+The split goes through `herdr-cmd--split-new-shell', which deliberately
+does not adopt the pane it makes: adoption reports an agent, and a pane
+with a reported agent is the one thing `agent.start' will not take.
+`herdr-agent-start' focuses and shows the pane once the agent is running,
+so nothing is created invisibly.
+
+Both prompts come before the split, so abandoning either leaves no
+orphan pane behind."
   (let* ((args (herdr-dispatch--args))
-         (pane (herdr-dispatch--require 'herdr-pane "a pane"))
          (kind (or (herdr-dispatch--arg args "--kind")
                    (completing-read "Agent kind: " herdr-agent-kinds nil nil)))
          (name (or (herdr-dispatch--arg args "--label")
-                   (read-string "Agent name: "))))
+                   (herdr-dispatch--read-agent-name kind)))
+         (pane (or (herdr-dispatch--free-pane-at-point)
+                   (herdr-cmd--split-new-shell
+                    (herdr-dispatch--require-split-target)))))
     (herdr-agent-start name kind pane)))
 
 (herdr-dispatch-defverb herdr-dispatch-create-worktree ()

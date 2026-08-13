@@ -194,13 +194,18 @@ follow Emacs."
     (should (equal '("w1:p2" "w1:p3")
                    (herdr-select--available-shell-ids (herdr-state-current))))))
 
-(ert-deftest herdr-select-available-shell-counts-adopted-shells-as-free ()
-  "An adopted shell wears a label but runs no agent, so it stays available."
+(ert-deftest herdr-select-available-shell-excludes-adopted-shells ()
+  "An adopted shell runs no agent, but it does carry a reported one, and
+`agent.start' refuses every pane that carries one — measured against the
+server, which answers `agent_pane_busy' for an adopted `shell' exactly as
+it does for a real agent.  Offering it therefore only buys a rejection.
+The create-new entry is the way out, not this pane."
   (let ((herdr-shell-agent-name "herdr-shell"))
     (herdr-select-test-with-state
         `(((pane_id . "w1:p1") (agent . ,herdr-shell-agent-name))
-          ((pane_id . "w1:p2") (agent . "codex")))
-      (should (equal '("w1:p1")
+          ((pane_id . "w1:p2") (agent . "codex"))
+          ((pane_id . "w1:p3") (agent . nil)))
+      (should (equal '("w1:p3")
                      (herdr-select--available-shell-ids
                       (herdr-state-current)))))))
 

@@ -511,18 +511,28 @@ about.  TIMEOUT is in seconds."
                   (or (alist-get 'agent_status result) "done")))))
     (message "herdr: watching agent %s" agent)))
 
-(defun herdr-cmd--split-new-shell ()
-  "Split the current pane to the right and return the new pane's id.
+(defun herdr-cmd--split-new-shell (&optional target)
+  "Split TARGET, or the current pane, and return the new pane's id.
 
 Uses the raw `pane.split' rather than `herdr-pane-split-right' on
-purpose: the interactive command would adopt the new pane as a shell and
-flash its buffer, but `agent.start' is about to turn it into an agent, so
-that buffer would only be replaced.  Starting the agent and then focusing
-it shows the pane once, correctly labelled."
+purpose, and this is the whole reason the function exists: the
+interactive command would adopt the new pane as a shell, and an adopted
+pane carries a reported agent, which is exactly what `agent.start'
+refuses as \"not an available shell\".  Adopting here would therefore not
+merely flash a buffer that the agent replaces a moment later — it would
+make the start that follows fail.  Starting the agent and then focusing
+it shows the pane once, correctly labelled.
+
+TARGET is for callers that already know which pane to split.  Without
+one, `herdr-select-current-target' answers for the buffer the command
+was invoked from, which in the dispatcher is `*herdr-agents*' — a buffer
+fronting no pane, so the answer falls through to herdr's server-side
+focus rather than the line under point."
   (herdr-cmd--created-pane-id
    (herdr-rpc-call "pane.split"
                    `((direction . "right")
-                     (target_pane_id . ,(herdr-select-current-target))
+                     (target_pane_id . ,(or target
+                                            (herdr-select-current-target)))
                      (focus . t)))))
 
 (defun herdr-agent-start (name kind &optional pane-id)

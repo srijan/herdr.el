@@ -5,6 +5,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'herdr-tree)
+(require 'herdr-test-helper)
 
 ;; magit-section is a hard dependency of herdr-dispatch and is not on the
 ;; load path under `emacs -Q -L .', which is what `make test' uses.  The
@@ -1851,24 +1852,200 @@ same contract has to be reasserted here rather than inherited."
         (herdr-dispatch-create-workspace)
         (should (equal '("/tmp/proj" "proj") called))))))
 
-(ert-deftest herdr-dispatch-create-agent-starts-in-the-pane-at-point ()
-  "The agent kind and name come from the transient's arguments when set,
-skipping both prompts."
-  (skip-unless (featurep 'magit-section))
-  (let ((called nil)
+;;; Starting an agent from anywhere in the tree
+
+(defconst herdr-dispatch-test--start-nodes
+  '((herdr-workspace "w1" "herdr.el  /tmp/herdr.el  3 panes"
+     ((herdr-pane "w1:p1" "> claude working w1:p1" nil)
+      (herdr-pane "w1:p2" "· shell           w1:p2" nil)
+      (herdr-pane "w1:p3" "  shell           w1:p3" nil)))
+    (herdr-workspace "w2" "api  /tmp/api  2 panes"
+     ((herdr-tab "w2:t1" "main  1 panes"
+       ((herdr-pane "w2:p1" "  shell           w2:p1" nil)))
+      (herdr-tab "w2:t2" "spike  1 panes"
+       ((herdr-pane "w2:p2" "· gemini idle w2:p2" nil))))))
+  "A tree holding every case `a\\=' has to answer for.
+
+`w1\\=' is the flattened single-tab shape, so its heading encloses no
+`herdr-tab\\=' section at all — the case the split-target chain used to
+dead-end on.  Its panes are, in order, one running a real agent, one
+adopted as a shell, and one with no agent.  `w2\\=' keeps its tab level.")
+
+(defconst herdr-dispatch-test--start-snapshot
+  '((workspaces . (((workspace_id . "w1") (label . "herdr.el"))
+                   ((workspace_id . "w2") (label . "api"))))
+    (tabs . (((tab_id . "w1:t1") (workspace_id . "w1"))
+             ((tab_id . "w2:t1") (workspace_id . "w2"))
+             ((tab_id . "w2:t2") (workspace_id . "w2"))))
+    (panes . (((pane_id . "w1:p1") (workspace_id . "w1") (tab_id . "w1:t1")
+               (agent . "claude") (agent_status . "working"))
+              ;; Adopted: no agent is running in it, but `pane.report_agent'
+              ;; has put a label on it, and that is what `agent.start'
+              ;; refuses.
+              ((pane_id . "w1:p2") (workspace_id . "w1") (tab_id . "w1:t1")
+               (agent . "shell") (agent_status . "idle"))
+              ((pane_id . "w1:p3") (workspace_id . "w1") (tab_id . "w1:t1"))
+              ((pane_id . "w2:p1") (workspace_id . "w2") (tab_id . "w2:t1"))
+              ((pane_id . "w2:p2") (workspace_id . "w2") (tab_id . "w2:t2")
+               (agent . "gemini")))))
+  "The state `herdr-dispatch-test--start-nodes\\=' was drawn from.
+Real state rather than mocked accessors, for the reason given in
+`herdr-dispatch-create-pane-resolves-a-tab-to-one-of-its-panes\\='.")
+
+(defmacro herdr-dispatch-test-with-start-tree (&rest body)
+  "Render the agent-start fixture over its own state and run BODY there."
+  (declare (indent 0) (debug t))
+  `(let ((herdr-state--current
+          (herdr-state-from-snapshot herdr-dispatch-test--start-snapshot)))
+     (herdr-dispatch-test-with-buffer herdr-dispatch-test--start-nodes
+       ,@body)))
+
+(ert-deftest herdr-dispatch-create-agent-starts-in-a-free-pane-at-point ()
+  "A pane with no agent is the one case that needs no new pane, so
+nothing may be split when point is on one.  The kind and name come from
+the transient's arguments when set, skipping both prompts."
+  (let ((calls nil)
+        (started nil)
         (transient-current-command 'herdr-dispatch-create))
-    (cl-letf (((symbol-function 'herdr-agent-start)
-               (lambda (name kind pane) (setq called (list name kind pane))))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (method params) (push (cons method params) calls) nil))
+              ((symbol-function 'herdr-agent-start)
+               (lambda (name kind pane) (setq started (list name kind pane))))
               ((symbol-function 'transient-args)
                (lambda (_) '("--kind=claude" "--label=scout")))
               ((symbol-function 'completing-read)
                (lambda (&rest _) (error "should not prompt for kind")))
               ((symbol-function 'read-string)
                (lambda (&rest _) (error "should not prompt for name"))))
-      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-        (search-forward "w1:p2")
+      (herdr-dispatch-test-with-start-tree
+        (search-forward "w1:p3")
         (herdr-dispatch-create-agent)
-        (should (equal '("scout" "claude" "w1:p2") called))))))
+        (should (equal '("scout" "claude" "w1:p3") started))
+        (should-not (assoc "pane.split" calls))))))
+
+(ert-deftest herdr-dispatch-create-agent-splits-when-the-pane-at-point-is-taken ()
+  "`agent.start\\=' refuses any pane carrying a reported agent — the
+adopted-shell label included, which is the `agent_pane_busy\\=' the user
+hit by pressing `a\\=' on a `shell*\\=' pane.  So a taken pane is not a
+target to retry but a pane to split beside, and the agent starts in what
+the split returns.
+
+Both flavours of taken are checked: a real agent, and an adopted shell
+that runs nothing at all.  The second is the reported case and the one a
+\"has no agent running\" test would wave through."
+  (dolist (pane '("w1:p1" "w1:p2"))
+    (let ((target nil)
+          (started nil)
+          (transient-current-command 'herdr-dispatch-create))
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (_method params)
+                   (setq target (alist-get 'target_pane_id params))
+                   '((pane . ((pane_id . "w1:p9"))))))
+                ((symbol-function 'herdr-agent-start)
+                 (lambda (name kind pane) (setq started (list name kind pane))))
+                ((symbol-function 'transient-args)
+                 (lambda (_) '("--kind=claude" "--label=scout"))))
+        (herdr-dispatch-test-with-start-tree
+          (search-forward pane)
+          (herdr-dispatch-create-agent)
+          (should (equal pane target))
+          (should (equal '("scout" "claude" "w1:p9") started)))))))
+
+(ert-deftest herdr-dispatch-create-agent-works-on-a-flattened-workspace-heading ()
+  "A single-tab workspace is rendered with its tab level dropped, so its
+heading encloses no `herdr-tab\\=' section: a split target resolved
+through tabs alone finds nothing there and `a\\=' refuses on the commonest
+workspace shape in the buffer.  The workspace's own first pane is the
+answer."
+  (let ((target nil)
+        (started nil)
+        (transient-current-command 'herdr-dispatch-create))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (_method params)
+                 (setq target (alist-get 'target_pane_id params))
+                 '((pane . ((pane_id . "w1:p9"))))))
+              ((symbol-function 'herdr-agent-start)
+               (lambda (name kind pane) (setq started (list name kind pane))))
+              ((symbol-function 'transient-args)
+               (lambda (_) '("--kind=claude" "--label=scout"))))
+      (herdr-dispatch-test-with-start-tree
+        (search-forward "herdr.el")
+        (herdr-dispatch-create-agent)
+        (should (equal "w1:p1" target))
+        (should (equal '("scout" "claude" "w1:p9") started))))))
+
+(ert-deftest herdr-dispatch-create-agent-never-adopts-the-pane-it-creates ()
+  "Adoption is `pane.report_agent\\=', and a pane with a reported agent is
+the one thing `agent.start\\=' will not take — so adopting the pane just
+split would reintroduce the very rejection this path exists to avoid.
+Asserted against the wire, because the failure is a call that should not
+be made and no return value would show it: the whole conversation is the
+split, the start, and the focus that surfaces it."
+  (skip-unless (featurep 'magit-section))
+  (let ((methods nil)
+        (transient-current-command 'herdr-dispatch-create))
+    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) t))
+              ((symbol-function 'transient-args)
+               (lambda (_) '("--kind=claude" "--label=scout"))))
+      (herdr-test-with-server
+          (lambda (req)
+            (let ((method (alist-get 'method req)))
+              (push method methods)
+              (cons (herdr-test-ok
+                     req (if (equal method "pane.split")
+                             '((type . "pane_info")
+                               (pane . ((pane_id . "w1:p9"))))
+                           '((type . "ok"))))
+                    nil)))
+        (herdr-dispatch-test-with-start-tree
+          (search-forward "w1:p2")
+          (herdr-dispatch-create-agent))))
+    (should (equal '("pane.split" "agent.start" "pane.focus")
+                   (reverse methods)))))
+
+(ert-deftest herdr-dispatch-create-agent-defaults-the-name-to-the-kind ()
+  "`agent.start\\=' requires a name, so the prompt cannot be skipped — but
+RET must be enough to answer it.  Both halves are checked: the prompt
+offers the kind as its default, and a name that comes back empty is
+still the kind rather than an empty string on the wire."
+  (dolist (answer '(:take-the-default ""))
+    (let ((started nil)
+          (prompt nil))
+      (cl-letf (((symbol-function 'herdr-agent-start)
+                 (lambda (name kind pane) (setq started (list name kind pane))))
+                ((symbol-function 'transient-args) (lambda (_) nil))
+                ((symbol-function 'completing-read) (lambda (&rest _) "codex"))
+                ((symbol-function 'read-string)
+                 (lambda (given &optional _initial _history default &rest _)
+                   (setq prompt given)
+                   (if (eq answer :take-the-default) default answer))))
+        (herdr-dispatch-test-with-start-tree
+          (search-forward "w1:p3")
+          (herdr-dispatch-create-agent)
+          (should (equal '("codex" "codex" "w1:p3") started))
+          (should (string-match-p "codex" prompt)))))))
+
+(ert-deftest herdr-dispatch-create-pane-splits-the-first-pane-of-a-flattened-workspace ()
+  "`herdr-tree\\=' renders a single-tab workspace flattened, dropping the
+tab level, so on such a heading there is no `herdr-tab\\=' section to walk
+to and a chain that ends at tabs finds nothing: `n\\=' answered \"no pane
+here to split\" on the commonest workspace shape there is.  Every other
+create-pane test uses a multi-tab fixture, which is exactly why this went
+unseen.
+
+A `user-error\\=' fails this test rather than being swallowed, since
+`herdr-dispatch--protect\\=' only handles `herdr-error\\='."
+  (let ((target nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (_method params)
+                 (setq target (alist-get 'target_pane_id params))
+                 nil))
+              ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore)
+              ((symbol-function 'transient-args) (lambda (_) nil)))
+      (herdr-dispatch-test-with-start-tree
+        (search-forward "herdr.el")
+        (herdr-dispatch-create-pane)
+        (should (equal "w1:p1" target))))))
 
 (ert-deftest herdr-dispatch-binds-the-create-verbs ()
   (skip-unless (featurep 'magit-section))
