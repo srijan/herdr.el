@@ -644,6 +644,33 @@ forgets."
                         (alist-get 'path worktree)
                         "at point")))))
 
+(defun herdr-dispatch--refuse-worktrees-heading (complaint)
+  "Refuse a verb on a `worktrees (N)\\=' heading, COMPLAINT saying which.
+
+The heading names a list, not a herdr object.  Every verb in this buffer
+acts on something with an id — a pane, a tab, a workspace, or the
+workspace a worktree is open as — and this section has none: it is a
+container this file draws around a cached `worktree.list\\=' reply, and
+its value is the id of the workspace it was fetched for, which is not
+the same claim at all.
+
+Refusing rather than doing nothing is the point.
+`herdr-dispatch--value-at-point\\=' walks up from point, so a verb with no
+arm for this type does not fail — it silently finds the enclosing
+workspace and acts on that.  Verified before this existed: `k\\=', `R\\='
+and `f\\=' on a `worktrees (N)\\=' heading reached `workspace.close\\=',
+`workspace.rename\\=' and `workspace.focus\\=', each naming the repository
+whose worktrees the heading was counting.  That is the same defect shape
+as the one `herdr-tree-linked-worktree-p\\=' describes, one line above
+these arms in the same `cond\\='.
+
+`RET\\=' and `f\\=' refuse for that reason too, rather than approximating.
+Sending them to the enclosing workspace would be the fall-through
+dressed up as a decision, and there is no other server-side object here
+to go to.  The heading\\='s one useful action is folding, which
+\\[magit-section-toggle] already does — hence the hint."
+  (user-error "herdr: %s; TAB folds it" complaint))
+
 (herdr-dispatch-defverb herdr-dispatch-open-worktree ()
   "Open the worktree at point as a workspace.
 
@@ -669,12 +696,16 @@ buffer happened to hold rather than the workspace at point."
   "Go to the thing at point.
 A pane is focused and its buffer shown; a tab or workspace is focused
 and then followed to whichever pane herdr lands on, which is the
-server\\='s choice rather than ours."
+server\\='s choice rather than ours.  The worktrees heading has nowhere
+to go; see `herdr-dispatch--refuse-worktrees-heading\\='."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-focus (herdr-dispatch--value-at-point 'herdr-pane)))
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (herdr-dispatch-open-worktree))
+   ((herdr-dispatch--value-at-point 'herdr-worktrees)
+    (herdr-dispatch--refuse-worktrees-heading
+     "a group of worktrees is not somewhere to go"))
    ((herdr-dispatch--value-at-point 'herdr-tab)
     (herdr-tab-focus (herdr-dispatch--value-at-point 'herdr-tab)))
    ((herdr-dispatch--value-at-point 'herdr-workspace)
@@ -694,11 +725,15 @@ server\\='s choice rather than ours."
 (herdr-dispatch-defverb herdr-dispatch-focus ()
   "Focus the thing at point server-side, without moving Emacs.
 A worktree is focused as the workspace herdr has opened it as; a worktree
-that is not open as one has nothing to focus and says so."
+that is not open as one has nothing to focus and says so.  Neither has
+the worktrees heading; see `herdr-dispatch--refuse-worktrees-heading\\='."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (herdr-rpc-call "workspace.focus"
                     `((workspace_id . ,(herdr-dispatch--worktree-workspace)))))
+   ((herdr-dispatch--value-at-point 'herdr-worktrees)
+    (herdr-dispatch--refuse-worktrees-heading
+     "a group of worktrees cannot be focused"))
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-rpc-call "pane.focus"
                     `((pane_id . ,(herdr-dispatch--value-at-point 'herdr-pane)))))
@@ -719,11 +754,15 @@ Most specific section wins: a pane line inside a workspace renames the
 pane, which is the thing you are looking at, rather than its tab or
 workspace.  A worktree has no rename operation at all, so it is refused
 rather than allowed to fall through to the repository workspace whose
-list it was expanded from."
+list it was expanded from — and neither has the heading that groups
+them; see `herdr-dispatch--refuse-worktrees-heading\\='."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (user-error
      "herdr: a worktree cannot be renamed; rename its branch with git"))
+   ((herdr-dispatch--value-at-point 'herdr-worktrees)
+    (herdr-dispatch--refuse-worktrees-heading
+     "a group of worktrees cannot be renamed"))
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-rename (read-string "Pane label: ")
                        (herdr-dispatch--value-at-point 'herdr-pane)))
@@ -745,10 +784,15 @@ A worktree is removed as the workspace herdr has opened it as, which is
 the only handle `worktree.remove\\=' has on it.  Not the enclosing
 workspace: that is the repository whose worktree list this row was
 expanded from, and removing it would destroy something other than the row
-under point."
+under point.  The heading that groups the rows is refused outright, for
+the same reason and with more at stake; see
+`herdr-dispatch--refuse-worktrees-heading\\='."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (herdr-worktree-remove (herdr-dispatch--worktree-workspace)))
+   ((herdr-dispatch--value-at-point 'herdr-worktrees)
+    (herdr-dispatch--refuse-worktrees-heading
+     "a group of worktrees cannot be closed"))
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-close (herdr-dispatch--value-at-point 'herdr-pane)))
    ((herdr-dispatch--value-at-point 'herdr-tab)
