@@ -134,6 +134,20 @@ reports usage. Neither field earns a default column.
 Non-nil when a worktree is already open as a workspace. This is what lets worktree rows avoid
 duplicating the workspaces already shown above them.
 
+**Corrected after measurement.** This field cannot carry that job alone, and relying on it to
+was destructive. `worktree.list` returns the repository's *own checkout* as an entry, and for
+that entry `open_workspace_id` is the enclosing workspace itself:
+
+    w7  .emacs.d            main     is_linked_worktree=false  "w7"
+    wA  gmc-rearchitecture  develop  is_linked_worktree=false  "wA"
+    wJ  srijan.ch           main     is_linked_worktree=false  "wJ"
+
+So every workspace drew a `worktrees (1)` section listing itself, and `k` on that row resolved
+to `worktree.remove` against the enclosing workspace. `WorktreeInfo.is_linked_worktree` — a
+required field, false for a main checkout — is what tells the two apart, and `herdr-tree`
+filters on it. `open_workspace_id` keeps its narrower job: marking a *linked* worktree that is
+already open.
+
 ### Two API constraints on creation
 
 - `tab.create` takes `label` and `focus` only — no `workspace_id`. Creating a tab in a specific
