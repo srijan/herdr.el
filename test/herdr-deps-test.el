@@ -144,6 +144,38 @@ names tie, and `sort' is stable, so the order they arrived in decides."
     (should (equal (nth 1 planted)
                    (herdr-deps-locate "magit-section" (reverse planted))))))
 
+(ert-deftest herdr-deps-locate-does-not-let-an-unparseable-name-outrank-a-version ()
+  "A name nobody can parse is not the bare elpaca shape, and used to win.
+
+`herdr-deps-version' answers nil to two different questions — a
+directory called exactly LIBRARY, and one whose suffix `version-to-list'
+cannot read — and the ranking read both as the bare name that outranks
+every versioned copy.  So `magit-section-git' beside
+`magit-section-4.10.0' resolved to the checkout, and the suite went on
+reporting every test passing against whatever was in it.  That is an
+inverted ranking, not a missing one.
+
+Each case is asserted in both orders, so neither first-wins nor
+last-wins could pass by accident."
+  ;; An unparseable suffix now loses to a real version.
+  (herdr-deps-test-with-planted '("magit-section-git" "magit-section-4.10.0")
+    (should (equal (nth 1 planted) (herdr-deps-locate "magit-section" planted)))
+    (should (equal (nth 1 planted)
+                   (herdr-deps-locate "magit-section" (reverse planted)))))
+  ;; A bare name still outranks both.
+  (herdr-deps-test-with-planted '("magit-section-melpa" "magit-section-4.10.0"
+                                  "magit-section")
+    (should (equal (nth 2 planted) (herdr-deps-locate "magit-section" planted)))
+    (should (equal (nth 2 planted)
+                   (herdr-deps-locate "magit-section" (reverse planted)))))
+  ;; Two unparseable names tie, so the order they arrived in stands.
+  (herdr-deps-test-with-planted '("magit-section-git" "magit-section-melpa")
+    (should (equal (nth 0 planted) (herdr-deps-locate "magit-section" planted)))
+    (should (equal (nth 1 planted)
+                   (herdr-deps-locate "magit-section" (reverse planted)))))
+  (should (herdr-deps-bare-p "magit-section" "/x/magit-section/"))
+  (should-not (herdr-deps-bare-p "magit-section" "/x/magit-section-git")))
+
 (ert-deftest herdr-deps-directories-are-sorted ()
   "The candidate list has to be the same list on every machine.
 `directory-files' was read with NOSORT, which made the input to the

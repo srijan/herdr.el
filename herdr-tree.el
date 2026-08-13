@@ -311,7 +311,7 @@ shows, and erring the other way costs the workspace."
   (and (alist-get 'is_linked_worktree worktree) t))
 
 (defun herdr-tree-own-workspace-p (worktree workspace-id)
-  "Return non-nil when WORKTREE is WORKSPACE-ID itself rather than one of its.
+  "Return non-nil when WORKTREE is WORKSPACE-ID rather than one of its worktrees.
 
 WORKSPACE-ID is the workspace the listing containing WORKTREE was fetched
 for, so an entry whose `open_workspace_id\\=' equals it is the section\\='s
