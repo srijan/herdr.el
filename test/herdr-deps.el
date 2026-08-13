@@ -74,24 +74,73 @@ else entirely."
 The immediate subdirectories of `herdr-deps-roots', which is the shape
 all three package managers share: one directory per package, named for
 it and — under package.el — for its version, so the names cannot be
-predicted and the directory listing is what answers instead."
+predicted and the directory listing is what answers instead.
+
+Sorted, and the roots stay in their own order, so that the list this
+returns is the same list on every machine and every run.  It was read
+with NOSORT and taken first-hit-wins, which made the answer the
+filesystem's `readdir' order — reproducibly wrong rather than randomly
+so, and invisible either way; see `herdr-deps-locate'."
   (seq-mapcat (lambda (root)
                 (when (file-directory-p root)
                   (seq-filter #'file-directory-p
-                              (directory-files root t "\\`[^.]" t))))
+                              (directory-files root t "\\`[^.]"))))
               (herdr-deps-roots)))
+
+(defun herdr-deps-version (library directory)
+  "Return the version DIRECTORY\\='s name encodes for LIBRARY, or nil.
+Nil for a directory named exactly LIBRARY, and for a suffix that is not
+a version at all — `version-to-list' signals on those, and a name nobody
+can parse is not evidence of anything."
+  (let ((name (file-name-nondirectory (directory-file-name directory))))
+    (when (string-prefix-p (concat library "-") name)
+      (ignore-errors
+        (version-to-list (substring name (1+ (length library))))))))
+
+(defun herdr-deps-preferred-p (library a b)
+  "Return non-nil when directory A should be preferred to B for LIBRARY.
+
+Higher version first.  An unversioned name — a directory called exactly
+LIBRARY — outranks every versioned one, and two of those tie so that
+`sort', which is stable, leaves them in the order
+`herdr-deps-directories' produced and root precedence stands.
+
+That ranking is not arbitrary.  A bare name is what elpaca and
+straight.el produce, and they keep exactly one directory per package, so
+there is nothing to choose between and the root order already expresses
+the preference.  Versioned names are package.el's, and package.el is the
+one manager that leaves older copies behind — which is the whole reason
+any of this compares versions."
+  (let ((va (herdr-deps-version library a))
+        (vb (herdr-deps-version library b)))
+    (cond ((and (null va) (null vb)) nil)
+          ((null va) t)
+          ((null vb) nil)
+          (t (version-list-< vb va)))))
 
 (defun herdr-deps-locate (library directories)
   "Return the directory in DIRECTORIES holding LIBRARY, or nil.
+
 Compiled or not: a package manager that has byte-compiled the library
 and deleted nothing is the ordinary case, and either file makes the
-directory the right load-path entry."
-  (seq-find (lambda (directory)
-              (or (file-exists-p (expand-file-name (concat library ".el")
-                                                   directory))
-                  (file-exists-p (expand-file-name (concat library ".elc")
-                                                   directory))))
-            directories))
+directory the right load-path entry.
+
+The highest version wins, by `herdr-deps-preferred-p'.  This used to
+take the first hit in `directory-files' order with NOSORT, which is
+`readdir' order: given `magit-section-20200101.1', `-20230601.1' and
+`-20260101.1' side by side under a package.el `elpa', it resolved to the
+middle one — neither newest nor oldest, just whatever the filesystem
+listed first.  A search that finds the wrong copy is worse than the skip
+it replaced, because the suite still reports every test passing; nothing
+about a stale magit-section says so out loud."
+  (car (sort (seq-filter
+              (lambda (directory)
+                (or (file-exists-p (expand-file-name (concat library ".el")
+                                                     directory))
+                    (file-exists-p (expand-file-name (concat library ".elc")
+                                                     directory))))
+              directories)
+             (lambda (a b) (herdr-deps-preferred-p library a b)))))
 
 (defun herdr-deps-add-to-load-path ()
   "Put every library in `herdr-deps-libraries' on `load-path'.
