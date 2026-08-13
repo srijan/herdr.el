@@ -64,16 +64,29 @@ The magit faces are the exception and stay in the renderer: herdr-tree
 is loadable — and tested — without magit-section on the load path, so it
 cannot name anything magit-section defines.
 
-The property is `font-lock-face\\=' rather than `face\\=', which is not a
-style choice.  `magit-section-mode\\=' sets `font-lock-defaults\\=', so
-`global-font-lock-mode\\=' turns `font-lock-mode\\=' on in the dashboard,
-and the first thing jit-lock does to a region is
-`font-lock-default-unfontify-region\\=' — which removes `face\\=' and does
-not remove `font-lock-face\\='.  A `face\\=' here therefore survives only
+Both `face\\=' and `font-lock-face\\=' carry it, which is not belt and
+braces: each property is invisible in exactly the situation the other
+covers, and this has now been got wrong in both directions.
+
+`face\\=' alone is erased.  `magit-section-mode\\=' sets
+`font-lock-defaults\\=', so `global-font-lock-mode\\=' turns
+`font-lock-mode\\=' on in the dashboard, and the first thing jit-lock does
+to a region is `font-lock-default-unfontify-region\\=' — which removes
+`face\\=' and leaves `font-lock-face\\=' alone.  A `face\\=' therefore lasts
 until the line is first displayed, which is the whole of the time nobody
-is looking at it.  magit uses `font-lock-face\\=' throughout for the same
-reason."
-  (if face (propertize text 'font-lock-face face) text))
+is looking at it.
+
+`font-lock-face\\=' alone renders as nothing.  It is not a display
+property at all; it is made one by the `char-property-alias-alist\\='
+entry `font-lock-mode\\=' installs, so with font-lock off it means
+nothing to redisplay.  That was verified after the first fix, with
+`face-at-point\\=' answering nil on every line of the dashboard.
+
+Setting both is what magit does, for this reason.  No batch test can see
+either failure, because `font-lock-mode\\=' refuses to turn itself on
+under `noninteractive\\=' — what a test can assert is that both
+properties are present, and herdr-tree-test does."
+  (if face (propertize text 'font-lock-face face 'face face) text))
 
 (defconst herdr-tree-noteworthy-statuses '("blocked" "working" "done")
   "Statuses worth showing on a collapsed section.

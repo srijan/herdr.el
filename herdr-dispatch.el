@@ -211,13 +211,20 @@ dimmed directory would cost the heading its heading face entirely.
 Filling in the gaps first makes the two compose — the fields herdr-tree
 faced keep their faces, and everything else reads as a heading.
 
-`font-lock-face\\=' throughout, for the reason given in
+Both `face\\=' and `font-lock-face\\=', for the reason given in
 `herdr-tree--faced\\=': `face\\=' does not survive the first fontification
-of the line.  The property has to be the same one herdr-tree used, and
-not merely a surviving one — the gaps are found by looking for where
-that property is absent, so scanning for `face\\=' over a line faced with
-`font-lock-face\\=' would find no fields at all and paint the heading face
-straight over every one of them."
+of the line, and `font-lock-face\\=' renders as nothing while
+`font-lock-mode\\=' is off.  Writing only one of them made the whole
+restyle invisible, once each way round.
+
+The gaps are found by scanning `font-lock-face\\=' alone, and that is
+safe only because the two properties are written together everywhere:
+`herdr-tree--faced\\=' sets both or neither, so the boundaries either
+property reports are the same boundaries.  Scanning the wrong one used
+to matter — over a line faced with `font-lock-face\\=' only, a scan for
+`face\\=' finds no fields at all and paints the heading face straight
+over every one of them.  If a field ever carries just one property, this
+scan is where that shows up."
   (let ((line (copy-sequence line))
         (start 0)
         (length (length line)))
@@ -226,7 +233,8 @@ straight over every one of them."
                      length)))
         (unless (get-text-property start 'font-lock-face line)
           (put-text-property start end
-                             'font-lock-face 'magit-section-heading line))
+                             'font-lock-face 'magit-section-heading line)
+          (put-text-property start end 'face 'magit-section-heading line))
         (setq start end)))
     line))
 

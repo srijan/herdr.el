@@ -180,6 +180,63 @@ gave it, and the characters around it read as a heading."
     (should (eq 'shadow
                 (get-text-property (match-beginning 0) 'font-lock-face)))))
 
+(ert-deftest herdr-dispatch-writes-every-face-under-both-properties ()
+  "Every faced character in the dashboard must carry `face' AND
+`font-lock-face'.
+
+The two cover each other's blind spot.  `face' is erased by
+`font-lock-default-unfontify-region' before a line is first fontified,
+which is why the original `face'-only styling was invisible; and
+`font-lock-face' is not a display property at all — only a
+`char-property-alias-alist' entry `font-lock-mode' installs — so the
+`font-lock-face'-only fix that replaced it rendered as nothing wherever
+font-lock was off, verified with `face-at-point' answering nil across
+the whole buffer.  magit sets both.
+
+Batch cannot see either failure: `font-lock-mode' refuses to enable
+itself under `noninteractive', so 302 tests passed over a completely
+unstyled dashboard.  The properties are what batch can see.
+
+Both sources of a face are covered — the fields herdr-tree propertised,
+and the heading face `herdr-dispatch--heading' paints into the gaps
+between them — because they are written by different code and were
+wrong independently.  The scan walks every character rather than
+sampling, so a gap-filler that wrote one property and a field that wrote
+the other would both be caught."
+  (herdr-dispatch-test-with-buffer
+      (list (list 'herdr-workspace "w1"
+                  (concat "repo (1)  "
+                          (herdr-tree--faced "/tmp/repo"
+                                             'font-lock-comment-face))
+                  (list (list 'herdr-pane "w1:p1"
+                              (concat (herdr-tree--faced "blocked" 'warning)
+                                      "  "
+                                      (herdr-tree--faced "w1:p1" 'shadow))
+                              nil))))
+    (let ((faced 0))
+      (goto-char (point-min))
+      (while (not (eobp))
+        (unless (eolp)
+          (let ((font-lock (get-text-property (point) 'font-lock-face))
+                (face (get-text-property (point) 'face)))
+            (when (or font-lock face)
+              (setq faced (1+ faced))
+              (should (eq font-lock face)))))
+        (forward-char 1))
+      ;; A buffer with nothing faced would satisfy the loop above.
+      (should (> faced 0)))
+    ;; Named explicitly as well, so that a change which faced only the
+    ;; heading gaps — or only the fields — cannot pass by weight of the
+    ;; other's characters.
+    (goto-char (point-min))
+    (should (eq 'magit-section-heading (get-text-property (point) 'face)))
+    (search-forward "/tmp/repo")
+    (should (eq 'font-lock-comment-face
+                (get-text-property (match-beginning 0) 'face)))
+    (goto-char (point-min))
+    (search-forward "blocked")
+    (should (eq 'warning (get-text-property (match-beginning 0) 'face)))))
+
 (ert-deftest herdr-dispatch-faces-survive-being-fontified ()
   "A face has to be written where fontification will not delete it.
 
@@ -197,7 +254,13 @@ The control is what makes this test mean anything.  A field faced with
 `face\\=' is rendered beside the others and asserted to LOSE its face —
 without that, this test would pass just as happily in a buffer where
 fontification never ran at all, which is the failure mode of every test
-that tries to prove something about redisplay in batch."
+that tries to prove something about redisplay in batch.
+
+The dashboard now writes `face\\=' as well, and the `face\\=' it writes is
+erased here too — asserted below, because that is the fact that makes
+the pair necessary rather than redundant.  Neither property survives
+both situations: `font-lock-face\\=' is what renders once font-lock has
+run, `face\\=' is what renders while it has not."
   (let ((buffer (generate-new-buffer "herdr-fontification-test")))
     (unwind-protect
         (with-current-buffer buffer
@@ -237,7 +300,12 @@ that tries to prove something about redisplay in batch."
           (search-forward "blocked")
           (should (eq 'warning
                       (get-text-property (match-beginning 0)
-                                         'font-lock-face))))
+                                         'font-lock-face)))
+          ;; And our own `face' went the same way the control's did,
+          ;; which is why `font-lock-face' has to be there beside it.
+          (should-not (get-text-property (match-beginning 0) 'face))
+          (goto-char (point-min))
+          (should-not (get-text-property (point) 'face)))
       (kill-buffer buffer))))
 
 (ert-deftest herdr-dispatch-gives-every-node-its-own-section ()
