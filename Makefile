@@ -24,6 +24,12 @@ BATCH := $(EMACS) -Q --batch -L . -L test $(addprefix -L ,$(EXTRA_LOAD_PATH)) \
 TESTS := $(wildcard test/*-test.el)
 SRC   := $(filter-out %-autoloads.el,$(wildcard *.el))
 
+## herdr-deps.el gates every target, so it meets the same warning bar as
+## the sources it loads them with.  It was the one file the item-2 gate
+## did not cover: `SRC' is the package's own root *.el, and a file that
+## decides whether the build runs at all was never byte-compiled.
+COMPILE_SRC := $(SRC) test/herdr-deps.el
+
 .PHONY: test test-live compile clean all
 
 all: compile test
@@ -41,7 +47,7 @@ test-live:
 ## Byte-compile everything, treating warnings as failures.
 compile:
 	$(BATCH) --eval '(setq byte-compile-error-on-warn t)' \
-	  -f batch-byte-compile $(SRC)
+	  -f batch-byte-compile $(COMPILE_SRC)
 
 clean:
 	rm -f *.elc test/*.elc
