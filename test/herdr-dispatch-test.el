@@ -1762,6 +1762,72 @@ how the bug survived the previous fix."
   (herdr-dispatch-test-with-buffer nil
     (should-error (herdr-dispatch-close) :type 'user-error)))
 
+;;; The worktrees heading
+
+(ert-deftest herdr-dispatch-close-refuses-the-worktrees-heading ()
+  "`k' on `worktrees (N)' used to close the enclosing workspace.
+
+There was no `cond' arm for `herdr-worktrees', and
+`herdr-dispatch--value-at-point' walks up from point, so the verb did
+not fail — it found `w1' and closed it.  Nothing may reach the server,
+which is what tells a refusal apart from a fall-through that happened to
+be harmless."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "worktrees 1")
+    (should (equal nil
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-close herdr-tab-close herdr-workspace-close
+                                         herdr-worktree-remove herdr-rpc-call)
+                     (should-error (herdr-dispatch-close)
+                                   :type 'user-error))))))
+
+(ert-deftest herdr-dispatch-rename-refuses-the-worktrees-heading ()
+  "`R' on `worktrees (N)' used to rename the enclosing workspace, giving
+the repository a name the user had aimed at a list."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "worktrees 1")
+    (should (equal nil
+                   (cl-letf (((symbol-function 'read-string)
+                              (lambda (&rest _) "new")))
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-pane-rename herdr-tab-rename
+                                            herdr-workspace-rename)
+                       (should-error (herdr-dispatch-rename)
+                                     :type 'user-error)))))))
+
+(ert-deftest herdr-dispatch-focus-refuses-the-worktrees-heading ()
+  "`f' on `worktrees (N)' used to focus the enclosing workspace, which
+moves the user's terminal to somewhere they did not ask to go."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "worktrees 1")
+    (should (equal nil
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-rpc-call herdr-pane-focus herdr-tab-focus
+                                       herdr-workspace-focus)
+                     (should-error (herdr-dispatch-focus)
+                                   :type 'user-error))))))
+
+(ert-deftest herdr-dispatch-visit-refuses-the-worktrees-heading ()
+  "`RET' on `worktrees (N)' used to focus and follow the enclosing
+workspace.
+
+Refusing is a decision rather than an omission: there is no server-side
+object under this heading to go to, and sending `RET' to the enclosing
+workspace would be the old fall-through dressed up as an answer.  The
+message points at TAB, which is the heading's one real action."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "worktrees 1")
+    (should (equal nil
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-focus herdr-tab-focus herdr-workspace-focus
+                                         herdr-rpc-call)
+                     (should-error (herdr-dispatch-visit)
+                                   :type 'user-error))))
+    (should (string-match-p
+             "TAB"
+             (cadr (should-error (herdr-dispatch--refuse-worktrees-heading "x")
+                                 :type 'user-error))))))
+
 (ert-deftest herdr-dispatch-binds-the-mutating-verbs ()
   (should (eq #'herdr-dispatch-rename
               (lookup-key herdr-dispatch-mode-map "R")))
