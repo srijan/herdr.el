@@ -36,7 +36,10 @@
     (let ((annotation (herdr-select--annotate-pane "w1:p1")))
       (should (string-match-p "claude" annotation))
       (should (string-match-p "⏸" annotation))
-      (should (string-match-p "Claude Code" annotation)))))
+      (should (string-match-p "Claude Code" annotation))
+      ;; The directory is the other half of what makes two panes running
+      ;; the same agent tellable apart.
+      (should (string-match-p "/tmp" annotation)))))
 
 (ert-deftest herdr-select-annotates-a-shell-pane ()
   (herdr-select-test-with-state
@@ -232,7 +235,9 @@ be made without leaving the command."
       '(((pane_id . "w1:p2") (agent . nil)))
     (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
               ((symbol-function 'herdr-select--read)
-               (lambda (&rest _) herdr-select-create-new-shell)))
+               ;; A copy, because `completing-read' returns one: matching
+               ;; the marker by identity works only against the constant.
+               (lambda (&rest _) (copy-sequence herdr-select-create-new-shell))))
       (should (eq :create-new (herdr-select-available-shell))))))
 
 (ert-deftest herdr-select-available-shell-returns-a-chosen-pane-id ()
@@ -259,9 +264,15 @@ command no longer dead-ends with an error."
         (should (equal (list herdr-select-create-new-shell) offered))))))
 
 (ert-deftest herdr-select-annotates-the-create-new-entry ()
-  "The create-new entry explains what picking it will do."
+  "The create-new entry explains what picking it will do.
+
+Annotated through a copy of the marker, not the marker itself:
+`completing-read' hands back a fresh string, so an `eq' comparison in
+the annotator would pass against the constant here and answer nothing at
+all in use."
   (should (string-match-p
-           "split" (herdr-select--annotate-pane herdr-select-create-new-shell))))
+           "split" (herdr-select--annotate-pane
+                    (copy-sequence herdr-select-create-new-shell)))))
 
 ;;; Every glyph, and the two annotators nothing exercised
 

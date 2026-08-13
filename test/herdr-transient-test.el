@@ -256,5 +256,44 @@ that were meant to be added and silently were not."
       (should-not (plist-get node :if))
       (should-not (plist-get node :if-not)))))
 
+;;; The status line is the one suffix that reports rather than acts
+
+(ert-deftest herdr-transient-status-reports-the-server-and-the-cache ()
+  "`herdr-transient-status' is what you run when something looks wrong,
+so it must be able to say so.  It had no test, and both of the things it
+reports about being wrong — an unreachable server and a stopped stream —
+were the parts nothing exercised."
+  (let ((herdr-terminal-backend 'session)
+        (herdr-state--current
+         (herdr-state-from-snapshot
+          '((workspaces . (((workspace_id . "w1"))))
+            (panes . (((pane_id . "w1:p1") (agent . "claude")
+                       (agent_status . "idle"))
+                      ((pane_id . "w1:p2")))))))
+        said)
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args) (setq said (apply #'format fmt args))))
+              ((symbol-function 'herdr-state-running-p) (lambda () t)))
+      (herdr-test-with-server
+          (lambda (req)
+            (cons (herdr-test-ok req '((version . "0.9.1") (protocol . 19)))
+                  nil))
+        (herdr-transient-status))
+      (should (string-match-p "0\\.9\\.1" said))
+      (should (string-match-p "19" said))
+      (should (string-match-p "1 workspaces" said))
+      (should (string-match-p "2 panes" said))
+      (should (string-match-p "1 agents" said))
+      (should (string-match-p "stream up" said))
+      (should (string-match-p "session" said)))
+    ;; No server at all, and a stopped stream: the two failure reports.
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args) (setq said (apply #'format fmt args))))
+              ((symbol-function 'herdr-state-running-p) (lambda () nil)))
+      (let ((herdr-socket-path "/herdr-no-such-socket.sock"))
+        (herdr-transient-status))
+      (should (string-match-p "unreachable" said))
+      (should (string-match-p "stream down" said)))))
+
 (provide 'herdr-transient-test)
 ;;; herdr-transient-test.el ends here
