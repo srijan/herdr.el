@@ -1179,12 +1179,22 @@ lets the skip engage at all while an agent is working."
             ;;
             ;; After the point restores rather than before, because this
             ;; highlights whatever `magit-current-section' answers, and
-            ;; that is read off point.  FORCE because the section under
-            ;; point is usually the same one as before the redraw, and
-            ;; the unforced path takes that as grounds to do nothing —
-            ;; which is exactly wrong here, where the section object is
-            ;; new and its overlay is gone.
-            (magit-section-update-highlight t))
+            ;; that is read off point.
+            ;;
+            ;; Unforced, and that is not a near miss.  The unforced path
+            ;; updates when `magit-section-pre-command-section' is not
+            ;; `eq' to the section now at point, and every section object
+            ;; in this buffer was just replaced — `erase-buffer' and the
+            ;; insert below make new ones — so that test cannot be false
+            ;; here.  This call carried a FORCE argument justified by the
+            ;; claim that the unforced path would do nothing, which is
+            ;; untrue, and which no test could be written to defend: the
+            ;; two spellings behave identically at this call site.  What
+            ;; protects the behaviour either way is
+            ;; `herdr-dispatch-a-redraw-restores-the-section-highlight',
+            ;; which asserts the overlay rather than the mechanism, and
+            ;; so would fail if magit ever changed that branch.
+            (magit-section-update-highlight))
           (setq herdr-dispatch--rendered-header header
                 herdr-dispatch--rendered-tree tree))
         ;; After the draw rather than before it: a reply must reach the
