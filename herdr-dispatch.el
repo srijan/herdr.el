@@ -619,8 +619,25 @@ worktree that herdr has not opened as one has no such id.  The enclosing
 workspace is not a substitute: it is the repository whose worktree list
 this row was expanded from, a different object entirely — reaching for it
 is how `k\\=' came to remove the very workspace point was standing in.  So
-this refuses rather than guesses."
+this refuses rather than guesses.
+
+Refusing on `open_workspace_id\\=' alone was not enough, because the
+server hands back the enclosing workspace\\='s own id for the repository\\='s
+main checkout — see `herdr-tree-linked-worktree-p\\=' for the measurement.
+A row for such a checkout is no longer drawn, so this second refusal is
+for a row reached some other way: a cache entry rendered before the
+filter existed, or a listing whose required field the server omitted.
+It sits here rather than in `herdr-dispatch-close\\=' because this is the
+one function both destructive and harmless worktree verbs resolve
+through, and a guard that only `k\\=' consults is a guard the next verb
+forgets."
   (let ((worktree (herdr-dispatch--worktree-at-point)))
+    (unless (herdr-tree-linked-worktree-p worktree)
+      (user-error
+       "herdr: %s is the repository's own checkout, not one of its worktrees"
+       (or (alist-get 'branch worktree)
+           (alist-get 'path worktree)
+           "the row at point")))
     (or (alist-get 'open_workspace_id worktree)
         (user-error "herdr: worktree %s is not open as a workspace (RET opens it)"
                     (or (alist-get 'branch worktree)

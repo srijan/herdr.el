@@ -802,6 +802,7 @@ the row sits inside `w1\\=' and is open as `w2\\='."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (let ((herdr-dispatch--worktrees
            '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (is_linked_worktree . t)
                        (branch . "fix")
                        (open_workspace_id . "w2")))))))
       (should (equal '((herdr-rpc-call "workspace.focus"
@@ -814,6 +815,7 @@ answer rather than an approximate one."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (let ((herdr-dispatch--worktrees
            '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (is_linked_worktree . t)
                        (branch . "fix")
                        (open_workspace_id . nil)))))))
       (search-forward "open as w2")
@@ -961,6 +963,7 @@ to redraw."
         (should-not (string-match-p "worktrees" (buffer-string)))
         (herdr-dispatch-test--reply
          0 '((worktrees . (((path . "/tmp/web-feat")
+                            (is_linked_worktree . t)
                             (branch . "feat/x")
                             (open_workspace_id . nil))))))
         (sit-for 0.2)
@@ -981,9 +984,11 @@ to lay down the same characters."
         (should (equal 1 (herdr-dispatch-test-counting-rebuilds
                            (herdr-dispatch-test--reply
                             0 '((worktrees . (((path . "/tmp/web-feat")
+                                               (is_linked_worktree . t)
                                                (branch . "feat/x"))))))
                            (herdr-dispatch-test--reply
                             1 '((worktrees . (((path . "/tmp/api-spike")
+                                               (is_linked_worktree . t)
                                                (branch . "spike"))))))
                            (sit-for 0.2))))
         (should (string-match-p "feat/x" (buffer-string)))
@@ -1014,7 +1019,8 @@ and the assertion would no longer be about placeholders at all."
       (herdr-dispatch-test--reply
        0 nil '((code . "not_found") (message . "not a git repository")))
       (herdr-dispatch-test--reply
-       1 '((worktrees . (((path . "/tmp/api-spike") (branch . "spike"))))))
+       1 '((worktrees . (((path . "/tmp/api-spike")
+                          (is_linked_worktree . t) (branch . "spike"))))))
       (should (assoc "w1" herdr-dispatch--worktrees))
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal '("/tmp/web/" "/tmp/api/")
@@ -1055,7 +1061,8 @@ be true — this test is what confirms it rather than assumes it."
       (herdr-dispatch-test--reply
        0 nil '((code . "timeout") (message . "no response from herdr")))
       (herdr-dispatch-test--reply
-       1 '((worktrees . (((path . "/tmp/api-spike") (branch . "spike"))))))
+       1 '((worktrees . (((path . "/tmp/api-spike")
+                          (is_linked_worktree . t) (branch . "spike"))))))
       (should (assoc "w1" herdr-dispatch--worktrees))
       (should-not (cdr (assoc "w1" herdr-dispatch--worktrees)))
       (dotimes (_ 19) (herdr-dispatch-refresh))
@@ -1287,7 +1294,8 @@ refetch of the session."
           ;; put a second reason in the way of the one thing this half
           ;; asserts.
           (herdr-dispatch-test--reply
-           0 '((worktrees . (((path . "/tmp/web-feat") (branch . "feat/x"))))))
+           0 '((worktrees . (((path . "/tmp/web-feat")
+                              (is_linked_worktree . t) (branch . "feat/x"))))))
           (herdr-dispatch-test--reply 1 '((worktrees . nil)))
           (save-window-excursion (herdr-agents))
           (should (equal "/tmp/web-feat"
@@ -1337,6 +1345,7 @@ closes that gap."
          (herdr-state-from-snapshot herdr-dispatch-test--snapshot))
         (herdr-dispatch--worktrees
          '(("w1" . (((path . "/tmp/web-feat")
+                     (is_linked_worktree . t)
                      (branch . "feat/x")
                      (label . "feat/x")
                      (open_workspace_id . nil))))))
@@ -1534,6 +1543,7 @@ the highlight faces headings and bodies through different branches of
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (let ((herdr-dispatch--worktrees
            '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (is_linked_worktree . t)
                        (branch . "fix")
                        (open_workspace_id . "w2")))))))
       (search-forward "open as w2")
@@ -1558,6 +1568,7 @@ worktree's directory, and asserting the exact params reaching
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (let ((herdr-dispatch--worktrees
            '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (is_linked_worktree . t)
                        (branch . "fix")
                        (open_workspace_id . nil))))))
           (default-directory "/totally/unrelated/directory/"))
@@ -1689,6 +1700,7 @@ worktree open as `w2\\='."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (let ((herdr-dispatch--worktrees
            '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (is_linked_worktree . t)
                        (branch . "fix")
                        (open_workspace_id . "w2")))))))
       (search-forward "open as w2")
@@ -1706,8 +1718,38 @@ nothing may reach the server on the way out."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (let ((herdr-dispatch--worktrees
            '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (is_linked_worktree . t)
                        (branch . "fix")
                        (open_workspace_id . nil)))))))
+      (search-forward "open as w2")
+      (should (equal nil
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-pane-close herdr-tab-close herdr-workspace-close
+                                           herdr-worktree-remove herdr-rpc-call)
+                       (should-error (herdr-dispatch-close)
+                                     :type 'user-error)))))))
+
+(ert-deftest herdr-dispatch-close-refuses-a-row-naming-the-main-checkout ()
+  "The destructive case, guarded a second time at the verb.
+
+`worktree.list' returns the repository's own checkout with
+`open_workspace_id' set to the enclosing workspace, so `k' on such a row
+resolved to `(herdr-worktree-remove \"w1\")' — the workspace the row
+lives inside.  The model no longer renders these rows at all, which is
+the fix; this asserts what happens if one is reached anyway, from a
+cache entry that predates the filter or a reply missing the required
+field.
+
+The fixture is the live shape exactly: the row sits inside `w1' and its
+`open_workspace_id' is `w1'.  A guard that only checked
+`open_workspace_id' for nil would let this straight through, which is
+how the bug survived the previous fix."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((herdr-dispatch--worktrees
+           '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (is_linked_worktree . nil)
+                       (branch . "main")
+                       (open_workspace_id . "w1")))))))
       (search-forward "open as w2")
       (should (equal nil
                      (herdr-dispatch-test-with-recorders

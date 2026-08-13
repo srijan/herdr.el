@@ -70,7 +70,9 @@ said it in a place the eye has to travel to and in a shape shared with
 the leaf rows, which own nothing.  Both halves are asserted: the count is
 in parentheses on the label, and the column it replaced is gone rather
 than duplicated beside it."
-  (let* ((worktrees '(("w1" . (((path . "/tmp/wt") (branch . "feat/x"))))))
+  (let* ((worktrees '(("w1" . (((path . "/tmp/wt")
+                                (is_linked_worktree . t)
+                                (branch . "feat/x"))))))
          (workspace (car (herdr-tree-build (herdr-tree-test--state) worktrees)))
          (children (nth 3 workspace))
          (tab (car children))
@@ -286,6 +288,7 @@ their own tab already renders.  Every pane appears exactly once."
 (ert-deftest herdr-tree-includes-worktrees-when-fetched ()
   "A workspace present in WORKTREES gets a worktrees section, last."
   (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el-feat")
+                                (is_linked_worktree . t)
                                 (branch . "feat/dispatch")
                                 (label . "feat/dispatch")
                                 (open_workspace_id . nil))))))
@@ -295,8 +298,74 @@ their own tab already renders.  Every pane appears exactly once."
     (should (eq 'herdr-worktrees (car section)))
     (should (equal 1 (length (nth 3 section))))))
 
+(ert-deftest herdr-tree-draws-no-worktrees-section-for-a-bare-checkout ()
+  "The live session, exactly: one entry, and it is the workspace itself.
+
+`worktree.list' returns the repository's own checkout alongside its
+linked worktrees, and every workspace measured in the user's session
+answered with that one entry and nothing else — `is_linked_worktree'
+false, `open_workspace_id' naming the enclosing workspace.  So every
+`worktrees (1)' heading on screen was listing the workspace its own
+heading is one line above, and `k' on that row resolved to
+`(herdr-worktree-remove \"w1\")' — destroying the workspace point was
+standing in.
+
+Both halves are asserted, because a filter that dropped the row and
+still emitted the group would leave a `worktrees (0)' heading behind and
+`k' on THAT heading falls through to the enclosing workspace just as
+destructively."
+  (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el")
+                                (branch . "main")
+                                (is_linked_worktree . nil)
+                                (open_workspace_id . "w1"))))))
+         (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
+                                                 worktrees)))))
+    (should-not (seq-find (lambda (node) (eq 'herdr-worktrees (nth 0 node)))
+                          children))
+    (should-not (seq-find (lambda (node) (eq 'herdr-worktree (nth 0 node)))
+                          children))))
+
+(ert-deftest herdr-tree-lists-the-linked-worktrees-and-not-the-checkout ()
+  "The mixed case, and the one that says the count follows the filter.
+
+A repository with a worktree answers with two entries: itself and the
+worktree.  Only the second is a row here — and the heading must say
+`worktrees (1)', not `(2)', or the section counts a row the user cannot
+see and the number stops meaning anything.
+
+The entries are ordered checkout-first, which is the order git and the
+server both report, so a filter that only ever dropped the last entry
+would not pass."
+  (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el")
+                                (branch . "main")
+                                (is_linked_worktree . nil)
+                                (open_workspace_id . "w1"))
+                               ((path . "/tmp/herdr.el-feat")
+                                (branch . "feat/dispatch")
+                                (is_linked_worktree . t)
+                                (open_workspace_id . nil))))))
+         (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
+                                                 worktrees))))
+         (section (car (last children))))
+    (should (eq 'herdr-worktrees (nth 0 section)))
+    (should (string-match-p "worktrees (1)" (nth 2 section)))
+    (should (equal '("/tmp/herdr.el-feat")
+                   (mapcar (lambda (node) (nth 1 node)) (nth 3 section))))))
+
+(ert-deftest herdr-tree-treats-a-missing-linked-flag-as-not-linked ()
+  "`is_linked_worktree' is a required field, so its absence is a reply the
+schema does not describe.  Dropping the row costs a line the workspace
+heading above it already shows; keeping it costs the workspace, because
+`open_workspace_id' on a main checkout names the enclosing workspace.
+So absence reads as not linked."
+  (should-not (herdr-tree-linked-worktree-p '((path . "/tmp/x")
+                                              (branch . "main"))))
+  (should-not (herdr-tree-linked-worktree-p '((is_linked_worktree . nil))))
+  (should (herdr-tree-linked-worktree-p '((is_linked_worktree . t)))))
+
 (ert-deftest herdr-tree-dims-a-worktree-already-open-as-a-workspace ()
   (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el-feat")
+                                (is_linked_worktree . t)
                                 (branch . "feat/dispatch")
                                 (label . "feat/dispatch")
                                 (open_workspace_id . "w2"))))))
