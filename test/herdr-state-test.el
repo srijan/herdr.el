@@ -96,10 +96,37 @@
     (should (= 2 (length (herdr-state-panes next))))))
 
 (ert-deftest herdr-state-reduce-agent-detected-sets-the-agent ()
+  "The event is flat — pane_id, workspace_id, agent — with no PaneInfo.
+Reading a `pane' out of it, as this branch used to, finds nothing and
+leaves a detected agent invisible to the modeline and the pickers."
   (let ((next (herdr-state-reduce
                (herdr-state-test--seed) "pane_agent_detected"
-               `((pane . ,(herdr-state-test--pane "w1:p2" "codex" "idle"))))))
-    (should (= 2 (length (herdr-state-agents next))))))
+               '((type . "pane_agent_detected") (pane_id . "w1:p2")
+                 (workspace_id . "w1") (agent . "codex")))))
+    (should (= 2 (length (herdr-state-agents next))))
+    (should (equal "codex" (alist-get 'agent (herdr-state-pane next "w1:p2"))))
+    ;; Only the label moves: the event carries no other pane field.
+    (should (equal "/tmp" (alist-get 'cwd (herdr-state-pane next "w1:p2"))))))
+
+(ert-deftest herdr-state-reduce-agent-detected-release-clears-the-agent ()
+  "A release comes through the same event with a null agent, so the
+label has to be written rather than merged over."
+  (let ((next (herdr-state-reduce
+               (herdr-state-test--seed) "pane_agent_detected"
+               '((type . "pane_agent_detected") (pane_id . "w1:p1")
+                 (workspace_id . "w1") (agent . nil) (released . t)
+                 (final_status . "idle")))))
+    (should-not (alist-get 'agent (herdr-state-pane next "w1:p1")))
+    (should (equal "idle"
+                   (alist-get 'agent_status (herdr-state-pane next "w1:p1"))))
+    (should (null (herdr-state-agents next)))))
+
+(ert-deftest herdr-state-reduce-agent-detected-for-an-unknown-pane-is-a-noop ()
+  (let ((next (herdr-state-reduce
+               (herdr-state-test--seed) "pane_agent_detected"
+               '((pane_id . "w9:p9") (agent . "codex")))))
+    (should (= 2 (length (herdr-state-panes next))))
+    (should (= 1 (length (herdr-state-agents next))))))
 
 (ert-deftest herdr-state-reduce-pane-focused-moves-focus ()
   (let ((next (herdr-state-reduce (herdr-state-test--seed)
@@ -123,6 +150,103 @@
     (let ((s (herdr-state-reduce s "workspace_closed" '((workspace_id . "w2")))))
       (should (= 1 (length (herdr-state-workspaces s)))))))
 
+;;; Renames and moves, whose events carry no nested record
+
+(ert-deftest herdr-state-reduce-workspace-renamed-updates-the-label ()
+  "The event is `workspace_id' plus `label', with no WorkspaceInfo.
+Looking for one dropped every rename on the floor, so the dashboard
+went on showing the old name."
+  (let* ((state (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w1") (label . "web")
+                                   (pane_count . 3)))))))
+         (next (herdr-state-reduce state "workspace_renamed"
+                                   '((type . "workspace_renamed")
+                                     (workspace_id . "w1")
+                                     (label . "api")))))
+    (let ((workspace (car (herdr-state-workspaces next))))
+      (should (equal "api" (alist-get 'label workspace)))
+      ;; A rename carries nothing else, so nothing else may be lost.
+      (should (equal 3 (alist-get 'pane_count workspace))))
+    ;; Pure, as ever.
+    (should (equal "web" (alist-get 'label (car (herdr-state-workspaces state)))))))
+
+(ert-deftest herdr-state-reduce-workspace-renamed-for-an-unknown-id-is-a-noop ()
+  (let ((next (herdr-state-reduce (herdr-state-test--seed) "workspace_renamed"
+                                  '((workspace_id . "w9") (label . "api")))))
+    (should (= 1 (length (herdr-state-workspaces next))))
+    (should (equal "web" (alist-get 'label (car (herdr-state-workspaces next)))))))
+
+(ert-deftest herdr-state-reduce-tab-renamed-updates-the-label ()
+  "`tab_id', `workspace_id' and `label'; no TabInfo to be found."
+  (let* ((state (herdr-state-from-snapshot
+                 '((tabs . (((tab_id . "w1:t1") (label . "1")
+                             (workspace_id . "w1") (pane_count . 2)))))))
+         (next (herdr-state-reduce state "tab_renamed"
+                                   '((type . "tab_renamed")
+                                     (tab_id . "w1:t1") (workspace_id . "w1")
+                                     (label . "build")))))
+    (let ((tab (car (herdr-state-tabs next))))
+      (should (equal "build" (alist-get 'label tab)))
+      (should (equal 2 (alist-get 'pane_count tab))))
+    (should (equal "1" (alist-get 'label (car (herdr-state-tabs state)))))))
+
+(ert-deftest herdr-state-reduce-tab-renamed-for-an-unknown-id-is-a-noop ()
+  (let ((next (herdr-state-reduce (herdr-state-test--seed) "tab_renamed"
+                                  '((tab_id . "w9:t9") (label . "build")))))
+    (should (= 1 (length (herdr-state-tabs next))))
+    (should (equal "1" (alist-get 'label (car (herdr-state-tabs next)))))))
+
+(defun herdr-state-test--tab-order (state)
+  "Return STATE's tab ids in list order."
+  (mapcar (lambda (tab) (alist-get 'tab_id tab)) (herdr-state-tabs state)))
+
+(defun herdr-state-test--tab-seed ()
+  "Tabs of two workspaces, interleaved, for move tests."
+  (herdr-state-from-snapshot
+   '((tabs . (((tab_id . "w1:t1") (workspace_id . "w1") (label . "one"))
+              ((tab_id . "w2:t1") (workspace_id . "w2") (label . "other"))
+              ((tab_id . "w1:t2") (workspace_id . "w1") (label . "two"))
+              ((tab_id . "w1:t3") (workspace_id . "w1") (label . "three")))))))
+
+(ert-deftest herdr-state-reduce-tab-moved-places-it-by-insert-index ()
+  "`insert_index' counts among the moved tab's own workspace, so the
+tabs of every other workspace must stay exactly where they were."
+  (let ((next (herdr-state-reduce
+               (herdr-state-test--tab-seed) "tab_moved"
+               '((type . "tab_moved") (tab_id . "w1:t3")
+                 (workspace_id . "w1") (insert_index . 0)
+                 (tabs . [((tab_id . "w1:t3") (workspace_id . "w1")
+                           (label . "three"))
+                          ((tab_id . "w1:t1") (workspace_id . "w1")
+                           (label . "one"))
+                          ((tab_id . "w1:t2") (workspace_id . "w1")
+                           (label . "two"))])))))
+    (should (equal '("w1:t3" "w2:t1" "w1:t1" "w1:t2")
+                   (herdr-state-test--tab-order next)))))
+
+(ert-deftest herdr-state-reduce-tab-moved-folds-in-the-tabs-it-carries ()
+  "The TabInfo the event ships is fresher than the cache's."
+  (let* ((next (herdr-state-reduce
+                (herdr-state-test--tab-seed) "tab_moved"
+                '((tab_id . "w1:t2") (workspace_id . "w1")
+                  (insert_index . 2)
+                  (tabs . [((tab_id . "w1:t2") (workspace_id . "w1")
+                            (label . "renamed"))]))))
+         (tab (seq-find (lambda (candidate)
+                          (equal "w1:t2" (alist-get 'tab_id candidate)))
+                        (herdr-state-tabs next))))
+    (should (equal "renamed" (alist-get 'label tab)))
+    (should (equal '("w1:t1" "w2:t1" "w1:t3" "w1:t2")
+                   (herdr-state-test--tab-order next)))))
+
+(ert-deftest herdr-state-reduce-tab-moved-is-pure ()
+  (let* ((state (herdr-state-test--tab-seed))
+         (_ (herdr-state-reduce state "tab_moved"
+                                '((tab_id . "w1:t3") (workspace_id . "w1")
+                                  (insert_index . 0) (tabs . [])))))
+    (should (equal '("w1:t1" "w2:t1" "w1:t2" "w1:t3")
+                   (herdr-state-test--tab-order state)))))
+
 (defun herdr-state-test--ws-seed ()
   "State with four workspaces w1..w4 in order, for reorder tests."
   (herdr-state-from-snapshot
@@ -138,6 +262,40 @@
   "Return STATE's workspace ids in list order."
   (mapcar (lambda (w) (alist-get 'workspace_id w))
           (herdr-state-workspaces state)))
+
+(ert-deftest herdr-state-reduce-workspace-moved-places-it-by-insert-index ()
+  "`workspace.move' takes an id and an index and the event echoes both,
+so the index is what decides where the workspace lands."
+  (let ((next (herdr-state-reduce
+               (herdr-state-test--ws-seed) "workspace_moved"
+               `((type . "workspace_moved") (workspace_id . "w4")
+                 (insert_index . 1)
+                 (workspaces . [((workspace_id . "w4") (label . "four"))])))))
+    (should (equal '("w1" "w4" "w2" "w3") (herdr-state-test--ws-order next)))))
+
+(ert-deftest herdr-state-reduce-workspace-moved-folds-in-fresh-info ()
+  "The WorkspaceInfo the event carries refreshes labels across the move."
+  (let* ((next (herdr-state-reduce
+                (herdr-state-test--ws-seed) "workspace_moved"
+                `((workspace_id . "w2") (insert_index . 3)
+                  (workspaces . [((workspace_id . "w2") (label . "renamed"))]))))
+         (w2 (seq-find (lambda (w) (equal "w2" (alist-get 'workspace_id w)))
+                       (herdr-state-workspaces next))))
+    (should (equal "renamed" (alist-get 'label w2)))
+    (should (equal '("w1" "w3" "w4" "w2") (herdr-state-test--ws-order next)))))
+
+(ert-deftest herdr-state-reduce-workspace-moved-is-pure ()
+  (let* ((state (herdr-state-test--ws-seed))
+         (_ (herdr-state-reduce state "workspace_moved"
+                                `((workspace_id . "w4") (insert_index . 0)
+                                  (workspaces . [])))))
+    (should (equal '("w1" "w2" "w3" "w4") (herdr-state-test--ws-order state)))))
+
+(ert-deftest herdr-state-reduce-workspace-moved-clamps-a-past-the-end-index ()
+  (let ((next (herdr-state-reduce
+               (herdr-state-test--ws-seed) "workspace_moved"
+               `((workspace_id . "w1") (insert_index . 99) (workspaces . [])))))
+    (should (equal '("w2" "w3" "w4" "w1") (herdr-state-test--ws-order next)))))
 
 (ert-deftest herdr-state-reduce-workspace-reordered-splices-a-block ()
   "A worktree-group move relocates its block ahead of the anchor.

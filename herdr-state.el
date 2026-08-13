@@ -218,20 +218,58 @@ entry are skipped.  Like `herdr-state--upsert', ITEMS is not mutated."
       (setq result (append result (list item))))
     (if spliced result (append result moved))))
 
+(defun herdr-state--merge-item (items key id changes)
+  "Return ITEMS with CHANGES merged into the entry whose KEY is ID.
+
+CHANGES is an alist; keys it does not mention are left alone, which is
+what most of herdr\\='s events need — a rename carries a label and nothing
+else, and the rest of the record must survive it.  A key CHANGES maps to
+nil is still written, since that is how an agent release clears a label.
+
+When no entry matches, ITEMS comes back `eq\\=' to what went in, which is
+how callers tell a miss from a merge.  ITEMS is never mutated."
+  (let ((item (seq-find (lambda (candidate) (equal id (alist-get key candidate)))
+                        items)))
+    (if (not item)
+        items
+      (let ((merged (copy-alist item)))
+        (dolist (cell changes)
+          (setf (alist-get (car cell) merged) (cdr cell)))
+        (herdr-state--upsert items key id merged)))))
+
+(defun herdr-state--move-within (items key id index predicate)
+  "Return ITEMS with the entry whose KEY is ID placed at INDEX.
+
+Only the entries PREDICATE accepts take part: they are lifted out in
+order, the one named by ID is put back among them at INDEX, and the
+result is written into the slots they came from.  Entries PREDICATE
+rejects never move, which is what lets a tab be positioned among its own
+workspace\\='s tabs while the cache holds every workspace\\='s tabs in one
+flat list.
+
+An ID no entry carries leaves ITEMS alone; an INDEX past the end is
+clamped.  Like `herdr-state--upsert\\=', ITEMS is not mutated."
+  (let* ((group (seq-filter predicate items))
+         (moved (seq-find (lambda (item) (equal id (alist-get key item))) group)))
+    (if (not moved)
+        items
+      (let* ((rest (delq moved (copy-sequence group)))
+             (at (max 0 (min (length rest) (or index 0))))
+             (ordered (append (seq-take rest at) (list moved) (seq-drop rest at)))
+             (result nil))
+        (dolist (item items (nreverse result))
+          (push (if (funcall predicate item) (pop ordered) item) result))))))
+
 (defun herdr-state--merge-pane (state pane-id changes)
   "Return STATE with CHANGES merged into the pane named PANE-ID.
 Absent panes are ignored.  Keys not present in CHANGES are left alone,
 which matters because per-pane status events carry only a few fields."
-  (let ((pane (herdr-state-pane state pane-id)))
-    (if (not pane)
+  (let ((panes (herdr-state--merge-item (herdr-state-panes state)
+                                        'pane_id pane-id changes)))
+    (if (eq panes (herdr-state-panes state))
         state
-      (let ((merged (copy-alist pane))
-            (next (herdr-state-copy state)))
-        (dolist (cell changes)
-          (setf (alist-get (car cell) merged) (cdr cell)))
-        (setf (herdr-state-panes next)
-              (herdr-state--upsert (herdr-state-panes state)
-                                   'pane_id pane-id merged))
+      (let ((next (herdr-state-copy state)))
+        (setf (herdr-state-panes next) panes)
         next))))
 
 (defun herdr-state-reduce (state kind data)
@@ -242,7 +280,7 @@ global events use underscores while the three per-pane subscription
 events use dots, so both spellings appear here deliberately."
   (let ((next (herdr-state-copy state)))
     (pcase kind
-      ((or "pane_created" "pane_updated" "pane_moved" "pane_agent_detected")
+      ((or "pane_created" "pane_updated" "pane_moved")
        (let ((pane (alist-get 'pane data)))
          (if (not pane)
              state
@@ -261,6 +299,22 @@ events use dots, so both spellings appear here deliberately."
        (setf (herdr-state-focused-pane-id next) (alist-get 'pane_id data))
        next)
 
+      ("pane_agent_detected"
+       ;; Flat, unlike the three pane events above that this used to
+       ;; share a branch with: `pane_id', `workspace_id', the detected
+       ;; `agent', and — when herdr is announcing a release rather than a
+       ;; detection — `released' with the `final_status' the agent ended
+       ;; on.  There is no PaneInfo here, so reading one found nil and
+       ;; the branch did nothing at all.
+       ;;
+       ;; `agent' is written even when it is nil, because a release is
+       ;; exactly the event that has to clear the label.
+       (herdr-state--merge-pane
+        state (alist-get 'pane_id data)
+        (cons (cons 'agent (alist-get 'agent data))
+              (when-let* ((status (alist-get 'final_status data)))
+                (list (cons 'agent_status status))))))
+
       ("pane.agent_status_changed"
        (herdr-state--merge-pane
         state (alist-get 'pane_id data)
@@ -272,8 +326,8 @@ events use dots, so both spellings appear here deliberately."
        (herdr-state--merge-pane state (alist-get 'pane_id data)
                                 (list (cons 'scroll (alist-get 'scroll data)))))
 
-      ((or "workspace_created" "workspace_updated" "workspace_renamed"
-           "workspace_moved" "workspace_metadata_updated")
+      ((or "workspace_created" "workspace_updated"
+           "workspace_metadata_updated")
        (let ((workspace (alist-get 'workspace data)))
          (if (not workspace)
              state
@@ -283,6 +337,46 @@ events use dots, so both spellings appear here deliberately."
                                       (alist-get 'workspace_id workspace)
                                       workspace))
            next)))
+
+      ("workspace_renamed"
+       ;; Flat: `workspace_id' and the new `label', nothing more.  The
+       ;; branch used to look for a whole WorkspaceInfo under
+       ;; `workspace', found nothing and returned the state untouched —
+       ;; so ten renames in one session never reached the cache and the
+       ;; dashboard showed the old name until something forced a resync.
+       (let ((workspaces (herdr-state--merge-item
+                          (herdr-state-workspaces state) 'workspace_id
+                          (alist-get 'workspace_id data)
+                          (list (cons 'label (alist-get 'label data))))))
+         (if (eq workspaces (herdr-state-workspaces state))
+             state
+           (setf (herdr-state-workspaces next) workspaces)
+           next)))
+
+      ("workspace_moved"
+       ;; `workspace_id' and `insert_index' — `workspace.move's own two
+       ;; parameters, echoed back — plus `workspaces', which carries
+       ;; WorkspaceInfo and is folded in first so labels and counts stay
+       ;; current across the move.  Both a vector, as JSON arrays decode.
+       ;;
+       ;; Placement follows `insert_index' rather than the order of the
+       ;; `workspaces' array: the index is the number the caller passed
+       ;; and so cannot be misread, whereas whether that array is the
+       ;; whole new ordering or only the workspaces it touched is not
+       ;; something the schema says.
+       (dolist (workspace (append (alist-get 'workspaces data) nil))
+         (setf (herdr-state-workspaces next)
+               (herdr-state--upsert (herdr-state-workspaces next)
+                                    'workspace_id
+                                    (alist-get 'workspace_id workspace)
+                                    workspace)))
+       (setf (herdr-state-workspaces next)
+             (herdr-state--move-within (herdr-state-workspaces next)
+                                       'workspace_id
+                                       (alist-get 'workspace_id data)
+                                       (alist-get 'insert_index data)
+                                       (lambda (_workspace) t)))
+       next)
 
       ("workspace_closed"
        (setf (herdr-state-workspaces next)
@@ -316,7 +410,7 @@ events use dots, so both spellings appear here deliberately."
               (alist-get 'before_workspace_id data)))
        next)
 
-      ((or "tab_created" "tab_renamed" "tab_moved")
+      ("tab_created"
        (let ((tab (alist-get 'tab data)))
          (if (not tab)
              state
@@ -324,6 +418,37 @@ events use dots, so both spellings appear here deliberately."
                  (herdr-state--upsert (herdr-state-tabs state) 'tab_id
                                       (alist-get 'tab_id tab) tab))
            next)))
+
+      ("tab_renamed"
+       ;; `tab_id', `workspace_id' and the new `label'.  No TabInfo, so
+       ;; the old shared branch read nil and dropped every rename.
+       (let ((tabs (herdr-state--merge-item
+                    (herdr-state-tabs state) 'tab_id
+                    (alist-get 'tab_id data)
+                    (list (cons 'label (alist-get 'label data))))))
+         (if (eq tabs (herdr-state-tabs state))
+             state
+           (setf (herdr-state-tabs next) tabs)
+           next)))
+
+      ("tab_moved"
+       ;; `tab_id', `workspace_id', `insert_index' and a `tabs' vector of
+       ;; TabInfo, folded in first for freshness.  `insert_index' counts
+       ;; among the tabs of `workspace_id' alone, since that is what
+       ;; `tab.move' means by it, while the cache holds every
+       ;; workspace's tabs in one list.
+       (dolist (tab (append (alist-get 'tabs data) nil))
+         (setf (herdr-state-tabs next)
+               (herdr-state--upsert (herdr-state-tabs next) 'tab_id
+                                    (alist-get 'tab_id tab) tab)))
+       (let ((workspace-id (alist-get 'workspace_id data)))
+         (setf (herdr-state-tabs next)
+               (herdr-state--move-within
+                (herdr-state-tabs next) 'tab_id (alist-get 'tab_id data)
+                (alist-get 'insert_index data)
+                (lambda (tab)
+                  (equal workspace-id (alist-get 'workspace_id tab))))))
+       next)
 
       ("tab_closed"
        (setf (herdr-state-tabs next)
