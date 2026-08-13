@@ -98,6 +98,70 @@ than duplicated beside it."
     (should (string-match-p "w1:p1" pane))
     (should (string-match-p "fixing tests" pane))))
 
+;;; The animated spinner in a terminal title
+
+(defun herdr-tree-test--spinning-state (title)
+  "Return a one-pane state whose pane reports TITLE."
+  (herdr-state-from-snapshot
+   `((workspaces . (((workspace_id . "w1") (label . "w") (pane_count . 1))))
+     (panes . (((pane_id . "w1:p1") (workspace_id . "w1") (tab_id . "w1:t1")
+                (agent . "claude") (agent_status . "working")
+                (terminal_title_stripped . ,title)))))))
+
+(ert-deftest herdr-tree-normalises-the-spinner-out-of-a-title ()
+  "Two titles that differ only in the spinner must build equal trees.
+
+Claude animates a half-circle glyph at the head of the terminal title
+and it survives into `terminal_title_stripped', which the dashboard
+renders.  So while an agent works the rendered tree genuinely differs on
+every event, the unchanged-tree skip in `herdr-dispatch-refresh' never
+engages, and the buffer is erased and rebuilt about once a second —
+taking the section highlight with it each time.
+
+Measured over one 60-second window on a working pane: 485 titles, 239
+\"◑ Debug webmentions from fed.brid.gy\", 238 the same with \"◐\", 8 with
+no glyph.  All three shapes are used here, and all three must agree.
+
+Tree equality is the assertion rather than the text of one line, because
+tree equality is precisely what the redraw skip tests."
+  (let ((spun-a (herdr-tree-build
+                 (herdr-tree-test--spinning-state "◐ Debug webmentions") nil))
+        (spun-b (herdr-tree-build
+                 (herdr-tree-test--spinning-state "◑ Debug webmentions") nil))
+        (still (herdr-tree-build
+                (herdr-tree-test--spinning-state "Debug webmentions") nil)))
+    (should (equal spun-a spun-b))
+    (should (equal spun-a still))))
+
+(ert-deftest herdr-tree-keeps-the-words-of-a-title-it-normalises ()
+  "Only the leading glyph run and the space after it come off.
+
+A title is the agent's own words; stripping is for the animation, not
+for the message.  A title that is nothing but a spinner is the one case
+that ends up empty, and it says nothing anyway."
+  (should (equal "Debug webmentions from fed.brid.gy"
+                 (herdr-tree--steady-title
+                  "◐ Debug webmentions from fed.brid.gy")))
+  (should (equal "Debug webmentions" (herdr-tree--steady-title
+                                      "Debug webmentions")))
+  (should (equal "" (herdr-tree--steady-title "◑ ")))
+  (should (equal "" (herdr-tree--steady-title "")))
+  ;; Not from the middle or the end: those are the agent's characters.
+  (should (equal "phase ◐ two" (herdr-tree--steady-title "phase ◐ two")))
+  (should (equal "done ◑" (herdr-tree--steady-title "done ◑"))))
+
+(ert-deftest herdr-tree-spinner-normalisation-reaches-the-pane-row ()
+  "The strip has to happen where the line is built, not only in the helper.
+
+A `herdr-tree--steady-title' that nothing calls would pass every
+assertion above while the dashboard went on redrawing once a second."
+  (let ((line (nth 2 (car (nth 3 (car (herdr-tree-build
+                                       (herdr-tree-test--spinning-state
+                                        "◐ Debug webmentions")
+                                       nil)))))))
+    (should (string-match-p "Debug webmentions" line))
+    (should-not (string-match-p "◐" line))))
+
 ;;; Faces
 
 (defun herdr-tree-test--face-of (line text)
