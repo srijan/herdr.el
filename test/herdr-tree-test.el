@@ -454,6 +454,93 @@ would not pass."
     (should (equal '("/tmp/herdr.el-feat")
                    (mapcar (lambda (node) (nth 1 node)) (nth 3 section))))))
 
+(ert-deftest herdr-tree-draws-no-row-for-the-workspace-the-list-belongs-to ()
+  "The same destruction, one shape over, and made by this package's own RET.
+
+`is_linked_worktree' alone does not catch it.  Press RET on a worktree
+row and `herdr-dispatch-open-worktree' opens it as a workspace of its
+own; the next `worktree.list' for that workspace then returns its own
+directory as a LINKED worktree whose `open_workspace_id' is that
+workspace.  It renders inside its own worktrees section, and `k' there
+resolves to the workspace the row is nested under — which is the
+workspace you are standing in, exactly as before.
+
+Not reachable in the session the first fix was measured against, which
+had no linked worktrees at all, so nothing caught it.
+
+The entry here is `is_linked_worktree' TRUE, which is what makes this a
+different test from the bare-checkout one rather than the same test
+twice."
+  (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el-fix")
+                                (branch . "fix")
+                                (is_linked_worktree . t)
+                                (open_workspace_id . "w1"))))))
+         (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
+                                                 worktrees)))))
+    (should-not (seq-find (lambda (node) (eq 'herdr-worktrees (nth 0 node)))
+                          children))))
+
+(ert-deftest herdr-tree-keeps-a-sibling-worktree-beside-the-self-row ()
+  "Dropping the self row must not drop the section with it.
+
+The workspace's own row goes; a genuine sibling worktree stays, and the
+count follows.  A filter that keyed on the section rather than the row
+would pass the test above and lose every real worktree here."
+  (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el-fix")
+                                (branch . "fix")
+                                (is_linked_worktree . t)
+                                (open_workspace_id . "w1"))
+                               ((path . "/tmp/herdr.el-spike")
+                                (branch . "spike")
+                                (is_linked_worktree . t)
+                                (open_workspace_id . nil))))))
+         (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
+                                                 worktrees))))
+         (section (car (last children))))
+    (should (eq 'herdr-worktrees (nth 0 section)))
+    (should (string-match-p "worktrees (1)" (nth 2 section)))
+    (should (equal '("/tmp/herdr.el-spike")
+                   (mapcar (lambda (node) (nth 1 node)) (nth 3 section))))))
+
+(ert-deftest herdr-tree-drops-a-checkout-that-is-not-this-workspace ()
+  "The case only `herdr-tree-linked-worktree-p' catches, in the renderer.
+
+Every other bare-checkout test here has the checkout naming the
+enclosing workspace, so `herdr-tree-own-workspace-p' catches those too
+and the linked check could be deleted without a single failure — which
+is exactly what a mutation run found.
+
+This is the shape that separates them.  The listing is fetched for the
+workspace's pane cwd, so a pane `cd'-ed into another repository — or a
+workspace whose first pane sits inside a checkout herdr opened
+separately — produces a reply whose main checkout names a DIFFERENT
+workspace, or none at all.  Still not a worktree; still must not be a
+row, because `k' on it would remove whatever workspace it does name."
+  (dolist (open '("w9" nil))
+    (let* ((worktrees `(("w1" . (((path . "/tmp/elsewhere")
+                                  (branch . "main")
+                                  (is_linked_worktree . nil)
+                                  (open_workspace_id . ,open))))))
+           (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
+                                                   worktrees)))))
+      (should-not (seq-find (lambda (node) (eq 'herdr-worktrees (nth 0 node)))
+                            children)))))
+
+(ert-deftest herdr-tree-own-workspace-p-asks-only-about-this-listing ()
+  "Neither predicate subsumes the other, so both get applied.
+
+`herdr-tree-own-workspace-p' asks \\='is this row the workspace it is
+nested under?\\=', which a main checkout also answers yes to — but not
+always.  The listing is fetched for the workspace's pane cwd, and a pane
+`cd'-ed into another repository produces a reply whose main checkout
+names some OTHER workspace, or none: that is the third case here, and it
+is why `herdr-tree-linked-worktree-p' still has to be asked."
+  (should (herdr-tree-own-workspace-p '((open_workspace_id . "w1")) "w1"))
+  (should-not (herdr-tree-own-workspace-p '((open_workspace_id . "w2")) "w1"))
+  (should-not (herdr-tree-own-workspace-p '((open_workspace_id . nil)) "w1"))
+  ;; Not "both nil, therefore the same thing".
+  (should-not (herdr-tree-own-workspace-p '((open_workspace_id . nil)) nil)))
+
 (ert-deftest herdr-tree-treats-a-missing-linked-flag-as-not-linked ()
   "`is_linked_worktree' is a required field, so its absence is a reply the
 schema does not describe.  Dropping the row costs a line the workspace

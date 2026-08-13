@@ -636,6 +636,55 @@ same row from disagreeing about which worktree it names."
                 (equal path (alist-get 'path candidate)))
               (apply #'append (mapcar #'cdr herdr-dispatch--worktrees)))))
 
+(defun herdr-dispatch--checked-worktree-at-point ()
+  "Return the cached WorktreeInfo at point, or refuse the row.
+
+The backstop for the renderer\\='s filter, and the one place every worktree
+verb — `RET\\=', `f\\=' and `k\\=' alike — resolves a row through.  It refuses
+exactly what `herdr-tree--worktrees-node\\=' declines to draw, so a row that
+the renderer would not have produced cannot be acted on if one is reached
+anyway: from a cache entry drawn before the filter existed, or a listing
+whose required field the server omitted.
+
+Three refusals, in the order the answers become available.
+
+A row with no cached record at all comes first.  Checking anything else
+first would read fields off nil and announce, confidently and wrongly,
+that a row whose record simply could not be found is the repository\\='s
+own checkout.
+
+Then the two the renderer applies: `herdr-tree-linked-worktree-p\\=', for a
+row that is not a worktree, and `herdr-tree-own-workspace-p\\=' against the
+enclosing `herdr-workspace\\=' section, for a row that IS that workspace.
+The second is what makes this a guard rather than a formality: `k\\=' on
+such a row resolves to the workspace the row is nested inside, which is
+the destruction the whole worktree fix is about.
+
+`RET\\=' goes through here too, which it did not before.  That mattered:
+`herdr-dispatch-open-worktree\\=' read `open_workspace_id\\=' straight off
+the record, so on a stale main-checkout row it focused the enclosing
+workspace — and where that field was nil it fell through to a MUTATING
+`worktree.open\\=' against the enclosing workspace\\='s own directory.  The
+one verb that reached the server unguarded was the one that skipped the
+guard."
+  (let ((worktree (herdr-dispatch--worktree-at-point)))
+    (unless worktree
+      (user-error
+       "herdr: no worktree listing is cached for the row at point (g refetches)"))
+    (let ((name (or (alist-get 'branch worktree)
+                    (alist-get 'path worktree)
+                    "the row at point")))
+      (unless (herdr-tree-linked-worktree-p worktree)
+        (user-error
+         "herdr: %s is the repository's own checkout, not one of its worktrees"
+         name))
+      (when (herdr-tree-own-workspace-p
+             worktree (herdr-dispatch--value-at-point 'herdr-workspace))
+        (user-error
+         "herdr: %s is the workspace this list belongs to, not one of its worktrees"
+         name))
+      worktree)))
+
 (defun herdr-dispatch--worktree-workspace ()
   "Return the id of the workspace the worktree at point is open as.
 
@@ -646,23 +695,10 @@ this row was expanded from, a different object entirely — reaching for it
 is how `k\\=' came to remove the very workspace point was standing in.  So
 this refuses rather than guesses.
 
-Refusing on `open_workspace_id\\=' alone was not enough, because the
-server hands back the enclosing workspace\\='s own id for the repository\\='s
-main checkout — see `herdr-tree-linked-worktree-p\\=' for the measurement.
-A row for such a checkout is no longer drawn, so this second refusal is
-for a row reached some other way: a cache entry rendered before the
-filter existed, or a listing whose required field the server omitted.
-It sits here rather than in `herdr-dispatch-close\\=' because this is the
-one function both destructive and harmless worktree verbs resolve
-through, and a guard that only `k\\=' consults is a guard the next verb
-forgets."
-  (let ((worktree (herdr-dispatch--worktree-at-point)))
-    (unless (herdr-tree-linked-worktree-p worktree)
-      (user-error
-       "herdr: %s is the repository's own checkout, not one of its worktrees"
-       (or (alist-get 'branch worktree)
-           (alist-get 'path worktree)
-           "the row at point")))
+Whether the row may be acted on at all is settled first, by
+`herdr-dispatch--checked-worktree-at-point\\='.  Only the question this
+function\\='s own name asks is left here."
+  (let ((worktree (herdr-dispatch--checked-worktree-at-point)))
     (or (alist-get 'open_workspace_id worktree)
         (user-error "herdr: worktree %s is not open as a workspace (RET opens it)"
                     (or (alist-get 'branch worktree)
@@ -703,8 +739,16 @@ Calls `worktree.open\\=' directly rather than through `herdr-worktree-open\\=',
 which derives its `cwd\\=' from the calling buffer's `default-directory\\=' —
 here that would be `*herdr-agents*\\=', not the worktree's own workspace,
 so the request would resolve against whatever directory the dispatcher
-buffer happened to hold rather than the workspace at point."
-  (let* ((worktree (herdr-dispatch--worktree-at-point))
+buffer happened to hold rather than the workspace at point.
+
+Resolves through `herdr-dispatch--checked-worktree-at-point\\=' like every
+other worktree verb.  It cannot use `herdr-dispatch--worktree-workspace\\='
+itself, which refuses a worktree that is not open as a workspace —
+opening exactly that is what this command is for — but the checks that
+say whether the row may be acted on at all are the same ones, and
+reading the record directly is what let this command act on rows the
+others refuse."
+  (let* ((worktree (herdr-dispatch--checked-worktree-at-point))
          (workspace (herdr-dispatch--require 'herdr-workspace "a workspace")))
     (if-let* ((open (alist-get 'open_workspace_id worktree)))
         (herdr-workspace-focus open)

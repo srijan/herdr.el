@@ -1744,6 +1744,41 @@ pass over a refresh that had stopped drawing anything at all."
                          (herdr-dispatch-refresh)))))
     (should (herdr-dispatch-test--highlighted-p))))
 
+(ert-deftest herdr-dispatch-open-worktree-refuses-what-the-other-verbs-refuse ()
+  "RET reached the server on rows every other worktree verb refuses.
+
+`herdr-dispatch-open-worktree' read `open_workspace_id' straight off the
+cached record rather than resolving through the checked path, so on a
+stale main-checkout row it focused the enclosing workspace — and where
+that field was nil it fell through to `worktree.open', a MUTATING call,
+against the enclosing workspace's own directory.  The one verb that
+reaches the server unguarded was the one that skipped the guard.
+
+Three rows, one per refusal, and `herdr-rpc-call' is recorded in each so
+that a refusal arriving after the request went out would not pass.  The
+nil-`open_workspace_id' row is the important one: that is the case that
+used to take the mutating branch rather than the focusing one."
+  (dolist (worktree '(((path . "/tmp/herdr.el-fix")
+                       (branch . "main")
+                       (is_linked_worktree . nil)
+                       (open_workspace_id . "w1"))
+                      ((path . "/tmp/herdr.el-fix")
+                       (branch . "main")
+                       (is_linked_worktree . nil)
+                       (open_workspace_id . nil))
+                      ((path . "/tmp/herdr.el-fix")
+                       (branch . "fix")
+                       (is_linked_worktree . t)
+                       (open_workspace_id . "w1"))))
+    (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+      (let ((herdr-dispatch--worktrees (list (cons "w1" (list worktree)))))
+        (search-forward "open as w2")
+        (should (equal nil
+                       (herdr-dispatch-test-with-recorders
+                           (herdr-rpc-call herdr-workspace-focus)
+                         (should-error (herdr-dispatch-open-worktree)
+                                       :type 'user-error))))))))
+
 (ert-deftest herdr-dispatch-open-worktree-focuses-an-already-open-worktree ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (let ((herdr-dispatch--worktrees
@@ -1962,6 +1997,46 @@ how the bug survived the previous fix."
                                            herdr-worktree-remove herdr-rpc-call)
                        (should-error (herdr-dispatch-close)
                                      :type 'user-error)))))))
+
+(ert-deftest herdr-dispatch-close-refuses-a-row-naming-its-own-workspace ()
+  "A linked worktree opened as a workspace lists itself, and `k' on that
+row removed the workspace it is nested under.
+
+This is the shape `herdr-tree-own-workspace-p' describes, and this
+package's own RET is what creates it.  `is_linked_worktree' is true
+here, so the main-checkout guard does not fire — this row is a real
+worktree, and it is also this section's own workspace."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((herdr-dispatch--worktrees
+           '(("w1" . (((path . "/tmp/herdr.el-fix")
+                       (is_linked_worktree . t)
+                       (branch . "fix")
+                       (open_workspace_id . "w1")))))))
+      (search-forward "open as w2")
+      (should (equal nil
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-pane-close herdr-tab-close herdr-workspace-close
+                                           herdr-worktree-remove herdr-rpc-call)
+                       (should-error (herdr-dispatch-close)
+                                     :type 'user-error)))))))
+
+(ert-deftest herdr-dispatch-close-refuses-a-row-with-no-cached-record ()
+  "A row whose record cannot be found must say so, not misdiagnose itself.
+
+The checks read fields off the record, so the missing-record case has to
+come first.  Run second, it reads them off nil and announces — with
+every appearance of confidence — that the row is the repository's own
+checkout, which is a different problem with a different fix."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (let ((herdr-dispatch--worktrees
+           '(("w1" . (((path . "/tmp/somewhere-else")
+                       (is_linked_worktree . t)
+                       (branch . "other")))))))
+      (search-forward "open as w2")
+      (let ((message (cadr (should-error (herdr-dispatch--checked-worktree-at-point)
+                                         :type 'user-error))))
+        (should (string-match-p "no worktree listing" message))
+        (should-not (string-match-p "own checkout" message))))))
 
 (ert-deftest herdr-dispatch-close-refuses-a-line-with-nothing-on-it ()
   (herdr-dispatch-test-with-buffer nil
