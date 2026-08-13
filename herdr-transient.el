@@ -137,8 +137,7 @@ where magit puts the same two ideas."
    ["Adopt"
     :if-not herdr-transient-tui-p
     ("A" "adopt shell"   herdr-adopt-shell)
-    ("U" "unadopt shell" herdr-release-shell)
-    ("G" "promote shell" herdr-promote-shell)]])
+    ("U" "unadopt shell" herdr-release-shell)]])
 
 (transient-define-prefix herdr-transient-agent ()
   "Act on an agent."

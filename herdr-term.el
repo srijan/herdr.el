@@ -411,7 +411,6 @@ on each one would mean two dozen round trips for one directory change."
   ;; of panes the server no longer has.  Pruning matters most exactly when
   ;; no buffers are open yet, because that is when the pickers are used.
   (when (herdr-state-running-p)
-    (herdr-state-promote-shell-panes)
     (when (herdr-state-reconcile-panes)
       (herdr-term--sync-directories))))
 

@@ -217,14 +217,11 @@ roundabout way to reach a pane."
 (ert-deftest herdr-transient-adoption-is-offered-and-hidden-under-session ()
   "Adoption exists to make a pane attachable under `agent-windows'.
 The session TUI already shows every pane, so adopting there only adds a
-fake agent row to herdr's own sidebar.
-
-Also guards a silent omission: `herdr-promote-shell' was documented as
-being on the menu while never actually having been added to it."
+fake agent row to herdr's own sidebar."
   (let ((commands (mapcar (lambda (n) (plist-get n :command))
                           (herdr-transient-test--all-suffix-plists
                            'herdr-transient-pane))))
-    (dolist (want '(herdr-adopt-shell herdr-release-shell herdr-promote-shell))
+    (dolist (want '(herdr-adopt-shell herdr-release-shell))
       (should (equal (list want t) (list want (and (memq want commands) t)))))))
 
 (ert-deftest herdr-transient-every-curated-command-is-reachable ()

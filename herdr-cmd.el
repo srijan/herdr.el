@@ -62,8 +62,7 @@
     (herdr-agent-focus           "agent.focus"          "target")
     (herdr-notification-show     "notification.show"    "title" "body" "sound")
     (herdr-adopt-shell           "pane.report_agent"    "pane_id" "source" "agent" "state")
-    (herdr-release-shell         "pane.release_agent"   "pane_id" "source" "agent")
-    (herdr-promote-shell         "pane.report_agent"    "pane_id" "source" "agent" "state"))
+    (herdr-release-shell         "pane.release_agent"   "pane_id" "source" "agent"))
   "Every curated command, with the method and parameters it uses.
 Each entry is (COMMAND METHOD PARAM...).  Verified against the live
 schema by the drift test.")
@@ -594,6 +593,14 @@ attachable, after which the usual reconciliation gives it a buffer.
 The shell then outlives Emacs, which is the point — a build started this
 way survives a restart, which a plain ghostel shell cannot.
 
+Starting a real agent in an adopted shell needs nothing further.
+Reporting an agent does not suppress herdr\\='s own detection — measured
+against 0.8.0, a pane reported as `herdr-shell-agent-name\\=' was
+relabelled `claude\\=' about three seconds after Claude started, without
+being asked.  herdr.el once polled `agent.explain\\=' to force that
+relabelling itself, which cost 936 calls in one session and promoted
+nothing.
+
 Costs: herdr's own sidebar lists the pane in its agents section, labelled
 with `herdr-shell-agent-name'.  herdr.el keeps it out of the modeline
 count, the agent picker and notifications, since a shell has no
@@ -609,26 +616,6 @@ lifecycle.  Reverse it with `herdr-release-shell'."
     ;; stream, so settle the cache rather than waiting for news.
     (herdr-state-resync)
     (message "herdr: adopted %s; it will get a buffer under agent-windows" pane)))
-
-(defun herdr-promote-shell (&optional pane-id)
-  "Relabel PANE-ID with whatever agent herdr has detected running in it.
-
-Use after starting an agent inside an adopted shell.  This happens
-automatically on the next poll; the command is for not waiting."
-  (interactive)
-  (let* ((pane (or pane-id (herdr-select-target-pane "Promote pane: ")))
-         (detected (herdr-state-detected-agent pane)))
-    (cond
-     ((null detected)
-      (message "herdr: no agent detected in %s" pane))
-     ((equal detected herdr-shell-agent-name)
-      (message "herdr: %s is still just a shell" pane))
-     (t
-      (herdr-rpc-call "pane.report_agent"
-                      `((pane_id . ,pane) (source . ,herdr-cmd-adopt-source)
-                        (agent . ,detected) (state . "idle")))
-      (herdr-state-resync)
-      (message "herdr: %s promoted to %s" pane detected)))))
 
 (defun herdr-release-shell (&optional pane-id)
   "Undo `herdr-adopt-shell' for PANE-ID, dropping its buffer.

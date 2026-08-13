@@ -337,50 +337,6 @@ directory's own name."
     (should (null (alist-get 'body params)))
     (should (equal "none" (alist-get 'sound params)))))
 
-;;; Promoting an adopted shell branches on what is detected
-
-(ert-deftest herdr-promote-shell-reports-the-detected-agent ()
-  "Once a real agent is running in an adopted shell, relabel the pane
-with it so it stops reading as a bare shell."
-  (let (resynced said)
-    (cl-letf (((symbol-function 'herdr-state-detected-agent)
-               (lambda (_) "claude"))
-              ((symbol-function 'herdr-state-resync)
-               (lambda (&rest _) (setq resynced t)))
-              ((symbol-function 'message)
-               (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
-      (herdr-cmd-test--capturing-params params
-        (herdr-promote-shell "w1:p1")
-        (should (equal "claude" (alist-get 'agent params)))
-        (should resynced)
-        (should (string-match-p "promoted" (or said "")))))))
-
-(ert-deftest herdr-promote-shell-does-nothing-without-a-detected-agent ()
-  (let (called said)
-    (cl-letf (((symbol-function 'herdr-state-detected-agent) (lambda (_) nil))
-              ((symbol-function 'herdr-rpc-call)
-               (lambda (&rest _) (setq called t)))
-              ((symbol-function 'message)
-               (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
-      (herdr-promote-shell "w1:p1")
-      (should-not called)
-      (should (string-match-p "no agent detected" (or said ""))))))
-
-(ert-deftest herdr-promote-shell-leaves-a-plain-shell-alone ()
-  "A pane still wearing only the adopted-shell label has nothing to be
-promoted to, so it must not report anything."
-  (let ((herdr-shell-agent-name "herdr-shell")
-        called said)
-    (cl-letf (((symbol-function 'herdr-state-detected-agent)
-               (lambda (_) "herdr-shell"))
-              ((symbol-function 'herdr-rpc-call)
-               (lambda (&rest _) (setq called t)))
-              ((symbol-function 'message)
-               (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
-      (herdr-promote-shell "w1:p1")
-      (should-not called)
-      (should (string-match-p "still just a shell" (or said ""))))))
-
 ;;; Starting an agent must surface it
 
 (ert-deftest herdr-agent-start-focuses-and-shows-the-new-agent ()
