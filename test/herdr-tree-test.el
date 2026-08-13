@@ -150,6 +150,40 @@ that ends up empty, and it says nothing anyway."
   (should (equal "phase ◐ two" (herdr-tree--steady-title "phase ◐ two")))
   (should (equal "done ◑" (herdr-tree--steady-title "done ◑"))))
 
+(ert-deftest herdr-tree-spinner-glyphs-are-quoted-into-the-character-class ()
+  "The constant is interpolated into a regexp, and it invites editing.
+
+Its docstring says to add a glyph when another agent turns up, so the
+next character in it is chosen by whoever hits that.  Interpolated raw
+between brackets, some characters stop being characters:
+
+  a leading `^' negates the class — `[^◐]' matches everything that is
+  NOT the spinner, so the first title word is deleted and the rest of
+  the line with it, on every pane, silently;
+
+  a `-' between two others makes a range — `[a-z]' is twenty-six
+  characters nobody put there.
+
+`regexp-opt-charset' quotes both back into literals (`[◐^]', `[az-]'),
+and these are the two sets that tell the two spellings apart.  A set of
+`]', `^' and `-' does NOT: Emacs happens to read `[]^-]' as three
+literals either way, so a test using that one passes over the raw
+version — which a mutation run found it doing."
+  (let ((herdr-tree-spinner-glyphs '(?^ ?◐)))
+    (should (equal "working" (herdr-tree--steady-title "^ working")))
+    (should (equal "working" (herdr-tree--steady-title "◐ working")))
+    ;; The whole point: a title with no glyph at its head keeps every
+    ;; character it had.
+    (should (equal "hello world" (herdr-tree--steady-title "hello world"))))
+  (let ((herdr-tree-spinner-glyphs '(?a ?- ?z)))
+    (should (equal "hello world" (herdr-tree--steady-title "hello world")))
+    (should (equal "world" (herdr-tree--steady-title "az- world"))))
+  ;; A single glyph is a class of one, which needs no brackets at all and
+  ;; must still not swallow the character after it.
+  (let ((herdr-tree-spinner-glyphs '(?◐)))
+    (should (equal "working" (herdr-tree--steady-title "◐ working")))
+    (should (equal "◑ working" (herdr-tree--steady-title "◑ working")))))
+
 (ert-deftest herdr-tree-spinner-normalisation-reaches-the-pane-row ()
   "The strip has to happen where the line is built, not only in the helper.
 
