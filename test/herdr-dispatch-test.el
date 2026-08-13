@@ -1394,6 +1394,38 @@ asked again."
     (should-not herdr-dispatch--worktrees-unanswered)
     (should (equal 8 herdr-dispatch--worktrees-generation))))
 
+(ert-deftest herdr-dispatch-closing-a-workspace-drops-the-cache ()
+  "A worktree listing must not outlive the workspaces it describes.
+
+`workspace_closed' did not invalidate anything, so a closed workspace's
+entry sat in the cache for the rest of the session — and
+`herdr-dispatch--worktree-at-point' flattens every cached listing
+together before searching it, so that dead entry could still supply the
+record a worktree row resolved to.
+
+The sibling entry is asserted gone as well, and that is the half that
+says why this drops the whole cache rather than one entry.  Every other
+workspace's listing carries `open_workspace_id' for the workspace that
+just closed: `w2' here still claims a worktree is \"open as w1\".
+Dropping only `w1' would leave that claim standing, on a row a user
+would then press RET on."
+  (let ((herdr-dispatch--worktrees
+         '(("w1" . (((path . "/tmp/gone") (is_linked_worktree . t))))
+           ("w2" . (((path . "/tmp/sibling") (is_linked_worktree . t)
+                     (open_workspace_id . "w1"))))))
+        (herdr-dispatch--worktrees-pending '("w3"))
+        (herdr-dispatch--worktrees-unanswered '(("w4" . error)))
+        (herdr-dispatch--worktrees-generation 7))
+    (herdr-dispatch--invalidate-worktrees "workspace_closed"
+                                          '((workspace_id . "w1")))
+    (should-not (assoc "w1" herdr-dispatch--worktrees))
+    (should-not (assoc "w2" herdr-dispatch--worktrees))
+    (should-not herdr-dispatch--worktrees-pending)
+    (should-not herdr-dispatch--worktrees-unanswered)
+    ;; Requests already on the wire have to be abandoned too, or one
+    ;; lands afterwards and writes the entry straight back.
+    (should (equal 8 herdr-dispatch--worktrees-generation))))
+
 (ert-deftest herdr-dispatch-unrelated-events-keep-the-cache ()
   (let ((herdr-dispatch--worktrees '(("w1" . (ignored))))
         (herdr-dispatch--worktrees-generation 7))
