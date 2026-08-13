@@ -10,6 +10,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 (require 'herdr-term)
 
 (defun herdr-term-test--state (&rest panes)
@@ -468,17 +469,27 @@ not be handed to `cancel-timer', which signals on one."
 has stopped, and `herdr-start' then adopts it as though it were live.
 The hook and the timer go with it, since a teardown that leaves either
 one on keeps working on buffers that are gone."
-  (let ((herdr-terminal-backend 'session)
-        (herdr-state-change-hook (list #'herdr-term--on-state-change))
-        (herdr-term--directory-timer nil)
-        (herdr-term--directory-debounce-timer nil)
-        (buffer (get-buffer-create herdr-term-session-buffer-name)))
+  (let* ((herdr-terminal-backend 'session)
+         (herdr-state-change-hook (list #'herdr-term--on-state-change))
+         ;; A live timer, not nil: with both slots empty the teardown's
+         ;; call to `herdr-term--stop-directory-timer' has nothing to do
+         ;; and could be dropped altogether without this noticing.
+         (poll (run-at-time 3600 nil #'ignore))
+         (herdr-term--directory-timer poll)
+         (herdr-term--directory-debounce-timer nil)
+         (buffer (get-buffer-create herdr-term-session-buffer-name))
+         cancelled)
     (unwind-protect
         (progn
-          (herdr-term-teardown)
+          (cl-letf (((symbol-function 'cancel-timer)
+                     (lambda (timer) (push timer cancelled))))
+            (herdr-term-teardown))
+          (should (equal (list poll) cancelled))
+          (should-not herdr-term--directory-timer)
           (should-not (buffer-live-p buffer))
           (should-not (memq #'herdr-term--on-state-change
                             herdr-state-change-hook)))
+      (cancel-timer poll)
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
 (ert-deftest herdr-term-teardown-under-agent-windows-kills-every-buffer ()
