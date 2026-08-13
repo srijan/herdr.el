@@ -22,7 +22,7 @@
 (require 'herdr-cmd)
 (require 'herdr-select)
 (require 'herdr-call)
-(require 'herdr-agents)
+(require 'herdr-modeline)
 
 ;; `herdr-project' lives in herdr.el, which loads this file lazily; a
 ;; top-level require here would be circular.
