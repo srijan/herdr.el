@@ -298,6 +298,35 @@ dropping costs a row that the workspace heading one line above already
 shows, and erring the other way costs the workspace."
   (and (alist-get 'is_linked_worktree worktree) t))
 
+(defun herdr-tree-own-workspace-p (worktree workspace-id)
+  "Return non-nil when WORKTREE is WORKSPACE-ID itself rather than one of its.
+
+WORKSPACE-ID is the workspace the listing containing WORKTREE was fetched
+for, so an entry whose `open_workspace_id\\=' equals it is the section\\='s
+own workspace — already on screen as the heading the section hangs
+under, and the object a verb on the row would then destroy.
+
+This is the same defect `herdr-tree-linked-worktree-p\\=' describes and it
+survived that fix, because a repository\\='s main checkout is not the only
+entry that can name the enclosing workspace.  This package\\='s own `RET\\='
+makes the other one: opening a linked worktree as a workspace means the
+next `worktree.list\\=' for that workspace returns its own directory as a
+LINKED worktree whose `open_workspace_id\\=' is that workspace.  It then
+renders inside its own worktrees section, and `k\\=' on it resolves to the
+workspace the row is nested under.  Not reachable in the session the
+first fix was measured against, which had no linked worktrees at all.
+
+Neither check subsumes the other, so both are applied.  This one asks
+\"is this row the workspace it is nested under?\", which is the question
+the destruction turns on and which a main checkout answers yes to as
+well.  `herdr-tree-linked-worktree-p\\=' asks \"is this a worktree at
+all?\", and that still has to be asked separately: the listing is
+fetched for the workspace\\='s pane cwd, and a pane that has been `cd\\='d
+into another repository produces a reply whose main checkout names some
+other workspace, or none — which this predicate would let through."
+  (let ((open (alist-get 'open_workspace_id worktree)))
+    (and open (equal open workspace-id))))
+
 (defun herdr-tree--worktree-node (worktree)
   "Return the node for WORKTREE, which is a linked worktree.
 
@@ -320,20 +349,32 @@ shown above, so the row is marked rather than repeated."
 (defun herdr-tree--worktrees-node (workspace-id worktrees)
   "Return the worktrees node for WORKSPACE-ID, or nil when it has none.
 
-Only the linked worktrees; see `herdr-tree-linked-worktree-p\\=' for what
-the other kind is and what listing it cost.  A workspace whose repository
-has no linked worktrees at all is therefore the ordinary case rather than
-an unusual one, and it gets no section: what a `worktrees (1)\\=' heading
-listed there was the workspace itself, one line above and already on
-screen.
+Two things are dropped, and they are different questions with the same
+consequence.  `herdr-tree-linked-worktree-p\\=' drops the repository\\='s own
+checkout, which is not a worktree at all.  `herdr-tree-own-workspace-p\\='
+drops any entry naming WORKSPACE-ID, which is this section\\='s own
+workspace however git classifies it — the heading one line above.  Each
+predicate lets a case through that the other catches; see either for
+which.  A row that survives both is a worktree, and is not the workspace
+it is listed under.
+
+A workspace whose repository has no other worktrees is therefore the
+ordinary case rather than an unusual one, and it gets no section: what a
+`worktrees (1)\\=' heading listed there was the workspace itself, already
+on screen.
 
 Nil covers three things now — \\='none were found\\=', \\='none have been
-fetched yet\\=' and \\='none of what was found is a worktree of its own\\='.
-A workspace with nothing to show has no section worth drawing whichever
-of those it is, and the distinction between the first two lives in the
-cache that builds WORKTREES rather than here."
+fetched yet\\=' and \\='none of what was found is a worktree other than
+this workspace\\='.  A workspace with nothing to show has no section worth
+drawing whichever of those it is, and the distinction between the first
+two lives in the cache that builds WORKTREES rather than here."
   (when-let* ((entry (assoc workspace-id worktrees))
-              (found (seq-filter #'herdr-tree-linked-worktree-p (cdr entry))))
+              (found (seq-filter
+                      (lambda (worktree)
+                        (and (herdr-tree-linked-worktree-p worktree)
+                             (not (herdr-tree-own-workspace-p worktree
+                                                              workspace-id))))
+                      (cdr entry))))
     (list 'herdr-worktrees workspace-id
           (format "worktrees (%s)" (length found))
           (mapcar #'herdr-tree--worktree-node found))))
