@@ -97,12 +97,20 @@ can parse is not evidence of anything."
       (ignore-errors
         (version-to-list (substring name (1+ (length library))))))))
 
+(defun herdr-deps-bare-p (library directory)
+  "Return non-nil when DIRECTORY is named exactly LIBRARY.
+That is the elpaca and straight.el shape, and the thing
+`herdr-deps-preferred-p' ranks above every versioned copy.  It is asked
+by name rather than inferred from `herdr-deps-version' answering nil,
+because that answer has two causes and only one of them is this one."
+  (equal library (file-name-nondirectory (directory-file-name directory))))
+
 (defun herdr-deps-preferred-p (library a b)
   "Return non-nil when directory A should be preferred to B for LIBRARY.
 
-Higher version first.  An unversioned name — a directory called exactly
-LIBRARY — outranks every versioned one, and two of those tie so that
-`sort', which is stable, leaves them in the order
+Three ranks, best first: a bare name — a directory called exactly
+LIBRARY — then a parseable version, highest first, then everything else.
+Ties are left to `sort', which is stable, so they keep the order
 `herdr-deps-directories' produced and root precedence stands.
 
 That ranking is not arbitrary.  A bare name is what elpaca and
@@ -110,13 +118,23 @@ straight.el produce, and they keep exactly one directory per package, so
 there is nothing to choose between and the root order already expresses
 the preference.  Versioned names are package.el's, and package.el is the
 one manager that leaves older copies behind — which is the whole reason
-any of this compares versions."
-  (let ((va (herdr-deps-version library a))
+any of this compares versions.
+
+The third rank is the fix for reading `herdr-deps-version' as though nil
+meant bare.  It does not: it also means a suffix nobody can parse, so a
+directory called `magit-section-git' or `magit-section-melpa' was
+classed as unversioned and thereby outranked every properly versioned
+copy beside it.  That inverts the ranking rather than merely failing to
+apply it, so an unparseable name now loses to a version instead of
+beating it, and only an exact match still wins outright."
+  (let ((bare-a (herdr-deps-bare-p library a))
+        (bare-b (herdr-deps-bare-p library b))
+        (va (herdr-deps-version library a))
         (vb (herdr-deps-version library b)))
-    (cond ((and (null va) (null vb)) nil)
-          ((null va) t)
-          ((null vb) nil)
-          (t (version-list-< vb va)))))
+    (cond ((or bare-a bare-b) (and bare-a (not bare-b)))
+          ((and va vb) (version-list-< vb va))
+          (va t)
+          (vb nil))))
 
 (defun herdr-deps-locate (library directories)
   "Return the directory in DIRECTORIES holding LIBRARY, or nil.
