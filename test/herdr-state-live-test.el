@@ -284,6 +284,37 @@ reporting `shell' indefinitely."
         (should (equal "working" (alist-get 'agent_status pane))))
       (should (= 1 (length (herdr-state-agents herdr-state--current)))))))
 
+(ert-deftest herdr-state-reconcile-ignores-a-title-only-change ()
+  "The terminal title is the most volatile field a pane has.
+Claude animates a spinner and a second counter inside it, so it differs
+on essentially every poll while an agent works — 662 of 662
+`pane_updated' events in one measured window.  Treating that as
+significant made every poll replace every pane record and re-run the
+directory sync.  Titles arrive on the event stream regardless."
+  (herdr-test-with-server
+      (herdr-state-live-test--pane-list-server
+       [((pane_id . "w1:p1") (cwd . "/tmp")
+         (terminal_title_stripped . "* Herding (12s)"))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp")
+                         (terminal_title_stripped . "- Herding (11s)"))))))))
+      (should-not (herdr-state-reconcile-panes)))))
+
+(ert-deftest herdr-state-pane-updated-still-carries-the-title-in ()
+  "The other half of leaving the title out of the reconcile poll: the
+event stream carries the whole PaneInfo, so the dashboard still sees a
+new title as soon as herdr publishes one."
+  (let ((next (herdr-state-reduce
+               (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (cwd . "/tmp")
+                             (terminal_title_stripped . "old"))))))
+               "pane_updated"
+               '((pane . ((pane_id . "w1:p1") (cwd . "/tmp")
+                          (terminal_title_stripped . "new")))))))
+    (should (equal "new" (alist-get 'terminal_title_stripped
+                                    (herdr-state-pane next "w1:p1"))))))
+
 (ert-deftest herdr-state-reconcile-ignores-volatile-fields ()
   "Revision and scroll churn constantly; reacting to them would make
 every poll report a change and refresh every consumer."

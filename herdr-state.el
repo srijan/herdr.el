@@ -695,11 +695,27 @@ A vector, because `subscriptions' is a JSON array."
   (herdr-state--open-pane-stream))
 
 (defconst herdr-state-pane-significant-fields
-  '(agent agent_status cwd foreground_cwd workspace_id tab_id
-          terminal_title_stripped)
-  "Pane fields worth reacting to.
-Deliberately excludes volatile ones such as revision and scroll, which
-change constantly and would make every poll look like a change.")
+  '(agent agent_status cwd foreground_cwd workspace_id tab_id)
+  "Pane fields worth reacting to when reconciling against `pane.list\\='.
+
+Deliberately excludes the volatile ones — revision, scroll and the
+terminal title — which change constantly and would make every poll look
+like a change.
+
+The title belongs on that list however much it looks like a stable
+label.  Claude animates a spinner glyph and an elapsed-second counter
+inside it, so it changes several times a second while an agent works:
+of 662 `pane_updated\\=' events measured in one window, 662 differed in
+the title and 11 differed in `agent_status\\='.  Including it here meant
+every reconcile poll declared a change, replaced every pane record and
+re-ran the directory sync, which is the whole cost the list exists to
+avoid.
+
+Titles still reach the cache promptly — `pane_updated\\=' is
+title-coupled and carries the whole PaneInfo, and the change hook fires
+for every one of them.  What is given up is a title change that
+somehow produces no event at all, which now waits for the next real
+change rather than being caught by the poll.")
 
 (defun herdr-state--pane-differs-p (known fresh)
   "Return non-nil when FRESH differs from KNOWN in a field worth noticing."
