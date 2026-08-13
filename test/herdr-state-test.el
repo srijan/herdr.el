@@ -109,8 +109,8 @@ leaves a detected agent invisible to the modeline and the pickers."
     (should (equal "/tmp" (alist-get 'cwd (herdr-state-pane next "w1:p2"))))))
 
 (ert-deftest herdr-state-reduce-agent-detected-release-clears-the-agent ()
-  "A release comes through the same event with a null agent, so the
-label has to be written rather than merged over."
+  "A release comes through the same event, so the label must be written
+rather than merged over."
   (let ((next (herdr-state-reduce
                (herdr-state-test--seed) "pane_agent_detected"
                '((type . "pane_agent_detected") (pane_id . "w1:p1")
@@ -119,6 +119,23 @@ label has to be written rather than merged over."
     (should-not (alist-get 'agent (herdr-state-pane next "w1:p1")))
     (should (equal "idle"
                    (alist-get 'agent_status (herdr-state-pane next "w1:p1"))))
+    (should (null (herdr-state-agents next)))))
+
+(ert-deftest herdr-state-reduce-agent-detected-release-wins-over-a-named-agent ()
+  "`released' decides, not `agent'.
+
+The schema allows a release to name the agent that went away, and
+nothing observed rules that out — the one release-shaped event captured
+from the wire was a detection.  Trusting `agent' there would leave the
+pane counted in the modeline, offered by the agent picker and notified
+about for the rest of the session.  Keying off `released' is correct
+whichever way herdr fills the field in."
+  (let ((next (herdr-state-reduce
+               (herdr-state-test--seed) "pane_agent_detected"
+               '((type . "pane_agent_detected") (pane_id . "w1:p1")
+                 (workspace_id . "w1") (agent . "claude") (released . t)
+                 (final_status . "idle")))))
+    (should-not (alist-get 'agent (herdr-state-pane next "w1:p1")))
     (should (null (herdr-state-agents next)))))
 
 (ert-deftest herdr-state-reduce-agent-detected-for-an-unknown-pane-is-a-noop ()

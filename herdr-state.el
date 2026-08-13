@@ -319,13 +319,20 @@ events use dots, so both spellings appear here deliberately."
        ;; on.  There is no PaneInfo here, so reading one found nil and
        ;; the branch did nothing at all.
        ;;
-       ;; `agent' is written even when it is nil, because a release is
-       ;; exactly the event that has to clear the label.
-       (herdr-state--merge-pane
-        state (alist-get 'pane_id data)
-        (cons (cons 'agent (alist-get 'agent data))
-              (when-let* ((status (alist-get 'final_status data)))
-                (list (cons 'agent_status status))))))
+       ;; `released' decides the label, not `agent'.  The schema allows
+       ;; `agent' to be present alongside `released', and it would be a
+       ;; reasonable thing to send — naming which agent went away.  A
+       ;; release is also the one case that must clear the label, or the
+       ;; pane is counted in the modeline, offered by the agent picker
+       ;; and notified about for the rest of the session.  Keying off
+       ;; `released' is right under either reading; keying off `agent'
+       ;; alone is right under only one of them.
+       (let ((released (alist-get 'released data)))
+         (herdr-state--merge-pane
+          state (alist-get 'pane_id data)
+          (cons (cons 'agent (unless released (alist-get 'agent data)))
+                (when-let* ((status (alist-get 'final_status data)))
+                  (list (cons 'agent_status status)))))))
 
       ("pane.agent_status_changed"
        (herdr-state--merge-pane
@@ -672,9 +679,17 @@ A vector, because `subscriptions' is a JSON array."
     (run-hook-with-args 'herdr-state-change-hook "resync" nil)))
 
 (defun herdr-state--note-pane-set-change (kind _data)
-  "Rebuild connection B, debounced, when KIND changed the pane set."
-  (when (member kind '("pane_created" "pane_closed" "pane_exited"
-                       "pane_agent_detected"))
+  "Rebuild connection B, debounced, when KIND changed the pane set.
+
+Only the three events that add or remove a pane qualify.  Notably
+`pane_agent_detected\\=' does not, though it was listed here for a long
+time: `herdr-state--pane-subscriptions\\=' names every pane rather than
+every pane with an agent, so an agent appearing or going away cannot
+change what B subscribes to.  Every agent start and stop was paying for
+a teardown, a reopen and a `session.snapshot\\=' that could not alter the
+result — and a rebuild has a gap in it, so this was a real risk taken
+for nothing."
+  (when (member kind '("pane_created" "pane_closed" "pane_exited"))
     (when herdr-state--resubscribe-timer
       (cancel-timer herdr-state--resubscribe-timer))
     (setq herdr-state--resubscribe-timer

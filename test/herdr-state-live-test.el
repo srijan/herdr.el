@@ -196,6 +196,34 @@ subscriptions name the reconciled set rather than the ghost."
                                      subscribed))))
           (herdr-state--close herdr-state--pane-process))))))
 
+;;; What counts as a change to the pane set
+
+(defun herdr-state-live-test--rebuilds-p (kind)
+  "Return non-nil when KIND schedules a rebuild of connection B."
+  (let ((herdr-state--resubscribe-timer nil))
+    (unwind-protect
+        (progn (herdr-state--note-pane-set-change kind nil)
+               (and herdr-state--resubscribe-timer t))
+      (when herdr-state--resubscribe-timer
+        (cancel-timer herdr-state--resubscribe-timer)))))
+
+(ert-deftest herdr-state-only-pane-lifecycle-rebuilds-connection-b ()
+  "B subscribes per pane, so only adding or removing a pane can change it.
+
+`pane_agent_detected' was on this list for a long time even though
+`herdr-state--pane-subscriptions' names every pane rather than every
+pane with an agent — so it could never alter the result, while every
+agent start and stop paid for a teardown, a reopen and a
+`session.snapshot'.  A rebuild has a gap in it; this one bought
+nothing."
+  (dolist (kind '("pane_created" "pane_closed" "pane_exited"))
+    (should (equal (list kind t)
+                   (list kind (herdr-state-live-test--rebuilds-p kind)))))
+  (dolist (kind '("pane_agent_detected" "pane_updated" "pane_focused"
+                  "resync"))
+    (should (equal (list kind nil)
+                   (list kind (herdr-state-live-test--rebuilds-p kind))))))
+
 ;;; Reconnecting after a dropped stream
 
 (defun herdr-state-live-test--reconnect-server (record)
