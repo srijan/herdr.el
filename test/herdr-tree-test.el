@@ -102,9 +102,47 @@ than duplicated beside it."
 
 (defun herdr-tree-test--face-of (line text)
   "Return the face LINE carries where TEXT begins in it.
-`font-lock-face\\=' rather than `face\\=', because `face\\=' is the property
-fontification deletes; see `herdr-tree--faced\\='."
+Read off `font-lock-face\\=', which is only half the answer — see
+`herdr-tree-faces-a-field-with-both-properties\\=' for the other half and
+for why one property alone renders as nothing."
   (get-text-property (string-match text line) 'font-lock-face line))
+
+(ert-deftest herdr-tree-faces-a-field-with-both-properties ()
+  "A face has to be written twice or it is invisible half the time.
+
+`face\\=' alone is erased: `magit-section-mode\\=' sets
+`font-lock-defaults\\=', so `font-lock-mode\\=' comes on in the dashboard,
+and `font-lock-default-unfontify-region\\=' removes `face\\=' before the
+line is first fontified.  That was the original bug, and the fix moved
+everything to `font-lock-face\\='.
+
+`font-lock-face\\=' alone renders as nothing: it is not a display
+property, only a `char-property-alias-alist\\=' entry that
+`font-lock-mode\\=' installs, so with font-lock off it means nothing to
+redisplay.  That was the next bug, verified with `face-at-point\\='
+answering nil across the whole dashboard.  magit sets both properties
+for exactly this reason.
+
+Neither failure is observable in batch — `font-lock-mode\\=' forces
+itself off under `noninteractive\\=', which is why 302 tests passed over
+a dashboard that rendered no faces at all.  The presence of both
+properties is what a batch test can see, so that is what this asserts,
+on a real pane row as well as on `herdr-tree--faced\\=' directly."
+  (let ((faced (herdr-tree--faced "working" 'warning)))
+    (should (eq 'warning (get-text-property 0 'font-lock-face faced)))
+    (should (eq 'warning (get-text-property 0 'face faced))))
+  ;; Unfaced text gains neither, or every gap-filling scan over a line
+  ;; would find no gaps.
+  (let ((plain (herdr-tree--faced "working" nil)))
+    (should-not (get-text-property 0 'font-lock-face plain))
+    (should-not (get-text-property 0 'face plain)))
+  (let* ((tabs (nth 3 (car (herdr-tree-build (herdr-tree-test--state) nil))))
+         (pane (nth 2 (car (nth 3 (car tabs))))))
+    (dolist (field '("working" "w1:p1" "fixing tests"))
+      (let ((at (string-match field pane)))
+        (should (get-text-property at 'font-lock-face pane))
+        (should (equal (get-text-property at 'font-lock-face pane)
+                       (get-text-property at 'face pane)))))))
 
 (ert-deftest herdr-tree-colours-a-pane-row-by-its-status ()
   "Status is the one field worth finding without reading.
