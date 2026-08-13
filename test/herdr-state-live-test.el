@@ -196,6 +196,133 @@ subscriptions name the reconciled set rather than the ghost."
                                      subscribed))))
           (herdr-state--close herdr-state--pane-process))))))
 
+;;; Reconnecting after a dropped stream
+
+(defun herdr-state-live-test--reconnect-server (record)
+  "Return a responder for the reconnect tests, calling RECORD per method.
+
+Answers `session.snapshot\\=' with a session whose labels all read
+\"fresh\", so anything the cache still reports as \"stale\" was never
+refreshed from it.  `pane.list\\=' agrees about the pane set, so a
+reconcile alone cannot account for a fresh label."
+  (lambda (req)
+    (let ((method (alist-get 'method req)))
+      (funcall record method)
+      (pcase method
+        ("session.snapshot"
+         (cons (herdr-test-ok
+                req '((snapshot . ((focused_pane_id . "w1:p1")
+                                   (panes . [((pane_id . "w1:p1")
+                                              (cwd . "/tmp"))])
+                                   (tabs . [((tab_id . "w1:t1")
+                                             (workspace_id . "w1")
+                                             (label . "fresh"))])
+                                   (workspaces . [((workspace_id . "w1")
+                                                   (label . "fresh"))])))))
+               nil))
+        ("pane.list"
+         (cons (herdr-test-ok req '((type . "pane_list")
+                                    (panes . [((pane_id . "w1:p1")
+                                               (cwd . "/tmp"))])))
+               nil))
+        ("events.subscribe"
+         (cons (herdr-test-ok req '((type . "subscription_started"))) t))
+        (_ (cons (herdr-test-ok req '((type . "ok"))) nil))))))
+
+(defun herdr-state-live-test--stale-cache ()
+  "Return a cache whose every label says \"stale\"."
+  (herdr-state-from-snapshot
+   '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))
+     (tabs . (((tab_id . "w1:t1") (workspace_id . "w1") (label . "stale"))))
+     (workspaces . (((workspace_id . "w1") (label . "stale")))))))
+
+(defun herdr-state-live-test--label (accessor id-key id)
+  "Return the label of the entry ACCESSOR holds whose ID-KEY is ID."
+  (alist-get 'label
+             (seq-find (lambda (item) (equal id (alist-get id-key item)))
+                       (funcall accessor herdr-state--current))))
+
+(ert-deftest herdr-state-reconnect-resyncs-tabs-and-workspaces-too ()
+  "A reconnect must replace the whole cache, not just the panes.
+
+Events missed during a disconnect cannot be replayed, and they are not
+only pane events: a workspace renamed or a tab closed while the socket
+was down is announced once and never again.  Reconciling repairs panes
+alone — it is one `pane.list\\=' — so a reconnect that only reconciled
+left the workspace and tab halves of the cache wrong for the rest of the
+session, which is the never-converging cache this whole branch exists to
+remove."
+  (let (methods)
+    (herdr-test-with-server
+        (herdr-state-live-test--reconnect-server
+         (lambda (method) (push method methods)))
+      (let ((herdr-state--running t)
+            (herdr-state-settle-delay 0.01)
+            (herdr-state--global-process nil)
+            (herdr-state--pane-process nil)
+            (herdr-state--resubscribe-timer nil)
+            (herdr-state--settle-timer nil)
+            (herdr-state--reconnect-timer nil)
+            (herdr-state--reconnect-delay nil)
+            (herdr-state--current (herdr-state-live-test--stale-cache)))
+        (unwind-protect
+            (progn
+              (herdr-state--reconnect)
+              (let ((deadline (+ (float-time) 5)))
+                (while (and herdr-state--settle-timer
+                            (< (float-time) deadline))
+                  (sit-for 0.02)))
+              (should-not herdr-state--settle-timer)
+              (should (member "session.snapshot" methods))
+              (should (equal "fresh" (herdr-state-live-test--label
+                                      #'herdr-state-workspaces
+                                      'workspace_id "w1")))
+              (should (equal "fresh" (herdr-state-live-test--label
+                                      #'herdr-state-tabs 'tab_id "w1:t1"))))
+          (herdr-state--close herdr-state--global-process)
+          (herdr-state--close herdr-state--pane-process)
+          (when herdr-state--settle-timer
+            (cancel-timer herdr-state--settle-timer)))))))
+
+(ert-deftest herdr-state-reconnect-announces-the-resync-once ()
+  "Listeners hold their own view, so a wholesale cache replacement they
+are not told about is the same bug one level up."
+  (let (methods kinds)
+    (herdr-test-with-server
+        (herdr-state-live-test--reconnect-server
+         (lambda (method) (push method methods)))
+      (let* ((herdr-state--running t)
+             (herdr-state--pane-process nil)
+             (herdr-state--resubscribe-timer nil)
+             (herdr-state--settle-timer nil)
+             (herdr-state--current (herdr-state-live-test--stale-cache))
+             (herdr-state-change-hook
+              (list (lambda (kind _data) (push kind kinds)))))
+        (unwind-protect
+            (progn
+              (herdr-state--settle t)
+              (should (member "resync" kinds)))
+          (herdr-state--close herdr-state--pane-process))))))
+
+(ert-deftest herdr-state-settle-without-resync-does-not-snapshot ()
+  "The start path snapshots immediately before subscribing, so its
+settle has nothing to re-fetch — one `pane.list\\=' and no more."
+  (let (methods)
+    (herdr-test-with-server
+        (herdr-state-live-test--reconnect-server
+         (lambda (method) (push method methods)))
+      (let ((herdr-state--running t)
+            (herdr-state--pane-process nil)
+            (herdr-state--resubscribe-timer nil)
+            (herdr-state--settle-timer nil)
+            (herdr-state--current (herdr-state-live-test--stale-cache)))
+        (unwind-protect
+            (progn
+              (herdr-state--settle)
+              (should-not (member "session.snapshot" methods))
+              (should (member "pane.list" methods)))
+          (herdr-state--close herdr-state--pane-process))))))
+
 ;;; Reconciling the pane set against the server
 
 (defun herdr-state-live-test--pane-list-server (panes)

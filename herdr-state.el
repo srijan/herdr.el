@@ -525,26 +525,38 @@ which is precisely when an agent is most likely to be working."
   (setq herdr-state--current (herdr-state-reduce herdr-state--current kind data))
   (run-hook-with-args 'herdr-state-change-hook kind data))
 
-(defun herdr-state--schedule-settle ()
-  "Arrange the one post-connect reconcile, replacing any pending one."
+(defun herdr-state--schedule-settle (&optional resync)
+  "Arrange the one post-connect settle, replacing any pending one.
+RESYNC is passed through to `herdr-state--settle\\='."
   (when herdr-state--settle-timer
     (cancel-timer herdr-state--settle-timer))
   (setq herdr-state--settle-timer
-        (run-at-time herdr-state-settle-delay nil #'herdr-state--settle)))
+        (run-at-time herdr-state-settle-delay nil
+                     #'herdr-state--settle resync)))
 
-(defun herdr-state--settle ()
-  "Reconcile the pane set once the retained events have landed, then realign B.
+(defun herdr-state--settle (&optional resync)
+  "Settle the cache once the retained events have landed, then realign B.
 
-Both halves earn their place even though the replay is small.
+Non-nil RESYNC replaces the whole cache from `session.snapshot\\=' first,
+and is what the reconnect path passes.  It is not optional there.  A
+disconnect drops events that cannot be replayed, and they are not only
+pane events: a workspace renamed or a tab closed during the gap is
+announced once and never again.  `pane.list\\=' repairs panes and nothing
+else, so without the snapshot a reconnect left the workspace and tab
+halves of the cache wrong for the rest of the session — the dashboard
+showing a stale label and a closed tab lingering as a ghost nothing
+could reach.  `herdr-state-start\\=' needs no RESYNC because it snapshots
+immediately before subscribing.
 
-Reconciling: one of the retained events is a `pane.created' for whatever
-pane was created last, and for a long-closed pane that is a ghost.  The
-observed replay folds correctly only because `pane.created' precedes
-`pane.closed' in `herdr-state-global-subscriptions' — retained events
-arrive in subscription-list order, not chronological order — so a ghost
-is one list edit away at any time, and it is a ghost that shows up in
-every picker and cannot be navigated to.  `pane.list' is authoritative
-and settles it either way.
+Reconciling: one of the retained events is a `pane.created\\=' for
+whatever pane was created last, and for a long-closed pane that is a
+ghost.  The observed replay folds correctly only because
+`pane.created\\=' precedes `pane.closed\\=' in
+`herdr-state-global-subscriptions\\=' — retained events arrive in
+subscription-list order, not chronological order — so a ghost is one
+list edit away at any time, and it is a ghost that shows up in every
+picker and cannot be navigated to.  `pane.list\\=' is authoritative and
+settles it either way.
 
 Realigning connection B afterwards, not before: reconciling is what
 makes the pane set final, and B carries one subscription per pane."
@@ -556,8 +568,18 @@ makes the pane set final, and B carries one subscription per pane."
     (when herdr-state--resubscribe-timer
       (cancel-timer herdr-state--resubscribe-timer)
       (setq herdr-state--resubscribe-timer nil))
+    (when resync
+      (condition-case nil
+          (setq herdr-state--current
+                (herdr-state-from-snapshot
+                 (alist-get 'snapshot (herdr-rpc-call "session.snapshot"))))
+        (herdr-error nil)))
     (herdr-state-reconcile-panes)
-    (herdr-state--open-pane-stream)))
+    (herdr-state--open-pane-stream)
+    ;; Announce after the pane set is final, so a listener that redraws
+    ;; from the whole cache does it once and sees everything.
+    (when resync
+      (run-hook-with-args 'herdr-state-change-hook "resync" nil))))
 
 (defun herdr-state--handle-line (line)
   "Handle one NDJSON LINE from an event connection."
@@ -677,9 +699,11 @@ A vector, because `subscriptions' is a JSON array."
         (progn
           (herdr-state--open-streams)
           ;; A disconnect of any length loses events that cannot be
-          ;; replayed, so the settle after reconnecting is a resync as
-          ;; much as a ghost sweep.
-          (herdr-state--schedule-settle)
+          ;; replayed, and they are not only pane events — so this
+          ;; settle takes a full snapshot rather than reconciling panes
+          ;; alone.  Reconnecting without one left every workspace and
+          ;; tab change made during the gap missing for good.
+          (herdr-state--schedule-settle t)
           (setq herdr-state--reconnect-delay nil))
       (herdr-error (herdr-state--schedule-reconnect)))))
 
