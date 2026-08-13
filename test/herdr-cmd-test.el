@@ -237,6 +237,71 @@ focus and can name a different pane entirely."
            (cons (herdr-test-ok req '((type . "ok"))) nil))
        ,@body)))
 
+(ert-deftest herdr-cmd-every-command-sends-the-method-its-entry-names ()
+  "The registry and the body beside it were never checked against each other.
+
+Every other test in this file reads `herdr-cmd-methods', and so does the
+drift test: they check that the *entry* names a method the schema knows
+and parameters that method declares.  Nothing checked that the
+`herdr-rpc-call' inside the command sends what its entry says it does.
+Measured: twenty-odd of those method literals could be replaced with
+nonsense and the whole suite stayed green, because the entry beside them
+still read `pane.zoom'.
+
+Each command is run with its prompts, its terminal and its cache
+stubbed, and the methods that reach the fake server must include the one
+its entry names.  Inclusion rather than equality: several of these
+legitimately send more than one — a split is followed by a focus — and
+which extra calls are right is the business of the tests above."
+  (dolist (entry herdr-cmd-methods)
+    (let ((command (nth 0 entry))
+          (method (nth 1 entry))
+          (herdr-terminal-backend 'session)
+          ;; Enough of a session for every picker to have something to
+          ;; offer: an agent pane, a bare shell for `agent.start' to take
+          ;; over, and an adopted one for `herdr-release-shell'.
+          (herdr-state--current
+           (herdr-state-from-snapshot
+            `((workspaces . (((workspace_id . "w1") (label . "ws"))))
+              (tabs . (((tab_id . "w1:t1") (workspace_id . "w1"))))
+              (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                         (tab_id . "w1:t1") (agent . "claude")
+                         (agent_status . "idle") (cwd . "/tmp"))
+                        ((pane_id . "w1:p2") (workspace_id . "w1")
+                         (tab_id . "w1:t1") (cwd . "/tmp"))
+                        ((pane_id . "w1:p3") (workspace_id . "w1")
+                         (tab_id . "w1:t1")
+                         (agent . ,herdr-shell-agent-name)
+                         (cwd . "/tmp")))))))
+          wire)
+      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "x"))
+                ((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'read-directory-name)
+                 (lambda (&rest _) "/tmp/herdr-test-dir/"))
+                ((symbol-function 'completing-read) (lambda (&rest _) "w1:p1"))
+                ((symbol-function 'read-number) (lambda (&rest _) 1))
+                ((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+                ((symbol-function 'yes-or-no-p) (lambda (&rest _) t))
+                ((symbol-function 'message) #'ignore)
+                ((symbol-function 'pop-to-buffer) #'ignore)
+                ((symbol-function 'herdr-state-resync) #'ignore)
+                ((symbol-function 'herdr-term-select-pane) (lambda (&rest _) t))
+                ((symbol-function 'herdr-term-select-focused) #'ignore)
+                ((symbol-function 'herdr-cmd--select-pane-when-ready) #'ignore)
+                ((symbol-function 'herdr-cmd--offer-to-adopt) #'ignore))
+        (herdr-test-with-server
+            (lambda (req)
+              (push (alist-get 'method req) wire)
+              (cons (herdr-test-ok req '((type . "ok"))) nil))
+          (call-interactively command)
+          ;; The wait commands go out through `herdr-rpc-call-async', so
+          ;; the request may not have reached the server yet.  Settle
+          ;; only until it has, rather than sleeping for every command.
+          (let ((tries 100))
+            (while (and (not (member method wire)) (> (cl-decf tries) 0))
+              (accept-process-output nil 0.01)))))
+      (should (member method wire)))))
+
 ;;; Confirmations must not be left on screen
 
 ;; A message naming the id is not evidence that the id was spared: both
