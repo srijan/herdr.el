@@ -225,14 +225,18 @@ brief calls out by name — would show up as a second, later call."
 
 ;;; Cleanup, and the codes that say which failure it was
 
-(ert-deftest herdr-rpc-call-deletes-its-process-however-it-ends ()
-  "Every synchronous call leaves a connection behind unless it is deleted.
+(ert-deftest herdr-rpc-call-deletes-the-connection-it-times-out-on ()
+  "A synchronous call that gives up must not leave its socket open.
 
-The old test for this counted callbacks, which cannot see a leaked
-process at all: there is no callback on the synchronous path, and a
-connection nobody closed goes on holding a file descriptor silently
-until Emacs runs out of them.  `delete-process' is spied on instead, on
-both the answered path and the one that signals."
+The timeout is the only path where anything is left to clean up: on
+every other ending the server has already closed the connection, so
+`process-live-p' is nil and there is nothing for `delete-process' to do.
+Which is why this cannot be tested by counting callbacks — there are
+none on the synchronous path — and a connection nobody closed goes on
+holding a descriptor silently until Emacs runs out of them.
+`delete-process' is spied on, and the process is checked to be gone from
+`process-list' rather than merely dead, since a closed process that was
+never deleted is still there."
   (let (deleted)
     (cl-letf* ((real (symbol-function 'delete-process))
                ((symbol-function 'delete-process)

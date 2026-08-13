@@ -30,13 +30,29 @@ SRC   := $(filter-out %-autoloads.el,$(wildcard *.el))
 ## decides whether the build runs at all was never byte-compiled.
 COMPILE_SRC := $(SRC) test/herdr-deps.el
 
+## A hang is not a pass, and without a deadline it is not a failure
+## either — it is a CI job killed with no output, which reads as
+## infrastructure trouble rather than as a broken commit.  Measured: two
+## plausible off-by-ones in loop bounds, one in herdr-dispatch.el and one
+## in herdr-state.el, make this suite run forever rather than fail.
+##
+## Detected rather than required.  `timeout' is GNU coreutils, which
+## macOS does not ship and Homebrew installs as `gtimeout' unless the
+## user asked otherwise; a Makefile that hard-codes it fails to run at
+## all on a stock macOS, which is a worse outcome than an undeadlined
+## suite.  Set TEST_TIMEOUT to change the limit, or to nothing to opt out.
+TIMEOUT      := $(shell command -v timeout 2>/dev/null || \
+                        command -v gtimeout 2>/dev/null)
+TEST_TIMEOUT ?= 300
+DEADLINE     := $(if $(and $(TIMEOUT),$(TEST_TIMEOUT)),$(TIMEOUT) $(TEST_TIMEOUT))
+
 .PHONY: test test-live compile clean all
 
 all: compile test
 
 ## Run the hermetic suite (no herdr server required).
 test:
-	$(BATCH) $(foreach f,$(TESTS),-l $(f)) \
+	$(DEADLINE) $(BATCH) $(foreach f,$(TESTS),-l $(f)) \
 	  --eval '(ert-run-tests-batch-and-exit (quote (not (tag :live))))'
 
 ## Run only the tests that need a live herdr server.
