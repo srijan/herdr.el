@@ -461,5 +461,46 @@ not be handed to `cancel-timer', which signals on one."
           (should (eq 'replacement herdr-term--directory-debounce-timer)))
       (cancel-timer pending))))
 
+;;; Teardown must actually tear down
+
+(ert-deftest herdr-term-teardown-under-session-kills-the-tui-buffer ()
+  "Leaving the buffer behind leaves a terminal attached to a stream that
+has stopped, and `herdr-start' then adopts it as though it were live.
+The hook and the timer go with it, since a teardown that leaves either
+one on keeps working on buffers that are gone."
+  (let ((herdr-terminal-backend 'session)
+        (herdr-state-change-hook (list #'herdr-term--on-state-change))
+        (herdr-term--directory-timer nil)
+        (herdr-term--directory-debounce-timer nil)
+        (buffer (get-buffer-create herdr-term-session-buffer-name)))
+    (unwind-protect
+        (progn
+          (herdr-term-teardown)
+          (should-not (buffer-live-p buffer))
+          (should-not (memq #'herdr-term--on-state-change
+                            herdr-state-change-hook)))
+      (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest herdr-term-teardown-under-agent-windows-kills-every-buffer ()
+  "One buffer per agent, and the table has to be emptied with them —
+a stale entry names a dead buffer that reconciliation would count as
+already attached."
+  (let* ((herdr-terminal-backend 'agent-windows)
+         (herdr-state-change-hook (list #'herdr-term--on-state-change))
+         (herdr-term--directory-timer nil)
+         (herdr-term--directory-debounce-timer nil)
+         (one (generate-new-buffer " *agent-one*"))
+         (two (generate-new-buffer " *agent-two*"))
+         (herdr-term--agent-buffers (list (cons "w1:p1" one)
+                                          (cons "w1:p2" two))))
+    (unwind-protect
+        (progn
+          (herdr-term-teardown)
+          (should-not (buffer-live-p one))
+          (should-not (buffer-live-p two))
+          (should-not herdr-term--agent-buffers))
+      (when (buffer-live-p one) (kill-buffer one))
+      (when (buffer-live-p two) (kill-buffer two)))))
+
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here

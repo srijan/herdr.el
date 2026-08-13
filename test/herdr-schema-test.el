@@ -163,12 +163,21 @@ find."
 
 (ert-deftest herdr-schema-keeps-a-cache-the-server-still-matches ()
   "Shelling out to herdr on every schema question is the cost this cache
-exists to avoid."
+exists to avoid.
+
+The version the server reports is a fresh string off the wire every
+time, never the one already held, so the comparison has to be `equal'.
+The stub copies its answer for that reason: handed the same object, an
+`eq' would pass here and fail against a real server."
   (let ((herdr-schema--cache '((schemas . nil)))
         (herdr-schema--cache-version "0.9.0")
+        ;; Bound away from the default, which is a real file in the
+        ;; developer's own Emacs directory — read from there, this test
+        ;; passed for reasons that had nothing to do with the cache.
+        (herdr-schema-cache-file "/herdr-no-such-cache-file.json")
         fetched)
     (cl-letf (((symbol-function 'herdr-schema--server-version)
-               (lambda () "0.9.0"))
+               (lambda () (copy-sequence "0.9.0")))
               ((symbol-function 'herdr-schema--fetch)
                (lambda () (setq fetched t))))
       (herdr-schema)
@@ -179,6 +188,44 @@ exists to avoid."
                (lambda () (setq fetched t))))
       (herdr-schema)
       (should-not fetched))))
+
+(ert-deftest herdr-schema-reuses-the-disk-cache-across-sessions ()
+  "A fresh Emacs has no in-memory schema but usually has one on disk, and
+re-shelling out to herdr for it is a visible pause on the first command."
+  (let* ((file (expand-file-name "herdr-schema-disk-test.json"
+                                 temporary-file-directory))
+         (herdr-schema-cache-file file)
+         (herdr-schema--cache nil)
+         (herdr-schema--cache-version "0.9.0")
+         fetched)
+    (unwind-protect
+        (progn
+          (copy-file herdr-schema-test--fixture file t)
+          (cl-letf (((symbol-function 'herdr-schema--server-version)
+                     (lambda () (copy-sequence "0.9.0")))
+                    ((symbol-function 'herdr-schema--fetch)
+                     (lambda () (setq fetched t))))
+            (should (herdr-schema))
+            (should-not fetched)
+            (should (member "ping" (herdr-schema-methods)))))
+      (ignore-errors (delete-file file)))))
+
+(ert-deftest herdr-schema-resolve-picks-the-real-branch-whichever-way-round ()
+  "Nothing promises the null branch comes second.
+
+Resolution searches for the branch that is not null rather than taking a
+fixed position, and that is only visible when the order is the other way
+about — every anyOf in the captured schema happens to put the real thing
+first, so the search and a plain `car' agree there."
+  (should (equal '((type . "string"))
+                 (herdr-schema-resolve
+                  '((anyOf . (((type . "null")) ((type . "string"))))))))
+  (should (equal '((type . "string"))
+                 (herdr-schema-resolve
+                  '((anyOf . (((type . "string")) ((type . "null"))))))))
+  ;; Nothing but null: there is no real branch, so the node stands.
+  (should (equal '((anyOf . (((type . "null")))))
+                 (herdr-schema-resolve '((anyOf . (((type . "null")))))))))
 
 (ert-deftest herdr-schema-fetch-shells-out-and-fails-loudly ()
   "The command is `herdr api schema --json', and a non-zero exit is an

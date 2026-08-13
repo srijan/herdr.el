@@ -94,6 +94,29 @@ every mode line."
   "Without this its keymap and mouse properties are stripped."
   (should (get 'herdr-agents-mode-line-string 'risky-local-variable)))
 
+(ert-deftest herdr-agents-refresh-segment-pads-only-a-non-empty-count ()
+  "An empty segment must be empty, not a lone space.
+
+`global-mode-string' entries sit next to each other with nothing
+between, so the segment carries its own leading space — and a segment
+with nothing to say must not carry it, or the mode line grows a gap that
+never goes away.  The function had no test, so either half of that could
+invert unnoticed."
+  (let ((herdr-agents-mode-line-string "stale"))
+    (cl-letf (((symbol-function 'force-mode-line-update) #'ignore))
+      (let ((herdr-state--current
+             (herdr-agents-test--state '("w1:p1" "claude" "idle"))))
+        (herdr-agents--refresh-segment)
+        (should (equal "" herdr-agents-mode-line-string)))
+      (let ((herdr-state--current
+             (herdr-agents-test--state '("w1:p1" "claude" "blocked"))))
+        (herdr-agents--refresh-segment)
+        (should (string-prefix-p " herdr:" herdr-agents-mode-line-string))
+        ;; The keymap is what makes the count clickable; stripping the
+        ;; properties would leave a segment that only looks right.
+        (should (get-text-property 1 'local-map
+                                   herdr-agents-mode-line-string))))))
+
 ;;; Notifications fire on a transition, not on an observation
 
 (ert-deftest herdr-agents-notifies-only-when-a-status-changes ()

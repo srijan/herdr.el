@@ -1459,6 +1459,69 @@ would then press RET on."
     ;; lands afterwards and writes the entry straight back.
     (should (equal 8 herdr-dispatch--worktrees-generation))))
 
+(ert-deftest herdr-dispatch-every-worktree-event-drops-the-cache ()
+  "Four events change what worktrees exist or where they are open.
+
+Two of them had a test.  `worktree_opened' and `worktree_removed' did
+not, so removing either from the list left the dashboard showing a
+worktree that had been removed, or claiming one was not open when it
+was, with nothing to say so."
+  (dolist (kind '("worktree_created" "worktree_opened"
+                  "worktree_removed" "workspace_closed"))
+    (let ((herdr-dispatch--worktrees '(("w1" . (ignored))))
+          (herdr-dispatch--worktrees-generation 7))
+      (herdr-dispatch--invalidate-worktrees kind '((workspace_id . "w1")))
+      (should-not herdr-dispatch--worktrees)
+      (should (equal 8 herdr-dispatch--worktrees-generation)))))
+
+(ert-deftest herdr-dispatch-worktree-invalidation-unhooks-with-the-buffer ()
+  "Left on the hook after the dashboard dies, this goes on dropping a
+cache nothing reads and making the next open re-ask for every workspace."
+  (let ((herdr-state-change-hook
+         (list #'herdr-dispatch--invalidate-worktrees))
+        (herdr-dispatch--worktrees nil)
+        (herdr-dispatch--worktrees-generation 0)
+        (buffer (get-buffer-create herdr-dispatch-buffer-name)))
+    (unwind-protect
+        (progn
+          (herdr-dispatch--invalidate-worktrees "pane_updated" nil)
+          (should (memq #'herdr-dispatch--invalidate-worktrees
+                        herdr-state-change-hook))
+          (kill-buffer buffer)
+          (herdr-dispatch--invalidate-worktrees "pane_updated" nil)
+          (should-not (memq #'herdr-dispatch--invalidate-worktrees
+                            herdr-state-change-hook)))
+      (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest herdr-dispatch-opening-a-fresh-dashboard-forgets-old-worktrees ()
+  "Worktree knowledge belongs to an open dashboard.
+
+While the buffer is gone nothing is on the hook to invalidate, so a
+worktree created in the meantime is one this cache never hears about,
+and \\[herdr-dispatch-refresh] is no cure — it re-asks the workspaces
+that could not be answered, not the ones that were.  So opening starts
+from none.  Reopening a dashboard that is already up must not forget,
+or every visit pays for a full re-fetch."
+  (let ((herdr-state-change-hook nil))
+    (cl-letf (((symbol-function 'herdr-dispatch-refresh) #'ignore)
+              ((symbol-function 'pop-to-buffer) #'ignore))
+      (let ((buffer (get-buffer herdr-dispatch-buffer-name)))
+        (when buffer (kill-buffer buffer)))
+      (let ((herdr-dispatch--worktrees '(("w1" . (stale))))
+            (herdr-dispatch--worktrees-generation 3))
+        (unwind-protect
+            (progn
+              (herdr-agents)
+              (should-not herdr-dispatch--worktrees)
+              (should (equal 4 herdr-dispatch--worktrees-generation))
+              ;; Already open: reopening keeps what is known.
+              (setq herdr-dispatch--worktrees '(("w1" . (fresh))))
+              (herdr-agents)
+              (should (equal '(("w1" . (fresh))) herdr-dispatch--worktrees))
+              (should (equal 4 herdr-dispatch--worktrees-generation)))
+          (let ((buffer (get-buffer herdr-dispatch-buffer-name)))
+            (when buffer (kill-buffer buffer))))))))
+
 (ert-deftest herdr-dispatch-unrelated-events-keep-the-cache ()
   (let ((herdr-dispatch--worktrees '(("w1" . (ignored))))
         (herdr-dispatch--worktrees-generation 7))
