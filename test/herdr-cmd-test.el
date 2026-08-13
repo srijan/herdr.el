@@ -220,22 +220,64 @@ focus and can name a different pane entirely."
         (herdr-tab-create "")
         (should (equal "w1:p5" followed))))))
 
+;;; What reached the server is the assertion
+
+;; Both helpers below run against the fake server and assert on what it
+;; received, because that is the only place a command's effect is
+;; visible: a message, a prompt and a return value all read the same
+;; whether or not the request went out.
+
+(defmacro herdr-cmd-test--capturing-params (var &rest body)
+  "Run BODY against a fake server, binding VAR to the last request params."
+  (declare (indent 1) (debug t))
+  `(let (,var)
+     (herdr-test-with-server
+         (lambda (req)
+           (setq ,var (alist-get 'params req))
+           (cons (herdr-test-ok req '((type . "ok"))) nil))
+       ,@body)))
+
 ;;; Confirmations must not be left on screen
 
-(ert-deftest herdr-pane-close-reports-afterwards ()
-  "Closing reaps the pane's buffer, so redisplay happens while the
-confirmation is still up; without a following message it sits there
-looking unanswered."
+;; A message naming the id is not evidence that the id was spared: both
+;; branches of every one of these verbs mention it.  So these tests
+;; assert the wire — the methods the fake server actually received, in
+;; order — with the message checked alongside rather than instead.  A
+;; mutation inverting any of these confirmations passed the suite while
+;; the assertion was on the text.
+
+(defmacro herdr-cmd-test--answering (answer wire said &rest body)
+  "Run BODY with every confirmation answered ANSWER.
+WIRE is bound to the RPC methods the fake server received, in the order
+it received them, and SAID to the last message.  Both `y-or-n-p' and
+`yes-or-no-p' are stubbed: the destructive verbs are split across the
+two, and a test that stubbed only one would prompt for real in batch."
+  (declare (indent 3) (debug t))
+  `(let (,wire ,said)
+     (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) ,answer))
+               ((symbol-function 'yes-or-no-p) (lambda (_) ,answer))
+               ((symbol-function 'message)
+                (lambda (fmt &rest args) (setq ,said (apply #'format fmt args)))))
+       (herdr-test-with-server
+           (lambda (req)
+             (push (alist-get 'method req) ,wire)
+             (cons (herdr-test-ok req '((type . "ok"))) nil))
+         ,@body
+         (setq ,wire (nreverse ,wire))))))
+
+(ert-deftest herdr-pane-close-closes-only-when-confirmed ()
+  "Declining must reach no server at all.
+
+Closing also reaps the pane's buffer, so redisplay happens while the
+confirmation is still up and a following message is what keeps the
+prompt from sitting there looking unanswered — but that message names
+the pane on both branches, so it cannot be the assertion.  The methods
+received are."
   (dolist (answer '(t nil))
-    (let (said)
-      (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) answer))
-                ((symbol-function 'message)
-                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
-        (herdr-test-with-server
-            (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
-          (herdr-pane-close "w1:p1")
-          (should said)
-          (should (string-match-p "w1:p1" said)))))))
+    (herdr-cmd-test--answering answer wire said
+      (herdr-pane-close "w1:p1")
+      (should (equal (if answer '("pane.close") nil) wire))
+      (should (string-match-p "w1:p1" (or said ""))))))
 
 (ert-deftest herdr-tab-close-confirms-before-closing ()
   "A tab takes its panes with it, and the dispatcher binds `k\\=' one
@@ -257,15 +299,41 @@ and then closed regardless."
           (should (string-match-p "w1:t1" (or said "")))
           (should (equal (if answer '("tab.close") nil) methods)))))))
 
-(ert-deftest herdr-workspace-close-reports-afterwards ()
-  (let (said)
-    (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
-              ((symbol-function 'message)
-               (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
-      (herdr-test-with-server
-          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
-        (herdr-workspace-close "w1")
-        (should (string-match-p "w1" (or said "")))))))
+(ert-deftest herdr-workspace-close-closes-only-when-confirmed ()
+  "A workspace takes every tab and pane in it, so declining must send
+nothing.  This used to assert only the message, and only for the yes
+branch — so the no branch was never run at all."
+  (dolist (answer '(t nil))
+    (herdr-cmd-test--answering answer wire said
+      (herdr-workspace-close "w1")
+      (should (equal (if answer '("workspace.close") nil) wire))
+      (should (string-match-p "w1" (or said ""))))))
+
+(ert-deftest herdr-worktree-remove-removes-only-when-confirmed ()
+  "The one verb that deletes a checkout on disk, and it had no test.
+
+It confirms through `yes-or-no-p' rather than `y-or-n-p' — a whole word,
+because the loss is not recoverable by reopening — and the force flag
+travels as JSON `false' rather than being omitted, since the server
+types it as a boolean."
+  (dolist (answer '(t nil))
+    (herdr-cmd-test--answering answer wire said
+      (herdr-worktree-remove "w3")
+      (should (equal (if answer '("worktree.remove") nil) wire))
+      (should (string-match-p "w3" (or said "")))))
+  (herdr-cmd-test--capturing-params params
+    (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t)))
+      (herdr-worktree-remove "w3")
+      (should (equal "w3" (alist-get 'workspace_id params)))
+      ;; JSON `false' decodes to nil here, so presence of the key is what
+      ;; separates "sent as false" from "omitted"; the point of the
+      ;; `:false' in the source is that it is not omitted.
+      (should (assq 'force params))
+      (should-not (alist-get 'force params))))
+  (herdr-cmd-test--capturing-params params
+    (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t)))
+      (herdr-worktree-remove "w3" t)
+      (should (eq t (alist-get 'force params))))))
 
 (ert-deftest herdr-workspace-focus-offers-to-adopt-an-unattachable-pane ()
   "Landing on a plain shell would otherwise do nothing at all."
@@ -286,16 +354,6 @@ and then closed regardless."
 ;; a value on the way through — add a newline, drop an empty field, derive
 ;; a default — and that transform is where a silent regression hides, so
 ;; it is asserted against the payload the fake server actually receives.
-
-(defmacro herdr-cmd-test--capturing-params (var &rest body)
-  "Run BODY against a fake server, binding VAR to the last request params."
-  (declare (indent 1) (debug t))
-  `(let (,var)
-     (herdr-test-with-server
-         (lambda (req)
-           (setq ,var (alist-get 'params req))
-           (cons (herdr-test-ok req '((type . "ok"))) nil))
-       ,@body)))
 
 (ert-deftest herdr-pane-run-sends-a-trailing-newline ()
   "There is no pane.run method: running a command is send_text plus the
