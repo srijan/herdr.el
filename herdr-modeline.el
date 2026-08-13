@@ -1,4 +1,4 @@
-;;; herdr-agents.el --- Agent status surface for herdr -*- lexical-binding: t; -*-
+;;; herdr-modeline.el --- Modeline segment and notifications for herdr -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 Eddie Jesinsky
 
@@ -14,8 +14,15 @@
 ;; A modeline segment that is always on, fed by `herdr-state-change-hook'
 ;; and doing no I/O, plus desktop notifications that are available but
 ;; off, because an agent changing state is not by default worth
-;; interrupting for.  The buffer those used to sit beside now lives in
-;; `herdr-dispatch'.
+;; interrupting for.
+;;
+;; This was herdr-agents.el, which by the end named neither of the things
+;; in it: the buffer it was written for moved to `herdr-dispatch' when the
+;; dispatcher landed, and the command `herdr-agents' moved with it.  Two
+;; unrelated things then shared one prefix, so `herdr-agents--refresh-segment'
+;; read as internal to the command it has nothing to do with.  The modeline
+;; half is `herdr-modeline-', the notification half `herdr-notify-' — which
+;; is what the one public name here, `herdr-notify-statuses', already used.
 
 ;;; Code:
 
@@ -38,13 +45,13 @@ Nil means never.  A sensible opt-in is (\"blocked\" \"done\")."
 
 ;;; Modeline segment
 
-(defun herdr-agents--counts (state)
+(defun herdr-modeline--counts (state)
   "Return an alist of (STATUS . COUNT) for the agents in STATE.
 Delegates to `herdr-tree-status-counts\\=', which the dispatcher header
 reads from too, so the modeline and the dispatcher cannot disagree."
   (herdr-tree-status-counts state))
 
-(defun herdr-agents--segment (state)
+(defun herdr-modeline--segment (state)
   "Return the modeline string for STATE, or an empty string.
 Idle agents are omitted: a count that is always on screen stops being
 read.  Only the states worth acting on appear, via
@@ -52,14 +59,20 @@ read.  Only the states worth acting on appear, via
   (let ((summary (herdr-tree-status-summary state)))
     (if (string-empty-p summary) "" (concat "herdr:" summary))))
 
-(defvar herdr-agents-mode-line-string ""
-  "Cached modeline segment, refreshed from the state change hook.")
-(put 'herdr-agents-mode-line-string 'risky-local-variable t)
+;; Ahead of the `defvar', not down with the function alias: a variable
+;; alias declared after its referent does not carry a value already set
+;; under the old name, and the byte compiler rejects it outright.
+(define-obsolete-variable-alias 'herdr-agents-mode-line-string
+  'herdr-modeline-string "0.1.0")
 
-(defun herdr-agents--refresh-segment (&rest _)
+(defvar herdr-modeline-string ""
+  "Cached modeline segment, refreshed from the state change hook.")
+(put 'herdr-modeline-string 'risky-local-variable t)
+
+(defun herdr-modeline--refresh (&rest _)
   "Recompute the modeline segment and redisplay."
-  (setq herdr-agents-mode-line-string
-        (let ((text (herdr-agents--segment (herdr-state-current))))
+  (setq herdr-modeline-string
+        (let ((text (herdr-modeline--segment (herdr-state-current))))
           (if (string-empty-p text)
               ""
             (concat " "
@@ -73,13 +86,13 @@ read.  Only the states worth acting on appear, via
                                   map))))))
   (force-mode-line-update t))
 
-(defun herdr-agents--ensure-global-mode-string ()
+(defun herdr-modeline--ensure-global-mode-string ()
   "Make `global-mode-string' safe to append a symbol to.
 
 A mode-line construct that is a list beginning with a symbol is read as
 a conditional — (SYMBOL THEN ELSE) — not as a list of elements.  So on a
 fresh Emacs, where `global-mode-string' is nil, appending our symbol
-produced (herdr-agents-mode-line-string), which Emacs evaluated as a
+produced (herdr-modeline-string), which Emacs evaluated as a
 conditional with no branches and rendered as *invalid* in every mode
 line.
 
@@ -93,27 +106,27 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
     (setq global-mode-string (cons "" global-mode-string)))))
 
 ;;;###autoload
-(define-minor-mode herdr-agents-mode-line-mode
+(define-minor-mode herdr-modeline-mode
   "Show a count of noteworthy herdr agents in the modeline."
   :global t
   :group 'herdr
-  (if herdr-agents-mode-line-mode
+  (if herdr-modeline-mode
       (progn
-        (herdr-agents--ensure-global-mode-string)
+        (herdr-modeline--ensure-global-mode-string)
         (add-to-list 'global-mode-string
-                     'herdr-agents-mode-line-string t)
-        (add-hook 'herdr-state-change-hook #'herdr-agents--refresh-segment)
-        (herdr-agents--refresh-segment))
+                     'herdr-modeline-string t)
+        (add-hook 'herdr-state-change-hook #'herdr-modeline--refresh)
+        (herdr-modeline--refresh))
     (setq global-mode-string
-          (delq 'herdr-agents-mode-line-string global-mode-string))
-    (remove-hook 'herdr-state-change-hook #'herdr-agents--refresh-segment)))
+          (delq 'herdr-modeline-string global-mode-string))
+    (remove-hook 'herdr-state-change-hook #'herdr-modeline--refresh)))
 
 ;;; Notifications
 
-(defvar herdr-agents--last-status (make-hash-table :test 'equal)
+(defvar herdr-notify--last-status (make-hash-table :test 'equal)
   "Last seen status per pane, so only transitions notify.")
 
-(defun herdr-agents--notify (title body)
+(defun herdr-notify--send (title body)
   "Raise a desktop notification with TITLE and BODY."
   (cond
    ((fboundp 'alert) (funcall 'alert body :title title))
@@ -121,21 +134,34 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
     (funcall 'notifications-notify :title title :body body))
    (t (message "%s: %s" title body))))
 
-(defun herdr-agents--maybe-notify (&rest _)
+(defun herdr-notify--maybe (&rest _)
   "Notify about agents that just entered a status in `herdr-notify-statuses'."
   (when herdr-notify-statuses
     (dolist (pane (herdr-state-agents (herdr-state-current)))
       (let* ((id (alist-get 'pane_id pane))
              (status (alist-get 'agent_status pane))
-             (previous (gethash id herdr-agents--last-status)))
+             (previous (gethash id herdr-notify--last-status)))
         (unless (equal status previous)
-          (puthash id status herdr-agents--last-status)
+          (puthash id status herdr-notify--last-status)
           (when (and previous (member status herdr-notify-statuses))
-            (herdr-agents--notify
+            (herdr-notify--send
              (format "herdr: %s is %s" (or (alist-get 'agent pane) id) status)
              (or (alist-get 'terminal_title_stripped pane) id))))))))
 
-(add-hook 'herdr-state-change-hook #'herdr-agents--maybe-notify)
+(add-hook 'herdr-state-change-hook #'herdr-notify--maybe)
 
-(provide 'herdr-agents)
-;;; herdr-agents.el ends here
+;;; Compatibility
+
+;; `herdr-agents-mode-line-mode' is what an init file turns on, so it
+;; keeps working: the alternative is an init that errors on the first
+;; start after a rebuild.  The autoload form is why this is more than the
+;; alias — the old name was autoloaded, so calling it has to keep pulling
+;; this file in.  Its variable counterpart is up beside the `defvar',
+;; where a variable alias has to be.
+
+;;;###autoload (autoload 'herdr-agents-mode-line-mode "herdr-modeline" nil t)
+(define-obsolete-function-alias 'herdr-agents-mode-line-mode
+  #'herdr-modeline-mode "0.1.0")
+
+(provide 'herdr-modeline)
+;;; herdr-modeline.el ends here
