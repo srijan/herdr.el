@@ -206,6 +206,41 @@ brief calls out by name — would show up as a second, later call."
       (should (equal 1 calls))
       (should (equal "timeout" (alist-get 'code got-error))))))
 
+(ert-deftest herdr-rpc-call-async-a-send-failure-does-not-later-double-fire ()
+  "A `process-send-string' signal — the peer closes between connect and
+send — must reach CALLBACK exactly once as an ordinary error, not
+escape as a Lisp signal while an armed TIMEOUT timer is left free to
+fire CALLBACK a second time later.
+
+This outlasts TIMEOUT by a full second beyond the send failure, so a
+timer that survived the failure — rather than being retired by it —
+would show up as a second, later call."
+  (herdr-test-with-server (lambda (_req) (cons nil t))
+    (cl-letf (((symbol-function 'process-send-string)
+               (lambda (&rest _) (error "peer closed before send"))))
+      (let (calls got-error)
+        (herdr-rpc-call-async "ping" nil
+                              (lambda (_result err)
+                                (setq calls (1+ (or calls 0)))
+                                (setq got-error err))
+                              0.2)
+        (should (equal 1 calls))
+        (should (equal "send_failed" (alist-get 'code got-error)))
+        (let ((deadline (+ (float-time) 1)))
+          (while (< (float-time) deadline)
+            (accept-process-output nil 0.05)))
+        (should (equal 1 calls))))))
+
+(ert-deftest herdr-rpc-call-async-a-send-failure-deletes-the-process ()
+  "A send failure must not leave a half-open connection behind, the same
+guarantee a timeout already gets."
+  (herdr-test-with-server (lambda (_req) (cons nil t))
+    (cl-letf (((symbol-function 'process-send-string)
+               (lambda (&rest _) (error "peer closed before send"))))
+      (let (proc)
+        (setq proc (herdr-rpc-call-async "ping" nil #'ignore))
+        (should-not (memq proc (process-list)))))))
+
 (ert-deftest herdr-rpc-array-serializes-as-a-json-array ()
   "A list of alists is ambiguous to `json-serialize'; vectors are not."
   (let ((json (herdr-rpc-encode

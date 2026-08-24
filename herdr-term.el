@@ -132,6 +132,7 @@ responsible for uniquifying — see `herdr-term--attach-1\\='."
 
 (defun herdr-term--unique-agent-buffer-name (state pane)
   "Return a unique buffer name for PANE, from `herdr-term-agent-buffer-name'.
+STATE is read against, same as that function.
 
 `herdr-term-agent-buffer-name\\=' is not guaranteed unique — two unnamed
 panes of the same kind in the same workspace compute the same wanted
@@ -207,24 +208,32 @@ Under `agent-windows' it is only a bootstrap: the server is a daemon
 and outlives it, so the buffer is discarded once ping succeeds."
   (let ((buffer (get-buffer-create herdr-term-session-buffer-name)))
     (with-current-buffer buffer (ghostel-mode))
-    ;; Under `agent-windows' this client only exists to start the daemon
-    ;; and is killed straight after, so showing it would be a flash of a
-    ;; window the user never asked for.
-    (when (eq herdr-terminal-backend 'session)
-      (herdr-term--show buffer))
+    ;; Shown under both backends: ghostel sizes its PTY from a displayed
+    ;; window and paints nothing into a zero-sized one, so skipping this
+    ;; for `agent-windows' — done on the belief that the client only
+    ;; exists to start the daemon and is discarded right after — could
+    ;; leave first startup there stuck with an unusable PTY until the
+    ;; timeout below gave up.  The window closes again once startup is
+    ;; settled, in the `unwind-protect' below, so nothing outlives the
+    ;; bootstrap it was shown for.
+    (herdr-term--show buffer)
     (ghostel-exec buffer herdr-executable (herdr-term-session-args))
-    ;; One liveness answer per loop pass, and none after the deadline.
-    ;; The old shape re-pinged in the `unless' after the loop ended, so
-    ;; a server that missed the deadline was charged one more full probe
-    ;; on top of it before the error finally surfaced.
-    (let ((deadline (+ (float-time) herdr-server-start-timeout))
-          (live (herdr-server-live-p)))
-      (while (and (not live) (< (float-time) deadline))
-        (sit-for 0.2)
-        (setq live (herdr-server-live-p)))
-      (unless live
-        (error "herdr server did not come up within %ss"
-               herdr-server-start-timeout)))
+    (unwind-protect
+        ;; One liveness answer per loop pass, and none after the
+        ;; deadline.  The old shape re-pinged in the `unless' after the
+        ;; loop ended, so a server that missed the deadline was charged
+        ;; one more full probe on top of it before the error finally
+        ;; surfaced.
+        (let ((deadline (+ (float-time) herdr-server-start-timeout))
+              (live (herdr-server-live-p)))
+          (while (and (not live) (< (float-time) deadline))
+            (sit-for 0.2)
+            (setq live (herdr-server-live-p)))
+          (unless live
+            (error "herdr server did not come up within %ss"
+                   herdr-server-start-timeout)))
+      (when (eq herdr-terminal-backend 'agent-windows)
+        (quit-windows-on buffer)))
     buffer))
 
 ;;; Buffer bookkeeping
@@ -517,7 +526,7 @@ is changing directories."
                      (herdr-term--bootstrap-server))))
     ;; Both backends want the hook: one for buffer reconciliation and
     ;; directory tracking, the other for directory tracking alone.
-    (add-hook 'herdr-state-change-hook #'herdr-term--on-state-change)
+    (add-hook 'herdr-state-change-functions #'herdr-term--on-state-change)
     (prog1
         (pcase herdr-terminal-backend
           ('session
@@ -548,7 +557,7 @@ deliberately instead, through the menu, the agents list, or
 
 (defun herdr-term-teardown ()
   "Kill this backend's buffers.  The herdr server is left running."
-  (remove-hook 'herdr-state-change-hook #'herdr-term--on-state-change)
+  (remove-hook 'herdr-state-change-functions #'herdr-term--on-state-change)
   (herdr-term--stop-directory-timer)
   (pcase herdr-terminal-backend
     ('session

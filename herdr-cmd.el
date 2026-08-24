@@ -95,8 +95,8 @@ answer with `root_pane'.  Either shape names the pane just made."
                           (alist-get 'root_pane result))))
 
 (defun herdr-cmd--follow-new-pane (pane-id)
-  "Show PANE-ID, the pane a create command just made, adopting it first
-if that is what it takes.
+  "Show PANE-ID, adopting it first if that is what it takes.
+PANE-ID is the pane a create command just made.
 
 PANE-ID comes from the creating call's own response rather than a
 follow-up `pane.current': herdr.el reaches the socket as a paneless
@@ -120,18 +120,30 @@ attach to a pane without an agent, so nothing appears on its own."
 agent-windows; adopt it with M-x herdr-adopt-shell (P A in the menu)")))))
 
 (defun herdr-cmd--select-pane-when-ready (pane-id)
-  "Select PANE-ID's buffer as soon as reconciliation has built it."
-  (letrec ((attempts 0)
-           (check
-            (lambda ()
-              (setq attempts (1+ attempts))
-              (cond
-               ((herdr-term-select-pane pane-id))
-               ((< attempts 20) (run-at-time 0.25 nil check))))))
-    (run-at-time 0.25 nil check)))
+  "Select PANE-ID's buffer as soon as reconciliation has built it.
+
+Gated on `herdr-state-generation', captured at the first attempt: this
+chain keeps no handle anywhere for `herdr-stop' to cancel, so a
+`herdr-stop' followed by a quick restart while a chain is still
+retrying would otherwise go on selecting buffers for a session it no
+longer belongs to — possibly a different pane's, if ids are reused.
+Checking the generation on every attempt cannot cancel an already-armed
+timer, but it makes each attempt after a restart a no-op instead of an
+action, which is what matters."
+  (let ((generation (herdr-state-generation)))
+    (letrec ((attempts 0)
+             (check
+              (lambda ()
+                (setq attempts (1+ attempts))
+                (when (= generation (herdr-state-generation))
+                  (cond
+                   ((herdr-term-select-pane pane-id))
+                   ((< attempts 20) (run-at-time 0.25 nil check)))))))
+      (run-at-time 0.25 nil check))))
 
 (defun herdr-cmd--read-source (&optional prompt)
   "Read a `ReadSource' value, defaulting to the one worth having.
+PROMPT overrides the default \"Source: \" prompt text.
 `recent_unwrapped' is the useful default: it is the whole recent
 scrollback with terminal line-wrapping undone, which is what makes the
 result greppable."

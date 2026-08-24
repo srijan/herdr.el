@@ -162,7 +162,7 @@ redisplay, and a refresh that changes the counts costs another."
 (ert-deftest herdr-notify-fires-only-when-a-status-changes ()
   "The first sight of a status is not a change into it.
 
-`herdr-notify--maybe' runs from `herdr-state-change-hook', so
+`herdr-notify--maybe' runs from `herdr-state-change-functions', so
 without its `previous' guard every agent already sitting blocked would
 announce itself the moment Emacs first heard about it, and again after
 every restart and every resync.  The function had no test at all, so
@@ -260,14 +260,14 @@ asked about."
 (ert-deftest herdr-modeline-mode-unhooks-itself-when-turned-off ()
   "Leaving the refresh on the state hook keeps recomputing a segment
 nothing shows, for the rest of the session."
-  (let ((herdr-state-change-hook nil)
+  (let ((herdr-state-change-functions nil)
         (global-mode-string nil))
     (cl-letf (((symbol-function 'herdr-modeline--refresh) #'ignore))
       (herdr-modeline-mode 1)
-      (should (memq #'herdr-modeline--refresh herdr-state-change-hook))
+      (should (memq #'herdr-modeline--refresh herdr-state-change-functions))
       (should (memq 'herdr-modeline-string global-mode-string))
       (herdr-modeline-mode -1)
-      (should-not (memq #'herdr-modeline--refresh herdr-state-change-hook))
+      (should-not (memq #'herdr-modeline--refresh herdr-state-change-functions))
       (should-not (memq 'herdr-modeline-string global-mode-string)))))
 
 (provide 'herdr-modeline-test)

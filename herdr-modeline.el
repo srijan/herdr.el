@@ -11,7 +11,7 @@
 
 ;; Knowing which agents are blocked or finished without going to look.
 ;;
-;; A modeline segment that is always on, fed by `herdr-state-change-hook'
+;; A modeline segment that is always on, fed by `herdr-state-change-functions'
 ;; and doing no I/O, plus desktop notifications that are available but
 ;; off, because an agent changing state is not by default worth
 ;; interrupting for.
@@ -134,11 +134,11 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
         (herdr-modeline--ensure-global-mode-string)
         (add-to-list 'global-mode-string
                      'herdr-modeline-string t)
-        (add-hook 'herdr-state-change-hook #'herdr-modeline--refresh)
+        (add-hook 'herdr-state-change-functions #'herdr-modeline--refresh)
         (herdr-modeline--refresh))
     (setq global-mode-string
           (delq 'herdr-modeline-string global-mode-string))
-    (remove-hook 'herdr-state-change-hook #'herdr-modeline--refresh)))
+    (remove-hook 'herdr-state-change-functions #'herdr-modeline--refresh)))
 
 ;;; Notifications
 
@@ -167,7 +167,7 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
              (format "herdr: %s is %s" (or (alist-get 'agent pane) id) status)
              (or (alist-get 'terminal_title_stripped pane) id))))))))
 
-(add-hook 'herdr-state-change-hook #'herdr-notify--maybe)
+(add-hook 'herdr-state-change-functions #'herdr-notify--maybe)
 
 ;;; Compatibility
 

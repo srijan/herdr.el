@@ -119,9 +119,18 @@ JSON parse error."
     (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "{\"A\": 1}")))
       (should (equal 1 (alist-get 'A (herdr-schema-read-param
                                       "workspace.create" "env")))))
+    ;; Arrays come back as vectors, not lists: `json-serialize' cannot
+    ;; tell a list of alists from a single alist, so `herdr-rpc-array'
+    ;; is what makes an array parameter unambiguous on the wire — a
+    ;; list here would signal wrong-type-argument before any request
+    ;; went out.
     (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "[\"a\"]")))
-      (should (equal '("a") (herdr-schema-read-param
-                             "agent.send_keys" "keys"))))
+      (should (equal ["a"] (herdr-schema-read-param
+                            "agent.send_keys" "keys"))))
+    ;; An empty array is a real, non-nil value distinct from omission.
+    (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "[]")))
+      (should (equal [] (herdr-schema-read-param
+                         "agent.send_keys" "keys"))))
     (cl-letf (((symbol-function 'read-string) (lambda (&rest _) ""))
               ((symbol-function 'completing-read) (lambda (&rest _) "")))
       (dolist (case '(("pane.read" "source") ("pane.read" "lines")

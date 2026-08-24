@@ -46,8 +46,14 @@
   (if (and (member name '("pane_id" "target"))
            (herdr-state-pane-ids (herdr-state-current)))
       ;; Ids are the one place a generic string prompt is actively worse
-      ;; than what the curated commands do, so reuse the picker.
-      (herdr-select-pane (format "%s: " name))
+      ;; than what the curated commands do, so reuse the picker.  But
+      ;; `completing-read' returns "" on empty input regardless of
+      ;; REQUIRE-MATCH, and every other branch of
+      ;; `herdr-schema-read-param' maps empty to nil to honour `herdr-call's
+      ;; documented omit-when-empty contract — map it here too, or an
+      ;; optional target left blank goes out as an explicit empty string.
+      (let ((choice (herdr-select-pane (format "%s: " name))))
+        (unless (string-empty-p choice) choice))
     (herdr-schema-read-param method name)))
 
 ;;;###autoload

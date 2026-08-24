@@ -223,9 +223,20 @@ Returns a value ready to hand to `herdr-rpc-call', or nil to omit it."
       ((or 'integer 'number)
        (let ((raw (read-string prompt)))
          (if (string-empty-p raw) nil (string-to-number raw))))
-      ((or 'object 'array)
+      ('object
        (let ((raw (read-string (format "%s (JSON): " name))))
          (if (string-empty-p raw) nil (herdr-rpc-decode raw))))
+      ('array
+       ;; `herdr-rpc-decode' parses a JSON array as a Lisp list — right
+       ;; for the alists nested inside an object parameter, wrong here:
+       ;; `herdr-rpc-array' is what turns a list into the vector
+       ;; `json-serialize' requires for an array-typed parameter, and
+       ;; skipping it made every array parameter (`agent.send_keys'
+       ;; `keys', for instance) fail encoding before any request went
+       ;; out.
+       (let ((raw (read-string (format "%s (JSON): " name))))
+         (if (string-empty-p raw) nil
+           (herdr-rpc-array (herdr-rpc-decode raw)))))
       (_
        (let ((raw (read-string prompt)))
          (if (string-empty-p raw) nil raw))))))

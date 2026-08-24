@@ -560,5 +560,27 @@ pane the split returns, then shows it — no detour through a manual split."
         (should (equal "w1:p9" started-in))
         (should (equal "w1:p9" selected))))))
 
+;;; Pane-selection retry chain
+
+(ert-deftest herdr-cmd-select-pane-when-ready-stops-after-a-generation-change ()
+  "The retry chain keeps no handle anywhere for `herdr-stop' to cancel.
+A restart mid-chain (a new generation) must turn every further attempt
+into a no-op instead of an action, or a chain begun for one session
+could go on to select a buffer belonging to a different, later one."
+  (let ((herdr-state--generation 1)
+        (scheduled nil))
+    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (&rest _) nil))
+              ((symbol-function 'run-at-time)
+               (lambda (_secs _repeat fn) (setq scheduled fn) 'timer)))
+      (herdr-cmd--select-pane-when-ready "w1:p1")
+      (should scheduled)
+      ;; Same generation: the chain keeps retrying.
+      (let ((fn scheduled)) (setq scheduled nil) (funcall fn))
+      (should scheduled)
+      ;; The session was stopped and restarted mid-chain.
+      (setq herdr-state--generation 2)
+      (let ((fn scheduled)) (setq scheduled nil) (funcall fn))
+      (should-not scheduled))))
+
 (provide 'herdr-cmd-test)
 ;;; herdr-cmd-test.el ends here

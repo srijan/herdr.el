@@ -140,6 +140,7 @@ it."
 
 (defun herdr-select-available-shell (&optional prompt)
   "Read where `agent.start' should run: an idle pane, or a fresh shell.
+PROMPT overrides the default \"Start agent in shell pane: \" prompt text.
 Panes carrying any agent are omitted, so the choice cannot land on one
 the server would refuse.  A trailing `herdr-select-create-new-shell'
 entry is always offered, so the picker never dead-ends even when every
@@ -180,6 +181,7 @@ Never prompts, so it is safe to call while rendering a menu."
 
 (defun herdr-select-target-pane (&optional prompt)
   "Return the pane to act on, preferring the one you are looking at.
+PROMPT is passed through to `herdr-select-pane' on the paths that prompt.
 
 In order: a prefix argument always prompts; otherwise the pane of the
 current buffer if it is a herdr terminal; otherwise the pane herdr has
@@ -271,8 +273,18 @@ transient, which can offer to adopt them."
     ;; Reconcile at the call site, not inside the query: the query stays
     ;; a pure function of the cache and so remains testable without a
     ;; server.
+    ;;
+    ;; This runs on every `consult-buffer', a path the user attributes
+    ;; to buffer switching rather than to herdr — so the reconcile is
+    ;; bound to the background timeout, the same guard
+    ;; `herdr-server-live-p' and `herdr-term--poll-directories' use for
+    ;; every other unattributed call.  A wedged server then forfeits one
+    ;; refresh of the pane list instead of freezing `consult-buffer' for
+    ;; the full `herdr-rpc-timeout'.
     :items ,(lambda ()
-              (herdr-state-reconcile-panes)
+              (let ((herdr-rpc-timeout (min herdr-rpc-timeout
+                                            herdr-rpc-background-timeout)))
+                (herdr-state-reconcile-panes))
               (herdr-select-panes-with-buffers))))
 
 (with-eval-after-load 'consult
