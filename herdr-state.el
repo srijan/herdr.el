@@ -206,6 +206,28 @@ workspace was created in."
                              (herdr-state-panes state))))
     (file-name-as-directory dir)))
 
+(defun herdr-state-workspace-for-directory (state root)
+  "Return the workspace in STATE rooted at ROOT, or nil.
+
+Compared through `herdr-state-workspace-directory\\=' because protocol 19
+workspaces carry no cwd of their own — this used to compare against an
+`identity_cwd\\=' field that does not exist, so it never matched and
+`herdr-project\\=' made a fresh workspace every time it was called.  ROOT
+is normalized first — with or without a trailing slash must match the
+same workspace — so callers never have to agree on a convention
+`herdr-state-workspace-directory\\=' already settles one way.
+
+Shared rather than private to `herdr.el', which used to be its only
+caller: `herdr-tree.el' needs the identical answer to decide whether a
+known project root already has an open workspace, or is one the
+dispatcher has never seen a pane in."
+  (let ((root (file-name-as-directory (expand-file-name root))))
+    (seq-find (lambda (workspace)
+                (equal root
+                       (herdr-state-workspace-directory
+                        state (alist-get 'workspace_id workspace))))
+              (herdr-state-workspaces state))))
+
 (defun herdr-state-pane-ids (state)
   "Return every pane id in STATE."
   (mapcar (lambda (pane) (alist-get 'pane_id pane))

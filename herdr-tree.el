@@ -429,27 +429,72 @@ worktrees headings are counted the same way for the same reason."
                    (herdr-tree--rollup (alist-get 'agent_status workspace))))
           (if worktree-node (append children (list worktree-node)) children))))
 
-(defun herdr-tree-build (state worktrees)
+(defun herdr-tree--known-project-node (root)
+  "Return the node for ROOT, a known project with no workspace open.
+
+Always \"(0)\": a real workspace cannot reach zero panes and survive —
+closing a workspace's last pane closes the workspace itself with it,
+verified against a running server — so the count doubles as the signal
+that this row is not actually open, the same way
+`herdr-tree--worktree-node\\=' marks an unopened worktree with `open as
+WORKSPACE-ID\\=' rather than leaving it looking identical to one that is.
+Dimmed with `shadow\\=' for the same reason: nothing here is running."
+  (list 'herdr-known-project root
+        (herdr-tree--faced
+         (string-trim-right
+          (format "%-28s %s"
+                  (format "%s (0)"
+                          (file-name-nondirectory (directory-file-name root)))
+                  root))
+         'shadow)
+        nil))
+
+(defun herdr-tree--known-project-nodes (state known-project-roots)
+  "Return nodes for KNOWN-PROJECT-ROOTS with no workspace open in STATE.
+
+KNOWN-PROJECT-ROOTS is a plain list of directory strings — typically
+`project-known-project-roots\\=', but kept as a parameter rather than read
+here so this stays a pure function of its arguments, the same reason
+`herdr-tree-build\\=' takes WORKTREES as a parameter instead of fetching
+them itself.
+
+Excludes any root `herdr-state-workspace-for-directory\\=' already finds
+open: a project you have open needs no second, dimmer entry for the
+same directory at the bottom of its own tree."
+  (mapcar #'herdr-tree--known-project-node
+          (seq-remove (lambda (root)
+                        (herdr-state-workspace-for-directory state root))
+                      known-project-roots)))
+
+(defun herdr-tree-build (state worktrees &optional known-project-roots)
   "Return the dispatcher tree for STATE.
 
 Each node is the list (TYPE VALUE LINE CHILDREN).  TYPE is one of
-`herdr-workspace\\=', `herdr-tab\\=', `herdr-pane\\=', `herdr-worktrees\\=' or
-`herdr-worktree\\='; VALUE is the id a command needs; LINE is the rendered
-text; CHILDREN is a list of nodes.
+`herdr-workspace\\=', `herdr-tab\\=', `herdr-pane\\=', `herdr-worktrees\\=',
+`herdr-worktree\\=' or `herdr-known-project\\='; VALUE is the id a command
+needs; LINE is the rendered text; CHILDREN is a list of nodes.
 
 WORKTREES is an alist of (WORKSPACE-ID . LIST-OF-WORKTREEINFO) for the
 workspaces whose worktrees have been fetched.  A workspace missing from
 it simply gets no worktrees section — absence of knowledge, not absence
 of worktrees.
 
+KNOWN-PROJECT-ROOTS, when given, appends one dimmed row per project with
+no workspace currently open — see `herdr-tree--known-project-nodes\\=' —
+after every real workspace, so a project you are not in right now is
+still one keystroke from being opened, at the bottom rather than mixed
+in among the workspaces actually running something.
+
 The agent column width is computed once here, from every pane in STATE,
 so it is consistent across every workspace rather than fitted separately
 per tab — a session with one long label in one workspace and only short
 ones in another would otherwise show two different column widths."
   (let ((width (herdr-tree--agent-column-width state)))
-    (mapcar (lambda (workspace)
-              (herdr-tree--workspace-node state workspace worktrees width))
-            (herdr-state-workspaces state))))
+    (append (mapcar (lambda (workspace)
+                      (herdr-tree--workspace-node state workspace worktrees
+                                                  width))
+                    (herdr-state-workspaces state))
+            (herdr-tree--known-project-nodes state known-project-roots))))
 
 (provide 'herdr-tree)
 ;;; herdr-tree.el ends here
