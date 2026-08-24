@@ -43,11 +43,13 @@
 
 (defcustom herdr-dispatch-refresh-debounce 0.2
   "Seconds to coalesce dispatcher redraws triggered by events.
-One agent producing output bumps its pane\\='s revision about ten times a
-second and every bump reaches `herdr-state-change-hook\\=', so redrawing
-per event meant erasing and rebuilding the buffer ten times a second.
-Short enough that the dashboard still reads as live.  Only the hook is
-debounced: \\[herdr-dispatch-refresh] redraws immediately."
+Events arrive in bursts — a reconcile folds many pane changes back to
+back, and a subscribe replays ring history — so redrawing per event
+meant erasing and rebuilding the buffer many times for one visible
+change.  (When `pane.updated\\=' was still subscribed, a single working
+agent kept that up at ten redraws a second indefinitely.)  Short enough
+that the dashboard still reads as live.  Only the hook is debounced:
+\\[herdr-dispatch-refresh] redraws immediately."
   :type 'number
   :group 'herdr)
 
@@ -1111,11 +1113,11 @@ whole pair exists to prevent, and which only became reachable once
   "Redraw the dispatcher from the cache, keeping point and fold state.
 
 Does nothing when the tree and header are already what is on screen.
-Nearly every `pane_updated\\=' carries only revision and scroll churn that
-the dashboard never renders, and erasing the buffer to lay down the same
-characters is what reset the cursor and left folds acting on dead
-sections.  Non-nil FORCE redraws regardless, which is what
-\\[herdr-dispatch-refresh] does.
+Many events change nothing the dashboard renders — status refreshes
+that confirm the same status, reconciles that touched only volatile
+fields — and erasing the buffer to lay down the same characters is what
+reset the cursor and left folds acting on dead sections.  Non-nil FORCE
+redraws regardless, which is what \\[herdr-dispatch-refresh] does.
 
 Also where worktrees are fetched, since this is the one place that knows
 a workspace is being drawn.  The request goes out whether or not this
