@@ -42,7 +42,7 @@ ideas. Asserted by tests, not just by review.
 ## Requirements
 
 - Emacs 28.1+
-- [herdr](https://herdr.dev) 0.8.0 (protocol 19)
+- [herdr](https://herdr.dev) 0.8.2 (protocol 20)
 - `ghostel`, `transient`
 
 Optional, used when present, never required: `marginalia`, `embark`, `consult`, `alert`.

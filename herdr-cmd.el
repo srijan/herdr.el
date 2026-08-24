@@ -464,7 +464,7 @@ name to a worktree with its own herdr workspace."
 (defcustom herdr-agent-kinds
   '("pi" "claude" "codex" "gemini" "cursor" "devin" "agy" "cline"
     "omp" "mastracode" "opencode" "copilot" "kimi" "kiro" "droid"
-    "amp" "grok" "hermes" "kilo" "qodercli" "maki")
+    "amp" "grok" "hermes" "kilo" "qodercli" "qwen" "maki")
   "Known agent kinds offered when starting an agent.
 Completion candidates only, not a closed set: herdr types
 `agent.start''s `kind' parameter as a free string rather than an enum,

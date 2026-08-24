@@ -14,7 +14,7 @@
 (require 'herdr-schema)
 
 (defvar herdr-cmd-test--fixture
-  (expand-file-name "fixtures/schema-protocol-17.json"
+  (expand-file-name "fixtures/schema-protocol-20.json"
                     (file-name-directory (or load-file-name buffer-file-name))))
 
 (defmacro herdr-cmd-test-with-schema (&rest body)

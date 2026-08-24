@@ -7,11 +7,11 @@
 (require 'herdr-schema)
 
 (defvar herdr-schema-test--fixture
-  (expand-file-name "fixtures/schema-protocol-17.json"
+  (expand-file-name "fixtures/schema-protocol-20.json"
                     (file-name-directory (or load-file-name buffer-file-name))))
 
 (defmacro herdr-schema-test-with-fixture (&rest body)
-  "Run BODY with the captured protocol-17 schema loaded."
+  "Run BODY with the captured protocol-20 schema loaded."
   (declare (indent 0) (debug t))
   `(let ((herdr-schema--cache nil)
          (herdr-schema--cache-version nil))
@@ -21,7 +21,7 @@
 (ert-deftest herdr-schema-exposes-every-method ()
   (herdr-schema-test-with-fixture
     (let ((methods (herdr-schema-methods)))
-      (should (= (length methods) 89))
+      (should (= (length methods) 91))
       (should (member "ping" methods))
       (should (member "pane.read" methods))
       (should (member "events.subscribe" methods))
