@@ -185,10 +185,18 @@ Attachability, not agenthood, is the criterion — a shell adopted through
 ;;; Server lifecycle
 
 (defun herdr-server-live-p ()
-  "Return non-nil when the herdr server answers a ping."
-  (condition-case nil
-      (progn (herdr-rpc-call "ping") t)
-    (herdr-error nil)))
+  "Return non-nil when the herdr server answers a ping.
+
+The ping is bound to `herdr-rpc-background-timeout': this is a liveness
+probe, called in a loop while the server starts and once before every
+start, and a healthy local server answers in milliseconds.  At the full
+`herdr-rpc-timeout' a hung socket made each probe a ten-second freeze —
+the startup loop alone could block for forty."
+  (let ((herdr-rpc-timeout (min herdr-rpc-timeout
+                                herdr-rpc-background-timeout)))
+    (condition-case nil
+        (progn (herdr-rpc-call "ping") t)
+      (herdr-error nil))))
 
 (defun herdr-term--bootstrap-server ()
   "Start a herdr client long enough to bring the server up.
@@ -205,12 +213,18 @@ and outlives it, so the buffer is discarded once ping succeeds."
     (when (eq herdr-terminal-backend 'session)
       (herdr-term--show buffer))
     (ghostel-exec buffer herdr-executable (herdr-term-session-args))
-    (let ((deadline (+ (float-time) herdr-server-start-timeout)))
-      (while (and (< (float-time) deadline) (not (herdr-server-live-p)))
-        (sit-for 0.2)))
-    (unless (herdr-server-live-p)
-      (error "herdr server did not come up within %ss"
-             herdr-server-start-timeout))
+    ;; One liveness answer per loop pass, and none after the deadline.
+    ;; The old shape re-pinged in the `unless' after the loop ended, so
+    ;; a server that missed the deadline was charged one more full probe
+    ;; on top of it before the error finally surfaced.
+    (let ((deadline (+ (float-time) herdr-server-start-timeout))
+          (live (herdr-server-live-p)))
+      (while (and (not live) (< (float-time) deadline))
+        (sit-for 0.2)
+        (setq live (herdr-server-live-p)))
+      (unless live
+        (error "herdr server did not come up within %ss"
+               herdr-server-start-timeout)))
     buffer))
 
 ;;; Buffer bookkeeping
@@ -403,6 +417,13 @@ on each one would mean two dozen round trips for one directory change."
 (defvar herdr-term--directory-timer nil)
 (defvar herdr-term--directory-debounce-timer nil)
 
+(defvar herdr-term--poll-in-progress nil
+  "Non-nil while a directory poll's RPC is in flight.
+The RPC wait runs due timers, and the poll's worst case used to exceed
+its own interval — so the next poll could fire re-entrantly inside the
+previous one's wait and stack blocking calls.  Let-bound rather than
+set, so a signal anywhere in the poll clears it for free.")
+
 (defun herdr-term--poll-directories ()
   "Refresh pane directories, then point buffers at them."
   ;; Guarded only on the stream being up.  It used to also require a
@@ -410,9 +431,19 @@ on each one would mean two dozen round trips for one directory change."
   ;; `agent-windows\=' once attaching became lazy — and with it the pruning
   ;; of panes the server no longer has.  Pruning matters most exactly when
   ;; no buffers are open yet, because that is when the pickers are used.
-  (when (herdr-state-running-p)
-    (when (herdr-state-reconcile-panes)
-      (herdr-term--sync-directories))))
+  ;;
+  ;; The background timeout is what keeps this poll survivable: it fires
+  ;; every `herdr-term-directory-interval' whether or not the server is
+  ;; well, and at the full `herdr-rpc-timeout' (10s against a 5s
+  ;; interval) a wedged server turned the backstop into a near-continuous
+  ;; main-thread freeze — the editor re-froze faster than it thawed.
+  (when (and (herdr-state-running-p)
+             (not herdr-term--poll-in-progress))
+    (let ((herdr-term--poll-in-progress t)
+          (herdr-rpc-timeout (min herdr-rpc-timeout
+                                  herdr-rpc-background-timeout)))
+      (when (herdr-state-reconcile-panes)
+        (herdr-term--sync-directories)))))
 
 (defun herdr-term--schedule-directory-poll ()
   "Refresh directories shortly, coalescing bursts of events."

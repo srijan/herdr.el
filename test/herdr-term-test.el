@@ -513,5 +513,50 @@ already attached."
       (when (buffer-live-p one) (kill-buffer one))
       (when (buffer-live-p two) (kill-buffer two)))))
 
+;;; The directory poll must not be able to freeze the editor
+
+(ert-deftest herdr-term-poll-binds-the-background-timeout ()
+  "The poll fires every 5s whether or not the server is well; at the
+full `herdr-rpc-timeout' (10s) a wedged server made the backstop a
+near-continuous main-thread freeze — Emacs re-froze faster than it
+thawed.  So the poll's RPCs run under `herdr-rpc-background-timeout'."
+  (let ((herdr-rpc-timeout 10.0)
+        (herdr-rpc-background-timeout 2.0)
+        (herdr-state--running t)
+        (seen nil))
+    (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
+               (lambda () (setq seen herdr-rpc-timeout) nil)))
+      (herdr-term--poll-directories)
+      (should (equal 2.0 seen)))))
+
+(ert-deftest herdr-term-poll-does-not-nest-inside-its-own-wait ()
+  "`accept-process-output' runs due timers, and the poll's worst case
+used to exceed its own interval — so the next poll fired re-entrantly
+inside the previous one's wait and stacked blocking calls.  A poll that
+finds one already in flight must do nothing."
+  (let ((herdr-state--running t)
+        (calls 0))
+    (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
+               (lambda ()
+                 (cl-incf calls)
+                 ;; The timer firing mid-wait is this same function.
+                 (herdr-term--poll-directories)
+                 nil)))
+      (herdr-term--poll-directories)
+      (should (= 1 calls)))))
+
+(ert-deftest herdr-term-server-live-p-is-a-bounded-probe ()
+  "A liveness ping answered in milliseconds by a healthy server must
+not be able to cost ten seconds against a hung one: it runs in the
+startup loop and before every start, where the full timeout added up
+to a forty-second frozen startup."
+  (let ((herdr-rpc-timeout 10.0)
+        (herdr-rpc-background-timeout 2.0)
+        (seen nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (&rest _) (setq seen herdr-rpc-timeout) '((ok . t)))))
+      (should (herdr-server-live-p))
+      (should (equal 2.0 seen)))))
+
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here

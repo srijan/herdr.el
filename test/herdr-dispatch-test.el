@@ -575,36 +575,36 @@ rather than a second test of the skip."
                              (sit-for 0.2))))
         (herdr-dispatch--cancel-refresh)))))
 
-(ert-deftest herdr-dispatch-schedule-refresh-cancels-before-it-rearms ()
-  "A burst must leave one timer armed, not one per event.
+(ert-deftest herdr-dispatch-schedule-refresh-keeps-a-pending-timer ()
+  "Sustained traffic must not starve the redraw.
 
-The coalescing test above cannot see this.  Drop the
-`herdr-dispatch--cancel-refresh' call and ten events arm ten timers, but
-nine of them fire on a tree that has not changed since the first redraw
-and are skipped, so the rebuild count comes out at one either way —
-measured, and the reason that mutation survived the suite.  Counting
-what a callback did is never evidence that a timer was cancelled.
+This used to assert the opposite shape — cancel the pending timer, arm
+a replacement — and that shape never fired while events kept coming:
+the stream's median event gap (0.105s) is shorter than the debounce
+(0.2s), so each event pushed the redraw past the next event and the
+dashboard stayed stale for exactly as long as something was happening
+on it.  Now the first event of a burst arms the one timer and later
+events leave it alone, so staleness is bounded by the debounce rather
+than by the length of the burst.
 
-So the cancellation itself is what is asserted: each reschedule hands
-the previously pending timer to `cancel-timer' before arming its
-replacement, and the variable ends up holding the new one."
+The rebuild-counting tests cannot see this either way — a starved
+timer eventually fires once when the stream quiets, and one rebuild is
+what they count.  So the timer discipline itself is what is asserted:
+a second and third schedule against a pending timer arm nothing and
+cancel nothing."
   (let ((cancelled nil) (armed 0))
     (cl-letf (((symbol-function 'run-at-time)
                (lambda (&rest _) (intern (format "timer%d" (cl-incf armed)))))
               ((symbol-function 'cancel-timer)
                (lambda (timer) (push timer cancelled))))
       (let ((herdr-dispatch--refresh-timer nil))
-        ;; Nothing pending, so nothing to cancel.
         (herdr-dispatch--schedule-refresh)
         (should (eq 'timer1 herdr-dispatch--refresh-timer))
-        (should-not cancelled)
         (herdr-dispatch--schedule-refresh)
-        (should (equal '(timer1) cancelled))
-        (should (eq 'timer2 herdr-dispatch--refresh-timer))
         (herdr-dispatch--schedule-refresh)
-        (should (equal '(timer2 timer1) cancelled))
-        (should (eq 'timer3 herdr-dispatch--refresh-timer))
-        (should (= 3 armed))))))
+        (should (eq 'timer1 herdr-dispatch--refresh-timer))
+        (should (= 1 armed))
+        (should-not cancelled)))))
 
 (ert-deftest herdr-dispatch-refresh-hook-cancels-its-timer-with-the-buffer ()
   "A pending redraw must not outlive the buffer it would draw into."

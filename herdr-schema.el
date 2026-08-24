@@ -50,16 +50,46 @@ Used by the tests to stand a captured schema up without a herdr on
   herdr-schema--cache)
 
 (defun herdr-schema--fetch ()
-  "Shell out to herdr for a fresh schema."
+  "Shell out to herdr for a fresh schema, bounded by `herdr-rpc-timeout'.
+
+Not `call-process': that blocks with no way to bound it — timers do not
+run while it waits — so a herdr binary that started but never exited
+froze Emacs indefinitely, reachable from the interactive escape hatch
+right after `herdr update', which is exactly when the binary may be
+mid-restart and slow to answer.  A process plus a deadline mirrors the
+bounded wait every socket RPC already uses."
   (with-temp-buffer
-    (let ((status (call-process herdr-executable nil t nil
-                                "api" "schema" "--json")))
-      (unless (zerop status)
-        (signal 'herdr-error
-                (list "schema_unavailable"
-                      (format "%s api schema --json exited %s"
-                              herdr-executable status))))
-      (setq herdr-schema--cache (herdr-rpc-decode (buffer-string))))))
+    (let ((proc (condition-case err
+                    (make-process
+                     :name "herdr-schema" :buffer (current-buffer)
+                     :command (list herdr-executable "api" "schema" "--json")
+                     :connection-type 'pipe :noquery t
+                     :sentinel #'ignore)
+                  (error
+                   (signal 'herdr-error
+                           (list "schema_unavailable"
+                                 (error-message-string err)))))))
+      (unwind-protect
+          (progn
+            (let ((deadline (+ (float-time) herdr-rpc-timeout)))
+              (while (and (process-live-p proc) (< (float-time) deadline))
+                (accept-process-output proc 0.05)))
+            (when (process-live-p proc)
+              (signal 'herdr-error
+                      (list "schema_unavailable"
+                            (format "%s api schema --json gave no answer in %ss"
+                                    herdr-executable herdr-rpc-timeout))))
+            ;; The exit can beat its last output; drain what came with it.
+            (while (accept-process-output proc 0.01))
+            (unless (zerop (process-exit-status proc))
+              (signal 'herdr-error
+                      (list "schema_unavailable"
+                            (format "%s api schema --json exited %s"
+                                    herdr-executable
+                                    (process-exit-status proc)))))
+            (setq herdr-schema--cache (herdr-rpc-decode (buffer-string))))
+        (when (process-live-p proc)
+          (delete-process proc))))))
 
 (defun herdr-schema--server-version ()
   "Return the running server's version string, or nil if unreachable."

@@ -1211,14 +1211,23 @@ lets the skip engage at all while an agent is working."
 
 (defun herdr-dispatch--schedule-refresh ()
   "Redraw the dispatcher shortly, coalescing a burst of events into one.
-Cancels and reschedules on each event, the shape
-`herdr-term--schedule-directory-poll\\=' already uses for the same problem."
-  (herdr-dispatch--cancel-refresh)
-  (setq herdr-dispatch--refresh-timer
-        (run-at-time herdr-dispatch-refresh-debounce nil
-                     (lambda ()
-                       (setq herdr-dispatch--refresh-timer nil)
-                       (herdr-dispatch-refresh)))))
+
+A pending timer is KEPT, not cancelled and re-armed.  The re-arm shape
+(which `herdr-term--schedule-directory-poll\\=' still uses, correctly —
+its backstop timer covers what the deferral misses) starved this redraw
+outright: the stream's median event gap is 0.105s and the debounce
+0.2s, so while an agent produced output every reschedule pushed the
+redraw past the next event and the dashboard stayed stale for exactly
+as long as something was happening on it.  A kept timer fires one
+debounce after the first event of a burst, bounding staleness at
+`herdr-dispatch-refresh-debounce\\=' instead of at the length of the
+burst."
+  (unless herdr-dispatch--refresh-timer
+    (setq herdr-dispatch--refresh-timer
+          (run-at-time herdr-dispatch-refresh-debounce nil
+                       (lambda ()
+                         (setq herdr-dispatch--refresh-timer nil)
+                         (herdr-dispatch-refresh))))))
 
 (defun herdr-dispatch--refresh-hook (&rest _)
   "Schedule a dispatcher redraw, or unhook when its buffer is gone."

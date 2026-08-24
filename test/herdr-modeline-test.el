@@ -102,7 +102,10 @@ between, so the segment carries its own leading space — and a segment
 with nothing to say must not carry it, or the mode line grows a gap that
 never goes away.  The function had no test, so either half of that could
 invert unnoticed."
-  (let ((herdr-modeline-string "stale"))
+  (let ((herdr-modeline-string "stale")
+        ;; Bound beside the string it shadows: the pair is assigned
+        ;; together, and the unchanged-skip compares against this half.
+        (herdr-modeline--text "stale"))
     (cl-letf (((symbol-function 'force-mode-line-update) #'ignore))
       (let ((herdr-state--current
              (herdr-modeline-test--state '("w1:p1" "claude" "idle"))))
@@ -126,6 +129,33 @@ invert unnoticed."
         (let ((map (get-text-property 1 'local-map herdr-modeline-string)))
           (should map)
           (should (eq #'herdr-agents (lookup-key map [mode-line mouse-1]))))))))
+
+(ert-deftest herdr-modeline-refresh-redisplays-only-on-a-changed-segment ()
+  "Unchanged text must not force every mode line in Emacs to redraw.
+
+The change hook fires ~7.5 times a second per busy agent, and nearly
+every one of those events is title churn the segment does not display.
+An unconditional `force-mode-line-update' there redrew every frame's
+mode lines several times a second for identical text — the reported
+constant flicker.  So: two refreshes over the same state cost one
+redisplay, and a refresh that changes the counts costs another."
+  (let ((herdr-modeline-string "")
+        (herdr-modeline--text "")
+        (updates 0))
+    (cl-letf (((symbol-function 'force-mode-line-update)
+               (lambda (&rest _) (cl-incf updates))))
+      (let ((herdr-state--current
+             (herdr-modeline-test--state '("w1:p1" "claude" "blocked"))))
+        (herdr-modeline--refresh)
+        (should (= 1 updates))
+        (herdr-modeline--refresh)
+        (should (= 1 updates)))
+      (let ((herdr-state--current
+             (herdr-modeline-test--state '("w1:p1" "claude" "blocked")
+                                         '("w1:p2" "codex" "blocked"))))
+        (herdr-modeline--refresh)
+        (should (= 2 updates))
+        (should (string-prefix-p " herdr:" herdr-modeline-string))))))
 
 ;;; Notifications fire on a transition, not on an observation
 
