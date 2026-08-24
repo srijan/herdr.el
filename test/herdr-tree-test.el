@@ -586,6 +586,23 @@ So absence reads as not linked."
   (should-not (herdr-tree-linked-worktree-p '((is_linked_worktree . nil))))
   (should (herdr-tree-linked-worktree-p '((is_linked_worktree . t)))))
 
+(ert-deftest herdr-tree-worktree-row-shows-its-own-directory ()
+  "A worktree row named only by branch gave no way to tell two
+same-named branches in different repositories apart, or to see where a
+worktree actually lives without opening it first -- the same directory
+column a workspace row already carries."
+  (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el-feat")
+                                (is_linked_worktree . t)
+                                (branch . "feat/dispatch"))))))
+         (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
+                                                 worktrees))))
+         (worktree (car (nth 3 (car (last children))))))
+    (should (string-match-p "/tmp/herdr.el-feat" (nth 2 worktree)))
+    (should (eq 'font-lock-comment-face
+                (get-text-property (string-match "/tmp/herdr.el-feat"
+                                                 (nth 2 worktree))
+                                   'font-lock-face (nth 2 worktree))))))
+
 (ert-deftest herdr-tree-dims-a-worktree-already-open-as-a-workspace ()
   (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el-feat")
                                 (is_linked_worktree . t)

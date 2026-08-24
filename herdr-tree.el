@@ -345,14 +345,20 @@ other workspace, or none — which this predicate would let through."
 `herdr-tree--worktrees-node\\=' has already dropped the repository\\='s own
 checkout, so `open_workspace_id\\=' here means what it appears to mean: a
 worktree herdr has opened as a workspace of its own.  That workspace is
-shown above, so the row is marked rather than repeated."
+shown above, so the row is marked rather than repeated.
+
+The path is dimmed the same way a workspace row dims its own directory
+\(`herdr-tree--workspace-node\\='\): both are context alongside the field
+that actually distinguishes the row, not the news themselves."
   (let ((open (alist-get 'open_workspace_id worktree)))
     (list 'herdr-worktree (alist-get 'path worktree)
           (string-trim-right
-           (format "%-28s %s"
+           (format "%-28s %-30s %s"
                    (or (alist-get 'branch worktree)
                        (alist-get 'label worktree)
                        "?")
+                   (herdr-tree--faced (or (alist-get 'path worktree) "")
+                                      'font-lock-comment-face)
                    (if open
                        (herdr-tree--faced (format "open as %s" open) 'shadow)
                      "")))
