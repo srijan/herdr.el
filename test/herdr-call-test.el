@@ -21,11 +21,11 @@
 (require 'herdr-call)
 
 (defvar herdr-call-test--fixture
-  (expand-file-name "fixtures/schema-protocol-17.json"
+  (expand-file-name "fixtures/schema-protocol-20.json"
                     (file-name-directory (or load-file-name buffer-file-name))))
 
 (defmacro herdr-call-test-with-schema (&rest body)
-  "Run BODY with the captured protocol-17 schema loaded and no live state."
+  "Run BODY with the captured protocol-20 schema loaded and no live state."
   (declare (indent 0) (debug t))
   `(let ((herdr-schema--cache nil)
          (herdr-schema--cache-version nil)
