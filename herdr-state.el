@@ -61,7 +61,17 @@
   :type 'number
   :group 'herdr)
 
-(defvar herdr-state-change-hook nil
+;; Renamed from `herdr-state-change-hook': the manual reserves `-hook'
+;; for a hook whose functions take no arguments, and this one always
+;; ran through `run-hook-with-args' — the docstring below has called it
+;; abnormal since it was written.  Ahead of the `defvar', as with the
+;; mode-line string alias in herdr-modeline.el: a variable alias
+;; declared after its referent does not carry a value already set
+;; under the old name, and the byte compiler rejects it outright.
+(define-obsolete-variable-alias 'herdr-state-change-hook
+  'herdr-state-change-functions "0.1.0")
+
+(defvar herdr-state-change-functions nil
   "Abnormal hook run after the cache changes.
 Each function is called with (EVENT-KIND DATA).  EVENT-KIND is the
 string herdr used; DATA is its payload alist.  On a resync, EVENT-KIND
@@ -170,6 +180,7 @@ way to know where it is."
 
 (defun herdr-state-agent-name (state pane-id)
   "Return the name reported for the agent in PANE-ID, or nil.
+STATE is the cache to look it up in.
 
 Names live only in `session.snapshot\\='s `agents\\=' array; neither
 `pane.list\\=' nor the pane events carry one, so this is refreshed on the
@@ -401,7 +412,9 @@ events use dots, so both spellings appear here deliberately."
        ;; `workspace_id' and `insert_index' — `workspace.move's own two
        ;; parameters, echoed back — plus `workspaces', which carries
        ;; WorkspaceInfo and is folded in first so labels and counts stay
-       ;; current across the move.  Both a vector, as JSON arrays decode.
+       ;; current across the move.  Both decode as lists, since events
+       ;; are parsed with `:array-type \\='list'; the `append' below is
+       ;; then a defensive copy rather than a vector-to-list coercion.
        ;;
        ;; Placement follows `insert_index' rather than the order of the
        ;; `workspaces' array: the index is the number the caller passed
@@ -441,8 +454,8 @@ events use dots, so both spellings appear here deliberately."
        ;; moved block in its new order, spliced before
        ;; `before_workspace_id' (or the end when nil).  `workspaces'
        ;; carries fresh WorkspaceInfo for the block, folded in first so
-       ;; labels and counts stay current across the move.  Both arrive as
-       ;; vectors, so coerce to lists.
+       ;; labels and counts stay current across the move.  Both decode
+       ;; as lists already; `append' below is a defensive copy.
        (dolist (workspace (append (alist-get 'workspaces data) nil))
          (setf (herdr-state-workspaces next)
                (herdr-state--upsert (herdr-state-workspaces next)
@@ -478,7 +491,7 @@ events use dots, so both spellings appear here deliberately."
            next)))
 
       ("tab_moved"
-       ;; `tab_id', `workspace_id', `insert_index' and a `tabs' vector of
+       ;; `tab_id', `workspace_id', `insert_index' and a `tabs' list of
        ;; TabInfo, folded in first for freshness.  `insert_index' counts
        ;; among the tabs of `workspace_id' alone, since that is what
        ;; `tab.move' means by it, while the cache holds every
@@ -542,6 +555,23 @@ ones, and `pane.list\\=' is authoritative over all of them."
 (defvar herdr-state--resubscribe-timer nil)
 (defvar herdr-state--running nil)
 
+(defvar herdr-state--generation 0
+  "Bumped by `herdr-state-start' and `herdr-state-stop'.
+
+Distinguishes the session an in-flight async request or a pending
+timer chain was begun for from whatever session happens to be running
+by the time it acts.  `herdr-state--running' cannot do this alone: a
+stop followed by a quick restart makes it true again before a request
+issued under the old session gets a reply, so a callback gated only on
+it merges a stale result into the new session's cache — see
+`herdr-state--refresh-statuses' and, outside this file,
+`herdr-cmd--select-pane-when-ready'.")
+
+(defun herdr-state-generation ()
+  "Return the current session generation.
+See `herdr-state--generation'."
+  herdr-state--generation)
+
 (defun herdr-state-current ()
   "Return the live cache."
   herdr-state--current)
@@ -560,7 +590,7 @@ and swallowed 533 events to absorb a replay of 8.  That is a minute of
 frozen modeline and dashboard after every connect, which is precisely
 when an agent is most likely to be working."
   (setq herdr-state--current (herdr-state-reduce herdr-state--current kind data))
-  (run-hook-with-args 'herdr-state-change-hook kind data))
+  (run-hook-with-args 'herdr-state-change-functions kind data))
 
 (defun herdr-state--schedule-settle (&optional resync)
   "Arrange the one post-connect settle, replacing any pending one.
@@ -626,7 +656,7 @@ makes the pane set final, and B subscribes the attachable slice of it."
     ;; Announce after the pane set is final, so a listener that redraws
     ;; from the whole cache does it once and sees everything.
     (when resync
-      (run-hook-with-args 'herdr-state-change-hook "resync" nil))))
+      (run-hook-with-args 'herdr-state-change-functions "resync" nil))))
 
 (defun herdr-state--handle-line (line)
   "Handle one NDJSON LINE from an event connection."
@@ -748,23 +778,31 @@ on every pane-set change: a synchronous snapshot here held the whole
 editor for up to `herdr-rpc-timeout' against a slow server, for a
 refresh nobody was waiting on.  The reply folds in whenever it lands;
 a server slower than `herdr-rpc-background-timeout' forfeits the
-refresh, and the next reconcile or event repairs the same state."
-  (ignore-errors
-    (herdr-rpc-call-async
-     "session.snapshot" nil
-     (lambda (result _error)
-       (when-let* ((herdr-state--running)
-                   (snapshot (alist-get 'snapshot result)))
-         (dolist (pane (alist-get 'panes snapshot))
-           (setq herdr-state--current
-                 (herdr-state--merge-pane
-                  herdr-state--current (alist-get 'pane_id pane)
-                  (seq-filter #'cdr
-                              (list (cons 'agent_status
-                                          (alist-get 'agent_status pane))
-                                    (cons 'agent (alist-get 'agent pane)))))))
-         (run-hook-with-args 'herdr-state-change-hook "resync" nil)))
-     herdr-rpc-background-timeout)))
+refresh, and the next reconcile or event repairs the same state.
+
+The request carries no handle for `herdr-state-stop' to cancel, so the
+generation captured here is what keeps a reply arriving after a
+stop-then-restart from merging the old session's statuses into the
+new one: `herdr-state--running' alone would already be true again by
+then."
+  (let ((generation herdr-state--generation))
+    (ignore-errors
+      (herdr-rpc-call-async
+       "session.snapshot" nil
+       (lambda (result _error)
+         (when-let* (((= generation herdr-state--generation))
+                     (herdr-state--running)
+                     (snapshot (alist-get 'snapshot result)))
+           (dolist (pane (alist-get 'panes snapshot))
+             (setq herdr-state--current
+                   (herdr-state--merge-pane
+                    herdr-state--current (alist-get 'pane_id pane)
+                    (seq-filter #'cdr
+                                (list (cons 'agent_status
+                                            (alist-get 'agent_status pane))
+                                      (cons 'agent (alist-get 'agent pane)))))))
+           (run-hook-with-args 'herdr-state-change-functions "resync" nil)))
+       herdr-rpc-background-timeout))))
 
 (defun herdr-state--note-pane-set-change (_kind _data)
   "Rebuild connection B, debounced, when the watched pane set drifted.
@@ -957,7 +995,7 @@ killed by the agent-windows reap listening on the change hook)."
                     (herdr-state-reduce herdr-state--current "pane_updated"
                                         `((pane . ,pane))))))))
         (when changed
-          (run-hook-with-args 'herdr-state-change-hook "reconcile" nil))
+          (run-hook-with-args 'herdr-state-change-functions "reconcile" nil))
         changed))))
 
 (define-obsolete-function-alias 'herdr-state-refresh-directories
@@ -974,7 +1012,7 @@ longer exist is worse than one extra round trip."
                           (alist-get 'snapshot
                                      (herdr-rpc-call "session.snapshot")))))
     (setq herdr-state--current (herdr-state-from-snapshot snapshot))
-    (run-hook-with-args 'herdr-state-change-hook "refresh" nil)
+    (run-hook-with-args 'herdr-state-change-functions "refresh" nil)
     herdr-state--current))
 
 (defun herdr-state-resync ()
@@ -984,14 +1022,15 @@ longer exist is worse than one extra round trip."
         (herdr-state-from-snapshot
          (alist-get 'snapshot (herdr-rpc-call "session.snapshot"))))
   (herdr-state--open-pane-stream)
-  (run-hook-with-args 'herdr-state-change-hook "resync" nil)
+  (run-hook-with-args 'herdr-state-change-functions "resync" nil)
   herdr-state--current)
 
 (defun herdr-state-start ()
   "Hydrate the cache and begin following the event stream."
   (unless herdr-state--running
     (setq herdr-state--running t)
-    (add-hook 'herdr-state-change-hook #'herdr-state--note-pane-set-change)
+    (setq herdr-state--generation (1+ herdr-state--generation))
+    (add-hook 'herdr-state-change-functions #'herdr-state--note-pane-set-change)
     (condition-case err
         (progn
           (setq herdr-state--current
@@ -999,18 +1038,27 @@ longer exist is worse than one extra round trip."
                  (alist-get 'snapshot (herdr-rpc-call "session.snapshot"))))
           ;; Announce the snapshot immediately so consumers paint
           ;; something true before any event arrives.
-          (run-hook-with-args 'herdr-state-change-hook "resync" nil)
+          (run-hook-with-args 'herdr-state-change-functions "resync" nil)
           (herdr-state--open-streams)
           (herdr-state--schedule-settle))
-      (herdr-error
+      ;; Plain `error', not `herdr-error': `herdr-state--open-streams'
+      ;; reaches `process-send-string' through the same subscribe path
+      ;; `herdr-state--settle' and `herdr-state--reconnect' widened their
+      ;; handlers for — the peer can close between connect and send and
+      ;; signal a plain error.  Catching only `herdr-error' here let that
+      ;; escape the rollback, leaving `herdr-state--running' stuck at t
+      ;; with no stream open and `herdr-start''s own `unless' skipping
+      ;; every later retry.
+      (error
        (setq herdr-state--running nil)
-       (remove-hook 'herdr-state-change-hook #'herdr-state--note-pane-set-change)
+       (remove-hook 'herdr-state-change-functions #'herdr-state--note-pane-set-change)
        (signal (car err) (cdr err))))))
 
 (defun herdr-state-stop ()
   "Stop following the event stream and drop the cache."
   (setq herdr-state--running nil)
-  (remove-hook 'herdr-state-change-hook #'herdr-state--note-pane-set-change)
+  (setq herdr-state--generation (1+ herdr-state--generation))
+  (remove-hook 'herdr-state-change-functions #'herdr-state--note-pane-set-change)
   (dolist (proc (list herdr-state--global-process herdr-state--pane-process))
     (herdr-state--close proc))
   (dolist (timer (list herdr-state--reconnect-timer
@@ -1029,7 +1077,7 @@ longer exist is worse than one extra round trip."
   ;; this the modeline advertised the dead session's agent counts until
   ;; the mode was toggled — stale, and actionable-looking, for agents
   ;; Emacs is no longer following.
-  (run-hook-with-args 'herdr-state-change-hook "resync" nil))
+  (run-hook-with-args 'herdr-state-change-functions "resync" nil))
 
 (defun herdr-state-running-p ()
   "Return non-nil when the event stream is being followed."

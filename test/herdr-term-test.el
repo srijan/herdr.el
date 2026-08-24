@@ -404,6 +404,47 @@ way from Go to."
   (should (equal '((display-buffer-reuse-window display-buffer-same-window))
                  (default-value 'herdr-display-action))))
 
+;;; Bootstrap must give ghostel a displayed window under both backends
+
+(ert-deftest herdr-term-bootstrap-server-shows-the-buffer-under-agent-windows ()
+  "ghostel sizes its PTY from a displayed window and paints nothing into
+a zero-sized one.  Skipping the show for `agent-windows', on the belief
+that the bootstrap client is discarded right after, could leave first
+startup there stuck with an unusable PTY."
+  (let ((herdr-terminal-backend 'agent-windows)
+        shown quit)
+    (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
+              ((symbol-function 'ghostel-exec) #'ignore)
+              ((symbol-function 'herdr-server-live-p) (lambda () t))
+              ((symbol-function 'herdr-term--show)
+               (lambda (buf) (setq shown buf)))
+              ((symbol-function 'quit-windows-on)
+               (lambda (buf &rest _) (setq quit buf))))
+      (let ((buffer (herdr-term--bootstrap-server)))
+        (unwind-protect
+            (progn
+              (should (eq buffer shown))
+              (should (eq buffer quit)))
+          (kill-buffer buffer))))))
+
+(ert-deftest herdr-term-bootstrap-server-quits-the-window-even-on-failure ()
+  "A bootstrap that never comes up must not leave its window lingering."
+  (let ((herdr-terminal-backend 'agent-windows)
+        (herdr-server-start-timeout 0.01)
+        quit)
+    (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
+              ((symbol-function 'ghostel-exec) #'ignore)
+              ((symbol-function 'herdr-term--show) #'ignore)
+              ((symbol-function 'herdr-server-live-p) (lambda () nil))
+              ((symbol-function 'quit-windows-on)
+               (lambda (buf &rest _) (setq quit buf))))
+      (unwind-protect
+          (progn
+            (should-error (herdr-term--bootstrap-server))
+            (should (eq (get-buffer herdr-term-session-buffer-name) quit)))
+        (when (get-buffer herdr-term-session-buffer-name)
+          (kill-buffer herdr-term-session-buffer-name))))))
+
 ;;; Timer teardown must cancel, not merely forget
 
 ;; Setting the variables to nil is not stopping the timers, and no test
@@ -470,7 +511,7 @@ has stopped, and `herdr-start' then adopts it as though it were live.
 The hook and the timer go with it, since a teardown that leaves either
 one on keeps working on buffers that are gone."
   (let* ((herdr-terminal-backend 'session)
-         (herdr-state-change-hook (list #'herdr-term--on-state-change))
+         (herdr-state-change-functions (list #'herdr-term--on-state-change))
          ;; A live timer, not nil: with both slots empty the teardown's
          ;; call to `herdr-term--stop-directory-timer' has nothing to do
          ;; and could be dropped altogether without this noticing.
@@ -488,7 +529,7 @@ one on keeps working on buffers that are gone."
           (should-not herdr-term--directory-timer)
           (should-not (buffer-live-p buffer))
           (should-not (memq #'herdr-term--on-state-change
-                            herdr-state-change-hook)))
+                            herdr-state-change-functions)))
       (cancel-timer poll)
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
@@ -497,7 +538,7 @@ one on keeps working on buffers that are gone."
 a stale entry names a dead buffer that reconciliation would count as
 already attached."
   (let* ((herdr-terminal-backend 'agent-windows)
-         (herdr-state-change-hook (list #'herdr-term--on-state-change))
+         (herdr-state-change-functions (list #'herdr-term--on-state-change))
          (herdr-term--directory-timer nil)
          (herdr-term--directory-debounce-timer nil)
          (one (generate-new-buffer " *agent-one*"))

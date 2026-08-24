@@ -186,6 +186,13 @@ first cancels the timer, and deleting the process afterwards must not
 produce a second callback — both paths go through the same `fired' guard
 that already gives the sentinel path its exactly-once behaviour.
 
+A `process-send-string' failure — the peer closes between connect and
+send, the same race `herdr-state.el' documents — goes through that same
+guard rather than escaping as a signal: escaping left an armed TIMEOUT
+free to fire CALLBACK a second time later, which is the double-delivery
+this function's own contract forbids.  Callers therefore see the send
+failure as an ordinary CALLBACK error, not a signal from this function.
+
 Used for methods that block server-side — `agent.wait' and
 `pane.wait_for_output' — so that Emacs stays responsive.  Those two
 callers deliberately pass no TIMEOUT: they bind the wait server-side via
@@ -232,8 +239,15 @@ rather than back it up."
                                                 method timeout))))
                  (when (process-live-p proc)
                    (delete-process proc))))))
-      (process-send-string proc (herdr-rpc-encode (herdr-rpc--next-id)
-                                                  method params))
+      (condition-case err
+          (process-send-string proc (herdr-rpc-encode (herdr-rpc--next-id)
+                                                      method params))
+        (error
+         (funcall fire nil
+                  `((code . "send_failed")
+                    (message . ,(error-message-string err))))
+         (when (process-live-p proc)
+           (delete-process proc))))
       proc)))
 
 (provide 'herdr-rpc)

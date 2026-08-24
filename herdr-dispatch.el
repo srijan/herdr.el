@@ -5,7 +5,7 @@
 ;; Author: Eddie Jesinsky
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-;; Package-Requires: ((emacs "28.1") (magit-section "3.3"))
+;; Package-Requires: ((emacs "28.1") (transient "0.4.0") (magit-section "3.3"))
 
 ;;; Commentary:
 
@@ -597,7 +597,7 @@ whole instead."
 
 (defun herdr-dispatch--invalidate-worktrees (kind _data)
   "Drop the worktree cache when KIND changed the set of worktrees.
-Also unhooks from `herdr-state-change-hook\\=' once the dispatcher's buffer
+Also unhooks from `herdr-state-change-functions\\=' once the dispatcher's buffer
 is gone, matching `herdr-dispatch--refresh-hook\\='.
 
 `workspace_closed\\=' belongs on this list even though it announces no
@@ -623,7 +623,7 @@ on an event that fires when a workspace closes and at no other time."
                        "worktree_removed" "workspace_closed"))
     (herdr-dispatch--forget-worktrees))
   (unless (get-buffer herdr-dispatch-buffer-name)
-    (remove-hook 'herdr-state-change-hook #'herdr-dispatch--invalidate-worktrees)))
+    (remove-hook 'herdr-state-change-functions #'herdr-dispatch--invalidate-worktrees)))
 
 (defun herdr-dispatch--worktree-at-point ()
   "Return the cached WorktreeInfo for the worktree line at point.
@@ -1215,8 +1215,8 @@ lets the skip engage at all while an agent is working."
   "Redraw the dispatcher shortly, coalescing a burst of events into one.
 
 A pending timer is KEPT, not cancelled and re-armed.  The re-arm shape
-(which `herdr-term--schedule-directory-poll\\=' still uses, correctly —
-its backstop timer covers what the deferral misses) starved this redraw
+\(which `herdr-term--schedule-directory-poll\\=' still uses, correctly —
+its backstop timer covers what the deferral misses\) starved this redraw
 outright: the stream's median event gap is 0.105s and the debounce
 0.2s, so while an agent produced output every reschedule pushed the
 redraw past the next event and the dashboard stayed stale for exactly
@@ -1236,7 +1236,7 @@ burst."
   (if (get-buffer herdr-dispatch-buffer-name)
       (herdr-dispatch--schedule-refresh)
     (herdr-dispatch--cancel-refresh)
-    (remove-hook 'herdr-state-change-hook #'herdr-dispatch--refresh-hook)))
+    (remove-hook 'herdr-state-change-functions #'herdr-dispatch--refresh-hook)))
 
 ;;;###autoload
 (defun herdr-agents ()
@@ -1244,7 +1244,7 @@ burst."
 
 Worktree knowledge belongs to an open dashboard, so opening one starts
 from none.  While the dashboard is up, `herdr-dispatch--invalidate-worktrees\\='
-is on `herdr-state-change-hook\\=' and keeps the listings honest; when the
+is on `herdr-state-change-functions\\=' and keeps the listings honest; when the
 buffer dies that hook takes itself off, so a worktree created between
 closing the dashboard and reopening it is one nothing here ever hears
 about.  \\[herdr-dispatch-refresh] is no cure — it re-asks the workspaces
@@ -1259,8 +1259,8 @@ what opening the dashboard already costs."
       (setq buffer (get-buffer-create herdr-dispatch-buffer-name)))
     (with-current-buffer buffer
       (unless (derived-mode-p 'herdr-dispatch-mode) (herdr-dispatch-mode))
-      (add-hook 'herdr-state-change-hook #'herdr-dispatch--refresh-hook)
-      (add-hook 'herdr-state-change-hook #'herdr-dispatch--invalidate-worktrees))
+      (add-hook 'herdr-state-change-functions #'herdr-dispatch--refresh-hook)
+      (add-hook 'herdr-state-change-functions #'herdr-dispatch--invalidate-worktrees))
     (herdr-dispatch-refresh t)
     (pop-to-buffer buffer)))
 

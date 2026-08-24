@@ -100,6 +100,19 @@ never picks — leaves the other branch looking right."
         ;; Anything else still goes through the schema's own prompt.
         (should (equal "typed" (herdr-call--read-value "pane.read" "lines")))))))
 
+(ert-deftest herdr-call-picker-omits-an-empty-choice-rather-than-sending-it ()
+  "`herdr-call's own docstring promises an empty prompt omits the
+parameter, same as every other schema-read-param branch.  But
+`completing-read' returns \"\" rather than nil on empty input, so the
+picker branch has to map that back to nil itself, or an optional
+pane_id/target left blank goes out as an explicit empty string instead
+of being left off the request."
+  (herdr-call-test-with-schema
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot '((panes . (((pane_id . "w1:p1"))))))))
+      (cl-letf (((symbol-function 'herdr-select-pane) (lambda (&rest _) "")))
+        (should-not (herdr-call--read-value "pane.read" "pane_id"))))))
+
 (ert-deftest herdr-call-falls-back-to-typing-an-id-when-no-panes-are-known ()
   "With an empty cache the picker has nothing to offer, and offering an
 empty completion list instead of a prompt is how the escape hatch stops

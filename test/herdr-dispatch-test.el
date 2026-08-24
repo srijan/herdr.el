@@ -608,7 +608,7 @@ cancel nothing."
 
 (ert-deftest herdr-dispatch-refresh-hook-cancels-its-timer-with-the-buffer ()
   "A pending redraw must not outlive the buffer it would draw into."
-  (let ((herdr-state-change-hook (list #'herdr-dispatch--refresh-hook))
+  (let ((herdr-state-change-functions (list #'herdr-dispatch--refresh-hook))
         (buffer (get-buffer-create herdr-dispatch-buffer-name)))
     (unwind-protect
         (progn
@@ -619,7 +619,7 @@ cancel nothing."
           (herdr-dispatch--refresh-hook "pane_updated" nil)
           (should-not herdr-dispatch--refresh-timer)
           (should-not (memq #'herdr-dispatch--refresh-hook
-                            herdr-state-change-hook)))
+                            herdr-state-change-functions)))
       (herdr-dispatch--cancel-refresh)
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
@@ -1364,7 +1364,7 @@ signal reaching us, not its type."
   "Worktree knowledge does not outlive the buffer it was fetched for.
 
 `herdr-dispatch--invalidate-worktrees' takes itself off
-`herdr-state-change-hook' when the dashboard dies, so a worktree created
+`herdr-state-change-functions' when the dashboard dies, so a worktree created
 between closing the dashboard and reopening it is one nothing hears
 about.  \\[herdr-dispatch-refresh] is no cure — it re-asks the
 workspaces that could not be answered, not the ones that were — so
@@ -1376,7 +1376,7 @@ must not forget: that would make every invocation of the command a full
 refetch of the session."
   (let ((herdr-state--current
          (herdr-state-from-snapshot herdr-dispatch-test--worktree-snapshot))
-        (herdr-state-change-hook nil)
+        (herdr-state-change-functions nil)
         (herdr-dispatch--worktrees '(("w1" . (stale))))
         (herdr-dispatch--worktrees-pending nil)
         (herdr-dispatch--worktrees-unanswered nil)
@@ -1477,7 +1477,7 @@ was, with nothing to say so."
 (ert-deftest herdr-dispatch-worktree-invalidation-unhooks-with-the-buffer ()
   "Left on the hook after the dashboard dies, this goes on dropping a
 cache nothing reads and making the next open re-ask for every workspace."
-  (let ((herdr-state-change-hook
+  (let ((herdr-state-change-functions
          (list #'herdr-dispatch--invalidate-worktrees))
         (herdr-dispatch--worktrees nil)
         (herdr-dispatch--worktrees-generation 0)
@@ -1486,11 +1486,11 @@ cache nothing reads and making the next open re-ask for every workspace."
         (progn
           (herdr-dispatch--invalidate-worktrees "pane_updated" nil)
           (should (memq #'herdr-dispatch--invalidate-worktrees
-                        herdr-state-change-hook))
+                        herdr-state-change-functions))
           (kill-buffer buffer)
           (herdr-dispatch--invalidate-worktrees "pane_updated" nil)
           (should-not (memq #'herdr-dispatch--invalidate-worktrees
-                            herdr-state-change-hook)))
+                            herdr-state-change-functions)))
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
 (ert-deftest herdr-dispatch-opening-a-fresh-dashboard-forgets-old-worktrees ()
@@ -1502,7 +1502,7 @@ and \\[herdr-dispatch-refresh] is no cure — it re-asks the workspaces
 that could not be answered, not the ones that were.  So opening starts
 from none.  Reopening a dashboard that is already up must not forget,
 or every visit pays for a full re-fetch."
-  (let ((herdr-state-change-hook nil))
+  (let ((herdr-state-change-functions nil))
     (cl-letf (((symbol-function 'herdr-dispatch-refresh) #'ignore)
               ((symbol-function 'pop-to-buffer) #'ignore))
       (let ((buffer (get-buffer herdr-dispatch-buffer-name)))

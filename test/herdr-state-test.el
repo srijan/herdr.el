@@ -542,11 +542,37 @@ minor mode was toggled."
          (herdr-state-from-snapshot
           '((panes . (((pane_id . "w1:p1") (agent . "claude")))))))
         (kinds nil))
-    (let ((herdr-state-change-hook
+    (let ((herdr-state-change-functions
            (list (lambda (kind _data) (push kind kinds)))))
       (herdr-state-stop)
       (should (equal '("resync") kinds))
       (should-not (herdr-state-pane-ids herdr-state--current)))))
+
+(ert-deftest herdr-state-change-hook-is-an-alias-for-the-renamed-variable ()
+  "`herdr-state-change-hook' is an abnormal hook and was misnamed for it;
+the rename must not break an init file still binding the old name."
+  (with-no-warnings
+    (let ((herdr-state-change-hook nil))
+      (add-hook 'herdr-state-change-hook #'ignore)
+      (should (equal herdr-state-change-functions '(ignore))))))
+
+(ert-deftest herdr-state-start-rolls-back-on-a-plain-error ()
+  "`herdr-state--open-streams' reaches `process-send-string' through the
+subscribe path, which signals a plain `error' — not `herdr-error' —
+when the peer closes between connect and send.  A handler that caught
+only `herdr-error' let that escape the rollback, leaving
+`herdr-state--running' stuck at t with no stream open and no hook
+removed, and `herdr-start''s own `unless' skipping every later retry."
+  (let ((herdr-state--running nil)
+        (herdr-state--generation 0))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (&rest _) '((snapshot . ((panes . ()))))))
+              ((symbol-function 'herdr-state--open-streams)
+               (lambda () (error "peer closed before send"))))
+      (should-error (herdr-state-start))
+      (should-not herdr-state--running)
+      (should-not (memq #'herdr-state--note-pane-set-change
+                        herdr-state-change-functions)))))
 
 (ert-deftest herdr-state-reconnect-survives-a-plain-error ()
   "`process-send-string' signals a plain `error' when the peer closes
@@ -609,7 +635,7 @@ background bound, and fold the reply in when it lands."
                  (setq captured (list method params timeout)
                        callback cb)
                  'proc)))
-      (let ((herdr-state-change-hook
+      (let ((herdr-state-change-functions
              (list (lambda (kind _data) (push kind kinds)))))
         (herdr-state--refresh-statuses)
         ;; Nothing folded yet: the call returned without blocking.
@@ -624,6 +650,39 @@ background bound, and fold the reply in when it lands."
                  nil)
         (should (equal '("resync") kinds))
         (should (equal "blocked"
+                       (alist-get 'agent_status
+                                  (herdr-state-pane herdr-state--current
+                                                    "w1:p1"))))))))
+
+(ert-deftest herdr-state-refresh-statuses-drops-a-reply-from-a-stale-generation ()
+  "A stop followed by a quick restart makes `herdr-state--running' true
+again before an old refresh's reply lands.  Gating only on that flag
+would merge the stale reply into the new session's cache; gating on
+the generation captured when the request went out must not."
+  (let ((herdr-state--running t)
+        (herdr-state--generation 1)
+        (herdr-state--current
+         (herdr-state-from-snapshot
+          '((panes . (((pane_id . "w1:p1") (agent . "claude")
+                       (agent_status . "working")))))))
+        (kinds nil)
+        (callback nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call-async)
+               (lambda (_method _params cb &optional _timeout)
+                 (setq callback cb) 'proc)))
+      (let ((herdr-state-change-functions
+             (list (lambda (kind _data) (push kind kinds)))))
+        (herdr-state--refresh-statuses)
+        ;; The session was stopped and restarted while the request was
+        ;; in flight: still running, but a new generation.
+        (setq herdr-state--generation 2)
+        (funcall callback
+                 '((snapshot . ((panes . (((pane_id . "w1:p1")
+                                           (agent . "claude")
+                                           (agent_status . "blocked")))))))
+                 nil)
+        (should-not kinds)
+        (should (equal "working"
                        (alist-get 'agent_status
                                   (herdr-state-pane herdr-state--current
                                                     "w1:p1"))))))))

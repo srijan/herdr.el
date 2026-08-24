@@ -22,7 +22,7 @@
   (declare (indent 0) (debug t))
   `(let* ((events nil)
           (herdr-state--current (herdr-state-empty))
-          (herdr-state-change-hook
+          (herdr-state-change-functions
            (list (lambda (kind data) (push (cons kind data) events))))
           (proc (herdr-state-live-test--proc)))
      (unwind-protect (progn ,@body (setq events (nreverse events)))
@@ -143,7 +143,7 @@ for 54.3 seconds and swallowed 533 events.  Anything that reintroduces
 a suppression window fails here."
   (let* ((events nil)
          (herdr-state--current (herdr-state-empty))
-         (herdr-state-change-hook
+         (herdr-state-change-functions
           (list (lambda (kind data) (push (cons kind data) events))))
          (proc (herdr-state-live-test--proc)))
     (unwind-protect
@@ -368,7 +368,7 @@ are not told about is the same bug one level up."
              (herdr-state--resubscribe-timer nil)
              (herdr-state--settle-timer nil)
              (herdr-state--current (herdr-state-live-test--stale-cache))
-             (herdr-state-change-hook
+             (herdr-state-change-functions
               (list (lambda (kind _data) (push kind kinds)))))
         (unwind-protect
             (progn
@@ -533,6 +533,62 @@ every poll report a change and refresh every consumer."
            (herdr-state-from-snapshot
             '((panes . (((pane_id . "w1:p1") (cwd . "/tmp") (revision . 1))))))))
       (should-not (herdr-state-reconcile-panes)))))
+
+;;; The sentinel: reconnect on a real drop, not on a marked teardown
+
+(ert-deftest herdr-state-sentinel-schedules-a-reconnect-on-a-real-drop ()
+  "`herdr-state--sentinel' is the sole arbiter between a real disconnect
+\(reconnect\) and an intentional teardown \(do nothing\) — the exact
+distinction a past bug got wrong, per `herdr-state--close''s own
+comment.  Every existing reconnect test calls `herdr-state--reconnect'/
+`--settle' directly, bypassing the sentinel entirely.  This drives a
+real process through it: an unmarked drop must schedule a reconnect."
+  (herdr-test-with-server
+      (lambda (req)
+        (if (equal (alist-get 'method req) "events.subscribe")
+            (cons (herdr-test-ok req '((type . "subscription_started"))) t)
+          (cons (herdr-test-ok req '((type . "ok"))) nil)))
+    (let ((herdr-state--running t)
+          (herdr-state--reconnect-timer nil)
+          (herdr-state--reconnect-delay nil)
+          (proc (herdr-rpc-connect "herdr-sentinel-test" #'ignore
+                                   #'herdr-state--sentinel)))
+      (unwind-protect
+          (progn
+            ;; Dropped without `herdr-state--close' marking it
+            ;; intentional — the shape a real server-initiated
+            ;; disconnect takes.
+            (delete-process proc)
+            (let ((deadline (+ (float-time) 5)))
+              (while (and (not herdr-state--reconnect-timer)
+                          (< (float-time) deadline))
+                (accept-process-output nil 0.05)))
+            (should herdr-state--reconnect-timer))
+        (when herdr-state--reconnect-timer
+          (cancel-timer herdr-state--reconnect-timer))))))
+
+(ert-deftest herdr-state-sentinel-ignores-a-marked-teardown ()
+  "The other half of the same distinction: `herdr-state--close' marks a
+teardown intentional, and the sentinel must not treat it as a drop to
+recover from — connection B is torn down and rebuilt on purpose
+whenever the watched pane set changes, and reconnecting on that would
+send the reconnect logic into a loop that suppresses every subsequent
+event."
+  (herdr-test-with-server
+      (lambda (req)
+        (if (equal (alist-get 'method req) "events.subscribe")
+            (cons (herdr-test-ok req '((type . "subscription_started"))) t)
+          (cons (herdr-test-ok req '((type . "ok"))) nil)))
+    (let ((herdr-state--running t)
+          (herdr-state--reconnect-timer nil)
+          (herdr-state--reconnect-delay nil)
+          (proc (herdr-rpc-connect "herdr-sentinel-test" #'ignore
+                                   #'herdr-state--sentinel)))
+      (herdr-state--close proc)
+      (let ((deadline (+ (float-time) 1)))
+        (while (< (float-time) deadline)
+          (accept-process-output nil 0.05)))
+      (should-not herdr-state--reconnect-timer))))
 
 (provide 'herdr-state-live-test)
 ;;; herdr-state-live-test.el ends here

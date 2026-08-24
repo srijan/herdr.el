@@ -101,6 +101,24 @@ where you were."
                              (funcall (plist-get source :items)))))))
       (kill-buffer live))))
 
+(ert-deftest herdr-select-consult-source-bounds-its-reconcile-timeout ()
+  "This runs on every `consult-buffer', a path the user attributes to
+buffer switching rather than to herdr.  Against a wedged server, an
+unbounded reconcile here freezes ordinary buffer switching for the full
+`herdr-rpc-timeout' — the same class of freeze `herdr-server-live-p'
+and `herdr-term--poll-directories' already guard against by binding
+down to `herdr-rpc-background-timeout'."
+  (let ((herdr-state--current (herdr-state-from-snapshot nil))
+        (herdr-rpc-timeout 10.0)
+        (herdr-rpc-background-timeout 2.0)
+        seen-timeout)
+    (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
+               (lambda () (setq seen-timeout herdr-rpc-timeout) nil)))
+      (funcall (plist-get (herdr-select--consult-source) :items))
+      (should (equal 2.0 seen-timeout))
+      ;; The binding must not leak past the call.
+      (should (equal 10.0 herdr-rpc-timeout)))))
+
 (ert-deftest herdr-select-consult-source-lists-everything-under-session ()
   "Under `session' every pane shares the one buffer, so all qualify."
   (let* ((herdr-terminal-backend 'session)
