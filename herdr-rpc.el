@@ -48,6 +48,19 @@
   :type 'number
   :group 'herdr)
 
+(defcustom herdr-rpc-background-timeout 2.0
+  "Seconds a background synchronous RPC may block the editor.
+
+`herdr-rpc-timeout' bounds a call the user asked for, where ten frozen
+seconds against a wedged server is at least attributable.  A timer-
+driven poll or a liveness ping was not asked for, and the same ten
+seconds there is an Emacs that stops dead for no visible reason — with
+the 5s directory backstop it re-froze faster than it thawed.  Paths
+that run on timers bind `herdr-rpc-timeout' down to this value; a
+server too slow to answer forfeits that refresh, not the UI."
+  :type 'number
+  :group 'herdr)
+
 (define-error 'herdr-error "herdr error")
 
 (defun herdr-error-code (err)

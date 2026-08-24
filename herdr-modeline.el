@@ -69,22 +69,40 @@ read.  Only the states worth acting on appear, via
   "Cached modeline segment, refreshed from the state change hook.")
 (put 'herdr-modeline-string 'risky-local-variable t)
 
+(defvar herdr-modeline--text ""
+  "The bare text behind `herdr-modeline-string', written beside it.
+What lets a refresh recognize that it is about to render the text
+already on screen.  The two are only ever assigned together, so
+comparing against this is comparing against the displayed segment.")
+
+(defvar herdr-modeline--map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mode-line mouse-1] #'herdr-agents)
+    map)
+  "Click map for the segment, built once rather than per refresh.")
+
 (defun herdr-modeline--refresh (&rest _)
-  "Recompute the modeline segment and redisplay."
-  (setq herdr-modeline-string
-        (let ((text (herdr-modeline--segment (herdr-state-current))))
-          (if (string-empty-p text)
-              ""
-            (concat " "
-                    (propertize text
-                                'help-echo "herdr agents (mouse-1: details)"
-                                'mouse-face 'mode-line-highlight
-                                'local-map
-                                (let ((map (make-sparse-keymap)))
-                                  (define-key map [mode-line mouse-1]
-                                              #'herdr-agents)
-                                  map))))))
-  (force-mode-line-update t))
+  "Recompute the modeline segment, and redisplay only if it changed.
+
+The change hook fires for every event — about 7.5 a second per busy
+agent, nearly all of it title churn the segment does not display.
+This used to rebuild the string and call `force-mode-line-update'
+across every frame each time regardless, which is a redisplay of
+every mode line in Emacs several times a second for text that almost
+never differs: the flicker.  The counts change rarely; only then is
+there anything to redraw."
+  (let ((text (herdr-modeline--segment (herdr-state-current))))
+    (unless (equal text herdr-modeline--text)
+      (setq herdr-modeline--text text)
+      (setq herdr-modeline-string
+            (if (string-empty-p text)
+                ""
+              (concat " "
+                      (propertize text
+                                  'help-echo "herdr agents (mouse-1: details)"
+                                  'mouse-face 'mode-line-highlight
+                                  'local-map herdr-modeline--map))))
+      (force-mode-line-update t))))
 
 (defun herdr-modeline--ensure-global-mode-string ()
   "Make `global-mode-string' safe to append a symbol to.

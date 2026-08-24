@@ -524,5 +524,109 @@ arrays."
     (should-not (herdr-state-workspace-directory state "w1"))
     (should-not (herdr-state-workspace-directory state "w9"))))
 
+;;; Failure paths around the live connections
+
+(ert-deftest herdr-state-stop-announces-the-emptied-cache ()
+  "Listeners hold their own view; dropping the cache silently is the
+same bug as the unannounced resync one connection earlier.  Without
+this the modeline advertised the dead session's agent counts until the
+minor mode was toggled."
+  (let ((herdr-state--running t)
+        (herdr-state--global-process nil)
+        (herdr-state--pane-process nil)
+        (herdr-state--reconnect-timer nil)
+        (herdr-state--resubscribe-timer nil)
+        (herdr-state--settle-timer nil)
+        (herdr-state--reconnect-delay nil)
+        (herdr-state--current
+         (herdr-state-from-snapshot
+          '((panes . (((pane_id . "w1:p1") (agent . "claude")))))))
+        (kinds nil))
+    (let ((herdr-state-change-hook
+           (list (lambda (kind _data) (push kind kinds)))))
+      (herdr-state-stop)
+      (should (equal '("resync") kinds))
+      (should-not (herdr-state-pane-ids herdr-state--current)))))
+
+(ert-deftest herdr-state-reconnect-survives-a-plain-error ()
+  "`process-send-string' signals a plain `error' when the peer closes
+between connect and send — not a `herdr-error' — and the reconnect
+timer variable is already cleared when the attempt runs.  A handler
+that caught only `herdr-error' let that signal escape the timer as a
+backtrace, with no reconnect scheduled and recovery left to luck."
+  (let ((herdr-state--running t)
+        (herdr-state--reconnect-timer nil)
+        (herdr-state--reconnect-delay nil))
+    (cl-letf (((symbol-function 'herdr-state--open-streams)
+               (lambda () (error "peer closed before send"))))
+      (unwind-protect
+          (progn
+            (herdr-state--reconnect)
+            (should herdr-state--reconnect-timer))
+        (when herdr-state--reconnect-timer
+          (cancel-timer herdr-state--reconnect-timer))))))
+
+(ert-deftest herdr-state-reconcile-keeps-a-pane-that-arrived-mid-wait ()
+  "The RPC wait services the event filters, so the cache can gain a
+pane while `pane.list' is in flight.  Staleness judged against the
+post-call cache evicted exactly that pane: it was in the cache but not
+in a reply built before it existed, and the reap on the change hook
+then killed its buffer.  Judged against the pre-call ids, a mid-wait
+arrival is not the reply's to condemn."
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot
+          '((panes . (((pane_id . "w1:p1") (agent . "claude"))))))))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (method &optional _params)
+                 (should (equal "pane.list" method))
+                 ;; The event filter runs inside the wait and folds in a
+                 ;; pane the server created after building this reply.
+                 (setq herdr-state--current
+                       (herdr-state-reduce herdr-state--current "pane_created"
+                                           '((pane . ((pane_id . "w1:new")
+                                                      (agent . "codex"))))))
+                 '((panes . (((pane_id . "w1:p1") (agent . "claude"))))))))
+      (herdr-state-reconcile-panes)
+      (should (member "w1:new" (herdr-state-pane-ids herdr-state--current)))
+      (should (member "w1:p1" (herdr-state-pane-ids herdr-state--current))))))
+
+(ert-deftest herdr-state-refresh-statuses-is-asynchronous-and-bounded ()
+  "The status refresh runs from the resubscribe timer, which fires on
+every pane-set change: synchronous, it held the whole editor for up to
+`herdr-rpc-timeout' against a slow server, for a refresh nobody was
+waiting on.  So it must go through `herdr-rpc-call-async' with the
+background bound, and fold the reply in when it lands."
+  (let ((herdr-state--running t)
+        (herdr-state--current
+         (herdr-state-from-snapshot
+          '((panes . (((pane_id . "w1:p1") (agent . "claude")
+                       (agent_status . "working")))))))
+        (kinds nil)
+        (captured nil)
+        (callback nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call-async)
+               (lambda (method params cb &optional timeout)
+                 (setq captured (list method params timeout)
+                       callback cb)
+                 'proc)))
+      (let ((herdr-state-change-hook
+             (list (lambda (kind _data) (push kind kinds)))))
+        (herdr-state--refresh-statuses)
+        ;; Nothing folded yet: the call returned without blocking.
+        (should (equal (list "session.snapshot" nil
+                             herdr-rpc-background-timeout)
+                       captured))
+        (should-not kinds)
+        (funcall callback
+                 '((snapshot . ((panes . (((pane_id . "w1:p1")
+                                           (agent . "claude")
+                                           (agent_status . "blocked")))))))
+                 nil)
+        (should (equal '("resync") kinds))
+        (should (equal "blocked"
+                       (alist-get 'agent_status
+                                  (herdr-state-pane herdr-state--current
+                                                    "w1:p1"))))))))
+
 (provide 'herdr-state-test)
 ;;; herdr-state-test.el ends here

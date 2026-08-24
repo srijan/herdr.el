@@ -217,23 +217,59 @@ at any other."
   (let ((herdr-schema--cache nil)
         (user-emacs-directory
          (file-name-as-directory (make-temp-file "herdr-schema-test" t)))
-        args)
+        ;; A real stub executable rather than a `call-process' stub: the
+        ;; fetch now runs a bounded process precisely because
+        ;; `call-process' cannot be bounded, so a function stub would
+        ;; assert an implementation this file no longer has.  The stub
+        ;; answers only to the exact arguments, which is the same
+        ;; assertion the old captured-args check made.
+        (stub (herdr-schema-test--stub-executable
+               "[ \"$1\" = api ] && [ \"$2\" = schema ] && [ \"$3\" = --json ] || exit 9\nprintf '{\"protocol\": 17, \"schemas\": {}}'\n")))
     (unwind-protect
         (progn
-          (cl-letf (((symbol-function 'call-process)
-                     (lambda (program _in _buf _display &rest rest)
-                       (setq args rest)
-                       (insert "{\"protocol\": 17, \"schemas\": {}}")
-                       (ignore program)
-                       0)))
+          (let ((herdr-executable stub))
             (herdr-schema--fetch))
-          (should (equal '("api" "schema" "--json") args))
+          (should (equal 17 (alist-get 'protocol herdr-schema--cache)))
           (should-not (directory-files user-emacs-directory nil "\\`[^.]"))
           (should-not (boundp 'herdr-schema-cache-file))
-          (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 3)))
-            (let ((err (should-error (herdr-schema--fetch) :type 'herdr-error)))
-              (should (equal "schema_unavailable" (herdr-error-code err))))))
+          (let ((failing (herdr-schema-test--stub-executable "exit 3\n")))
+            (unwind-protect
+                (let* ((herdr-executable failing)
+                       (err (should-error (herdr-schema--fetch)
+                                          :type 'herdr-error)))
+                  (should (equal "schema_unavailable" (herdr-error-code err))))
+              (delete-file failing))))
+      (delete-file stub)
       (delete-directory user-emacs-directory t))))
+
+(defun herdr-schema-test--stub-executable (body)
+  "Write BODY as an executable /bin/sh script and return its path."
+  (let ((path (make-temp-file "herdr-schema-stub")))
+    (with-temp-file path (insert "#!/bin/sh\n" body))
+    (set-file-modes path #o700)
+    path))
+
+(ert-deftest herdr-schema-fetch-abandons-a-binary-that-never-exits ()
+  "A hung herdr must cost the deadline, not the session.
+
+`call-process' cannot be interrupted by a timer, so the old fetch
+against a binary that started but never exited froze Emacs until the
+process died — reachable from the raw-method escape hatch right after
+`herdr update', which is exactly when the binary may be mid-restart.
+The bounded fetch gives up at `herdr-rpc-timeout', kills the process,
+and signals the same code the exit-status path uses."
+  (let ((herdr-schema--cache nil)
+        (herdr-rpc-timeout 0.3)
+        (stub (herdr-schema-test--stub-executable "sleep 30\n")))
+    (unwind-protect
+        (let ((start (float-time)))
+          (let* ((herdr-executable stub)
+                 (err (should-error (herdr-schema--fetch) :type 'herdr-error)))
+            (should (equal "schema_unavailable" (herdr-error-code err))))
+          ;; Generous bound: the point is seconds, not thirty.
+          (should (< (- (float-time) start) 5))
+          (should-not herdr-schema--cache))
+      (delete-file stub))))
 
 (provide 'herdr-schema-test)
 ;;; herdr-schema-test.el ends here

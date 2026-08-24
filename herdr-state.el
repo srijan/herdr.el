@@ -588,14 +588,25 @@ makes the pane set final, and B carries one subscription per pane."
     (when herdr-state--resubscribe-timer
       (cancel-timer herdr-state--resubscribe-timer)
       (setq herdr-state--resubscribe-timer nil))
-    (when resync
-      (condition-case nil
-          (setq herdr-state--current
-                (herdr-state-from-snapshot
-                 (alist-get 'snapshot (herdr-rpc-call "session.snapshot"))))
-        (herdr-error nil)))
-    (herdr-state-reconcile-panes)
-    (herdr-state--open-pane-stream)
+    ;; The settle runs on a timer, so its synchronous calls are bound to
+    ;; the background timeout: a wedged server costs the refresh, not
+    ;; ten seconds of frozen editor that nobody asked for.  Plain
+    ;; `error' rather than `herdr-error' below, because
+    ;; `process-send-string' inside the RPC signals a plain error when
+    ;; the peer closes between connect and send — narrower handling let
+    ;; that escape the timer as a backtrace and lose the attempt.
+    (let ((herdr-rpc-timeout (min herdr-rpc-timeout
+                                  herdr-rpc-background-timeout)))
+      (when resync
+        (condition-case nil
+            (setq herdr-state--current
+                  (herdr-state-from-snapshot
+                   (alist-get 'snapshot (herdr-rpc-call "session.snapshot"))))
+          (error nil)))
+      (herdr-state-reconcile-panes))
+    (condition-case nil
+        (herdr-state--open-pane-stream)
+      (error (herdr-state--schedule-reconnect)))
     ;; Announce after the pane set is final, so a listener that redraws
     ;; from the whole cache does it once and sees everything.
     (when resync
@@ -671,25 +682,39 @@ A vector, because `subscriptions' is a JSON array."
   "Rebuild connection B, then refresh statuses the rebuild may have missed."
   (setq herdr-state--resubscribe-timer nil)
   (when herdr-state--running
-    (herdr-state--open-pane-stream)
+    ;; Plain `error': see the matching handler in `herdr-state--settle'.
+    (condition-case nil
+        (herdr-state--open-pane-stream)
+      (error (herdr-state--schedule-reconnect)))
     ;; A rebuild has a gap.  The snapshot carries agent_status for every
     ;; pane, so refreshing from it closes the gap without replaying.
     (herdr-state--refresh-statuses)))
 
 (defun herdr-state--refresh-statuses ()
-  "Merge current agent statuses from a fresh snapshot into the cache."
-  (when-let* ((snapshot (ignore-errors
-                          (alist-get 'snapshot
-                                     (herdr-rpc-call "session.snapshot")))))
-    (dolist (pane (alist-get 'panes snapshot))
-      (setq herdr-state--current
-            (herdr-state--merge-pane
-             herdr-state--current (alist-get 'pane_id pane)
-             (seq-filter #'cdr
-                         (list (cons 'agent_status
-                                     (alist-get 'agent_status pane))
-                               (cons 'agent (alist-get 'agent pane)))))))
-    (run-hook-with-args 'herdr-state-change-hook "resync" nil)))
+  "Merge agent statuses from a fresh snapshot into the cache, async.
+
+Asynchronous because this runs from the resubscribe timer, which fires
+on every pane-set change: a synchronous snapshot here held the whole
+editor for up to `herdr-rpc-timeout' against a slow server, for a
+refresh nobody was waiting on.  The reply folds in whenever it lands;
+a server slower than `herdr-rpc-background-timeout' forfeits the
+refresh, and the next reconcile or event repairs the same state."
+  (ignore-errors
+    (herdr-rpc-call-async
+     "session.snapshot" nil
+     (lambda (result _error)
+       (when-let* ((herdr-state--running)
+                   (snapshot (alist-get 'snapshot result)))
+         (dolist (pane (alist-get 'panes snapshot))
+           (setq herdr-state--current
+                 (herdr-state--merge-pane
+                  herdr-state--current (alist-get 'pane_id pane)
+                  (seq-filter #'cdr
+                              (list (cons 'agent_status
+                                          (alist-get 'agent_status pane))
+                                    (cons 'agent (alist-get 'agent pane)))))))
+         (run-hook-with-args 'herdr-state-change-hook "resync" nil)))
+     herdr-rpc-background-timeout)))
 
 (defun herdr-state--note-pane-set-change (kind _data)
   "Rebuild connection B, debounced, when KIND changed the pane set.
@@ -733,7 +758,12 @@ for nothing."
           ;; tab change made during the gap missing for good.
           (herdr-state--schedule-settle t)
           (setq herdr-state--reconnect-delay nil))
-      (herdr-error (herdr-state--schedule-reconnect)))))
+      ;; Plain `error', not `herdr-error': `process-send-string' signals
+      ;; a plain error when the peer closes between connect and send
+      ;; (the case herdr-dispatch.el documents), and the timer variable
+      ;; was already cleared above — an escaping signal here lost the
+      ;; attempt with no reconnect scheduled, only a timer backtrace.
+      (error (herdr-state--schedule-reconnect)))))
 
 (defun herdr-state--open-streams ()
   "Open connection A, and connection B if there are panes to watch."
@@ -798,43 +828,52 @@ navigated to.
 
 One `pane.list\\=' answers both: it is the authoritative set, so panes
 missing from it are dropped, panes new to us are added, and directories
-are refreshed in the same pass.  Returns non-nil when anything changed."
-  (when-let* ((panes (ignore-errors
-                       (alist-get 'panes (herdr-rpc-call "pane.list")))))
-    (let* ((live-ids (mapcar (lambda (pane) (alist-get 'pane_id pane)) panes))
-           (cached-ids (herdr-state-pane-ids herdr-state--current))
-           (stale (seq-remove (lambda (id) (member id live-ids)) cached-ids))
-           (changed nil))
-      (dolist (id stale)
-        (setq changed t)
-        (setq herdr-state--current
-              (herdr-state-reduce herdr-state--current "pane_closed"
-                                  `((pane_id . ,id)))))
-      (dolist (pane panes)
-        (let* ((id (alist-get 'pane_id pane))
-               (known (herdr-state-pane herdr-state--current id)))
-          (cond
-           ((null known)
-            (setq changed t)
-            (setq herdr-state--current
-                  (herdr-state-reduce herdr-state--current "pane_created"
-                                      `((pane . ,pane)))))
-           ((herdr-state--pane-differs-p known pane)
-            ;; Replace the record rather than patching cwd alone: an
-            ;; agent label can change under us and a cache that only ever
-            ;; refreshed directories kept reporting the old one.  The
-            ;; common case is an adopted shell that someone then starts
-            ;; Claude in: herdr 0.8.0 relabels it `claude' of its own
-            ;; accord a few seconds later, because reporting an agent
-            ;; does not suppress detection — the two run independently,
-            ;; and detection wins.
-            (setq changed t)
-            (setq herdr-state--current
-                  (herdr-state-reduce herdr-state--current "pane_updated"
-                                      `((pane . ,pane))))))))
-      (when changed
-        (run-hook-with-args 'herdr-state-change-hook "reconcile" nil))
-      changed)))
+are refreshed in the same pass.  Returns non-nil when anything changed.
+
+The cached ids are captured BEFORE the call: `herdr-rpc-call\\='s wait
+services the event-stream filters, so the cache can gain a pane while
+the reply is in flight — and a reply built before that pane existed
+cannot pronounce it stale.  Judging staleness against the pre-call set
+means a pane that arrived mid-wait is never evicted (nor its buffer
+killed by the agent-windows reap listening on the change hook)."
+  (let ((known-ids (herdr-state-pane-ids herdr-state--current)))
+    (when-let* ((panes (ignore-errors
+                         (alist-get 'panes (herdr-rpc-call "pane.list")))))
+      (let* ((live-ids (mapcar (lambda (pane) (alist-get 'pane_id pane)) panes))
+             (cached-ids (seq-filter (lambda (id) (member id known-ids))
+                                     (herdr-state-pane-ids herdr-state--current)))
+             (stale (seq-remove (lambda (id) (member id live-ids)) cached-ids))
+             (changed nil))
+        (dolist (id stale)
+          (setq changed t)
+          (setq herdr-state--current
+                (herdr-state-reduce herdr-state--current "pane_closed"
+                                    `((pane_id . ,id)))))
+        (dolist (pane panes)
+          (let* ((id (alist-get 'pane_id pane))
+                 (known (herdr-state-pane herdr-state--current id)))
+            (cond
+             ((null known)
+              (setq changed t)
+              (setq herdr-state--current
+                    (herdr-state-reduce herdr-state--current "pane_created"
+                                        `((pane . ,pane)))))
+             ((herdr-state--pane-differs-p known pane)
+              ;; Replace the record rather than patching cwd alone: an
+              ;; agent label can change under us and a cache that only
+              ;; ever refreshed directories kept reporting the old one.
+              ;; The common case is an adopted shell that someone then
+              ;; starts Claude in: herdr 0.8.0 relabels it `claude' of
+              ;; its own accord a few seconds later, because reporting an
+              ;; agent does not suppress detection — the two run
+              ;; independently, and detection wins.
+              (setq changed t)
+              (setq herdr-state--current
+                    (herdr-state-reduce herdr-state--current "pane_updated"
+                                        `((pane . ,pane))))))))
+        (when changed
+          (run-hook-with-args 'herdr-state-change-hook "reconcile" nil))
+        changed))))
 
 (define-obsolete-function-alias 'herdr-state-refresh-directories
   'herdr-state-reconcile-panes "0.1.0")
@@ -899,7 +938,12 @@ longer exist is worse than one extra round trip."
         herdr-state--resubscribe-timer nil
         herdr-state--settle-timer nil
         herdr-state--reconnect-delay nil
-        herdr-state--current (herdr-state-empty)))
+        herdr-state--current (herdr-state-empty))
+  ;; Listeners hold their own view of the cache just dropped.  Without
+  ;; this the modeline advertised the dead session's agent counts until
+  ;; the mode was toggled — stale, and actionable-looking, for agents
+  ;; Emacs is no longer following.
+  (run-hook-with-args 'herdr-state-change-hook "resync" nil))
 
 (defun herdr-state-running-p ()
   "Return non-nil when the event stream is being followed."
