@@ -369,7 +369,17 @@ last line would satisfy a test that only looked at the text."
 Every piece of worktree state is rebound, not just the cache: the pending
 set, the unanswered list and the generation counter are globals that
 outlive a buffer, and a test that left one behind would arrive in the
-next as a workspace mysteriously already asked for."
+next as a workspace mysteriously already asked for.
+
+`herdr-dispatch--known-project-roots\\=' is stubbed to nil for the same
+reason project.el must not be: it reads the real `project-list-file\\=' on
+whatever machine runs the suite, so an unstubbed test would see a
+different known-project list — and, since `herdr-dispatch-refresh\\=' now
+fetches worktrees for each one, a different set of `worktree.list\\=' calls
+too — in CI than on a contributor's machine with years of project
+history.  A test that means to exercise known projects wraps its own body
+in a nested `cl-letf\\=' on the same symbol; the inner binding wins for its
+extent and this one still restores it afterwards."
   (declare (indent 1) (debug t))
   `(let ((herdr-state--current (herdr-state-from-snapshot ,snapshot))
          (herdr-dispatch--worktrees nil)
@@ -379,9 +389,11 @@ next as a workspace mysteriously already asked for."
          (herdr-dispatch--refresh-timer nil)
          (buffer (get-buffer-create herdr-dispatch-buffer-name)))
      (unwind-protect
-         (with-current-buffer buffer
-           (herdr-dispatch-mode)
-           ,@body)
+         (cl-letf (((symbol-function 'herdr-dispatch--known-project-roots)
+                    (lambda () nil)))
+           (with-current-buffer buffer
+             (herdr-dispatch-mode)
+             ,@body))
        (herdr-dispatch--cancel-refresh)
        (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
@@ -1048,6 +1060,21 @@ the case that tells the two apart."
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested))))))
+
+(ert-deftest herdr-dispatch-fetches-worktrees-for-known-projects-too ()
+  "The known-project sibling of the once-per-workspace guarantee above: a
+root with no workspace open still gets its own worktrees fetched, the
+same way an open workspace's do, and still only once."
+  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
+    (cl-letf (((symbol-function 'herdr-dispatch--known-project-roots)
+               (lambda () '("/tmp/known-a/" "/tmp/known-b/"))))
+      (herdr-dispatch-test-with-async
+        (herdr-dispatch-refresh t)
+        (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/known-a/" "/tmp/known-b/")
+                       (herdr-dispatch-test--requested)))
+        (dotimes (_ 19) (herdr-dispatch-refresh))
+        (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/known-a/" "/tmp/known-b/")
+                       (herdr-dispatch-test--requested)))))))
 
 (ert-deftest herdr-dispatch-renders-worktrees-when-the-reply-lands ()
   "The reported bug, from the user's end: no keystroke is involved.
@@ -1923,6 +1950,133 @@ worktree's directory, and asserting the exact params reaching
                            (herdr-workspace-focus herdr-rpc-call)
                          (herdr-dispatch-open-worktree))))))))
 
+;;; Known projects with no workspace open
+
+(defconst herdr-dispatch-test--known-project-nodes
+  '((herdr-known-project "/tmp/other-project/" "other-project (0)  /tmp/other-project/" nil))
+  "One `herdr-known-project\\=' row, for the tests below.")
+
+(ert-deftest herdr-dispatch-visit-creates-a-workspace-for-a-known-project ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
+    (let ((herdr-state--current (herdr-state-empty)))
+      (search-forward "other-project (0)")
+      (should (equal '((herdr-rpc-call "workspace.create"
+                                       ((cwd . "/tmp/other-project/")
+                                        (label . "other-project")))
+                       (herdr-term-display))
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-rpc-call herdr-term-display)
+                       (herdr-dispatch-visit)))))))
+
+(ert-deftest herdr-dispatch-visit-focuses-rather-than-double-creates ()
+  "The row is built only for a root with no workspace open, but the
+render can be one poll tick behind by the time RET lands — this is the
+same TOCTOU `herdr-state-workspace-for-directory' exists to close, and
+the test that would catch losing the check."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w9"))))
+              (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
+                         (cwd . "/tmp/other-project"))))))))
+      (search-forward "other-project (0)")
+      (should (equal '((herdr-rpc-call "workspace.focus"
+                                       ((workspace_id . "w9")))
+                       (herdr-term-display))
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-rpc-call herdr-term-display)
+                       (herdr-dispatch-visit)))))))
+
+(ert-deftest herdr-dispatch-focus-refuses-a-known-project-and-points-at-ret ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
+    (search-forward "other-project (0)")
+    (should-error (herdr-dispatch-focus) :type 'user-error)
+    (let ((message
+           (condition-case err
+               (herdr-dispatch-focus)
+             (user-error (error-message-string err)))))
+      (should (string-match-p "other-project" message))
+      (should (string-match-p "RET" message)))))
+
+(ert-deftest herdr-dispatch-rename-refuses-a-known-project ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
+    (search-forward "other-project (0)")
+    (should (equal nil
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-rename herdr-tab-rename
+                                          herdr-workspace-rename)
+                     (should-error (herdr-dispatch-rename)
+                                   :type 'user-error))))))
+
+(ert-deftest herdr-dispatch-close-refuses-a-known-project ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
+    (search-forward "other-project (0)")
+    (should (equal nil
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-close herdr-tab-close herdr-workspace-close
+                                         herdr-worktree-remove herdr-rpc-call)
+                     (should-error (herdr-dispatch-close)
+                                   :type 'user-error))))))
+
+(defconst herdr-dispatch-test--known-projects-container-nodes
+  '((herdr-known-projects "inactive" "Inactive (2)"
+     ((herdr-known-project "/tmp/a/" "a (0)  /tmp/a/" nil)
+      (herdr-known-project "/tmp/b/" "b (0)  /tmp/b/" nil))))
+  "One `herdr-known-projects\\=' container holding two rows.")
+
+(ert-deftest herdr-dispatch-close-refuses-the-inactive-heading ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
+    (search-forward "Inactive (2)")
+    (should (equal nil
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-close herdr-tab-close herdr-workspace-close
+                                         herdr-worktree-remove herdr-rpc-call)
+                     (should-error (herdr-dispatch-close)
+                                   :type 'user-error))))))
+
+(ert-deftest herdr-dispatch-rename-refuses-the-inactive-heading ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
+    (search-forward "Inactive (2)")
+    (should (equal nil
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-rename herdr-tab-rename
+                                          herdr-workspace-rename)
+                     (should-error (herdr-dispatch-rename)
+                                   :type 'user-error))))))
+
+(ert-deftest herdr-dispatch-focus-refuses-the-inactive-heading ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
+    (search-forward "Inactive (2)")
+    (should (equal nil
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-rpc-call herdr-pane-focus herdr-tab-focus
+                                       herdr-workspace-focus)
+                     (should-error (herdr-dispatch-focus)
+                                   :type 'user-error))))))
+
+(ert-deftest herdr-dispatch-visit-refuses-the-inactive-heading ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
+    (search-forward "Inactive (2)")
+    (should (equal nil
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-focus herdr-tab-focus herdr-workspace-focus
+                                         herdr-rpc-call)
+                     (should-error (herdr-dispatch-visit)
+                                   :type 'user-error))))))
+
+(ert-deftest herdr-dispatch-inactive-heading-folds-and-has-no-gap-between-its-rows ()
+  "The container is what removes the blank line: only top-level siblings
+get one from `herdr-dispatch--insert-nodes', and inside `Inactive (N)'
+these rows are children of it, not siblings of the workspaces above."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
+    (goto-char (point-min))
+    (should (herdr-dispatch-test--section-at "Inactive (2)"))
+    (search-forward "a (0)")
+    (let ((after-a (line-end-position)))
+      (forward-line 1)
+      (should (looking-at-p "\\s-*b (0)"))
+      (should (= after-a (1- (point)))))))
+
 (ert-deftest herdr-dispatch-binds-question-mark-to-the-transient ()
   (should (eq #'herdr-transient
               (lookup-key herdr-dispatch-mode-map "?"))))
@@ -2203,7 +2357,7 @@ message points at TAB, which is the heading's one real action."
                                    :type 'user-error))))
     (should (string-match-p
              "TAB"
-             (cadr (should-error (herdr-dispatch--refuse-worktrees-heading "x")
+             (cadr (should-error (herdr-dispatch--refuse-heading "x")
                                  :type 'user-error))))))
 
 (ert-deftest herdr-dispatch-binds-the-mutating-verbs ()

@@ -434,7 +434,17 @@ previous one's wait and stack blocking calls.  Let-bound rather than
 set, so a signal anywhere in the poll clears it for free.")
 
 (defun herdr-term--poll-directories ()
-  "Refresh pane directories, then point buffers at them."
+  "Refresh pane directories, then point buffers at them.
+
+Also the one place `herdr-state-reconcile-workspaces' and
+`herdr-state-reconcile-tabs' get called from: workspaces and tabs have
+no event that reliably announces their own removal any more than panes
+do, and unlike panes they had no periodic repair at all until this —
+a closed workspace whose `workspace.closed' was missed (a disconnect
+window, a ring-replay gap) stayed a ghost in the dispatcher and every
+picker for the rest of a session that never happened to reconnect.
+Directory sync stays scoped to the pane reconcile specifically; a
+workspace or tab changing affects no buffer's `default-directory'."
   ;; Guarded only on the stream being up.  It used to also require a
   ;; herdr buffer to exist, which silently disabled the whole poll under
   ;; `agent-windows\=' once attaching became lazy — and with it the pruning
@@ -452,7 +462,9 @@ set, so a signal anywhere in the poll clears it for free.")
           (herdr-rpc-timeout (min herdr-rpc-timeout
                                   herdr-rpc-background-timeout)))
       (when (herdr-state-reconcile-panes)
-        (herdr-term--sync-directories)))))
+        (herdr-term--sync-directories))
+      (herdr-state-reconcile-workspaces)
+      (herdr-state-reconcile-tabs))))
 
 (defun herdr-term--schedule-directory-poll ()
   "Refresh directories shortly, coalescing bursts of events."

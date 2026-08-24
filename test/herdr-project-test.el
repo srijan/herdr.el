@@ -20,22 +20,22 @@
 (ert-deftest herdr-project-finds-the-workspace-for-a-root ()
   "The bug this covers: matching on identity_cwd never matched anything,
 so every invocation created a duplicate workspace."
-  (let ((found (herdr--workspace-for-directory
+  (let ((found (herdr-state-workspace-for-directory
                 (herdr-project-test--state) "/tmp/project")))
     (should (equal "w1" (alist-get 'workspace_id found)))))
 
 (ert-deftest herdr-project-matches-with-or-without-a-trailing-slash ()
   (let ((state (herdr-project-test--state)))
     (should (equal "w1" (alist-get 'workspace_id
-                                   (herdr--workspace-for-directory
+                                   (herdr-state-workspace-for-directory
                                     state "/tmp/project/"))))))
 
 (ert-deftest herdr-project-returns-nil-for-an-unknown-root ()
-  (should-not (herdr--workspace-for-directory
+  (should-not (herdr-state-workspace-for-directory
                (herdr-project-test--state) "/tmp/nowhere")))
 
 (ert-deftest herdr-project-focuses-an-existing-workspace-rather-than-creating-one ()
-  "`herdr--workspace-for-directory' exists to stop a second workspace being
+  "`herdr-state-workspace-for-directory' exists to stop a second workspace being
 made for a directory that already has one, and the branch that acts on
 its answer was never tested.  Measured: inverting it — create when there
 is one to focus, focus when there is not — passed the whole suite, so
