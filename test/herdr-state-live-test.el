@@ -590,5 +590,122 @@ event."
           (accept-process-output nil 0.05)))
       (should-not herdr-state--reconnect-timer))))
 
+;;; Reconciling workspaces and tabs against the server
+
+;; Ghost workspaces are the same replay/disconnect-gap class as ghost
+;; panes, but with no periodic repair at all before
+;; `herdr-state-reconcile-workspaces' existed: a missed `workspace.closed'
+;; had nothing short of a full reconnect to clear it, and a
+;; long-lived session that never disconnects never reconnects.
+;; Observed live: four workspaces and six tabs, closed server-side,
+;; still rendering in the dispatcher after running for days.
+
+(defun herdr-state-live-test--workspace-list-server (workspaces)
+  "Return a responder answering `workspace.list' with WORKSPACES."
+  (lambda (req)
+    (cons (herdr-test-ok req `((type . "workspace_list")
+                               (workspaces . ,workspaces)))
+          nil)))
+
+(defun herdr-state-live-test--tab-list-server (tabs)
+  "Return a responder answering `tab.list' with TABS."
+  (lambda (req)
+    (cons (herdr-test-ok req `((type . "tab_list") (tabs . ,tabs))) nil)))
+
+(ert-deftest herdr-state-reconcile-workspaces-drops-ghosts ()
+  (herdr-test-with-server
+      (herdr-state-live-test--workspace-list-server
+       [((workspace_id . "w1") (label . "kept"))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1") (label . "kept"))
+                             ((workspace_id . "w9") (label . "ghost"))))))))
+      (should (herdr-state-reconcile-workspaces))
+      (should (equal '("w1")
+                     (mapcar (lambda (w) (alist-get 'workspace_id w))
+                             (herdr-state-workspaces herdr-state--current)))))))
+
+(ert-deftest herdr-state-reconcile-workspaces-adds-and-updates ()
+  (herdr-test-with-server
+      (herdr-state-live-test--workspace-list-server
+       [((workspace_id . "w1") (label . "renamed"))
+        ((workspace_id . "w2") (label . "new"))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1") (label . "old"))))))))
+      (should (herdr-state-reconcile-workspaces))
+      (should (equal "renamed"
+                     (alist-get 'label
+                                (seq-find (lambda (w) (equal "w1" (alist-get
+                                                                    'workspace_id w)))
+                                          (herdr-state-workspaces
+                                           herdr-state--current)))))
+      (should (seq-find (lambda (w) (equal "w2" (alist-get 'workspace_id w)))
+                        (herdr-state-workspaces herdr-state--current))))))
+
+(ert-deftest herdr-state-reconcile-workspaces-reports-no-change-when-in-sync ()
+  "The poll runs on every tick; it must not redraw the dispatcher for
+nothing when nothing has changed."
+  (herdr-test-with-server
+      (herdr-state-live-test--workspace-list-server
+       [((workspace_id . "w1") (label . "kept"))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1") (label . "kept"))))))))
+      (should-not (herdr-state-reconcile-workspaces)))))
+
+(ert-deftest herdr-state-reconcile-workspaces-leaves-the-cache-alone-when-unreachable ()
+  (let ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
+        (herdr-state--current
+         (herdr-state-from-snapshot
+          '((workspaces . (((workspace_id . "w1"))))))))
+    (should-not (herdr-state-reconcile-workspaces))
+    (should (equal '("w1")
+                   (mapcar (lambda (w) (alist-get 'workspace_id w))
+                           (herdr-state-workspaces herdr-state--current))))))
+
+(ert-deftest herdr-state-reconcile-tabs-drops-ghosts ()
+  "A tab whose workspace already closed is orphaned the same way a pane
+is when its owner disappears without a `pane.closed' — this sweep
+catches it without `workspace_closed' needing to cascade."
+  (herdr-test-with-server
+      (herdr-state-live-test--tab-list-server
+       [((tab_id . "w1:t1") (workspace_id . "w1") (label . "kept"))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((tabs . (((tab_id . "w1:t1") (workspace_id . "w1") (label . "kept"))
+                       ((tab_id . "w9:t1") (workspace_id . "w9") (label . "orphan"))))))))
+      (should (herdr-state-reconcile-tabs))
+      (should (equal '("w1:t1")
+                     (mapcar (lambda (tab) (alist-get 'tab_id tab))
+                             (herdr-state-tabs herdr-state--current)))))))
+
+(ert-deftest herdr-state-reconcile-tabs-adds-and-updates ()
+  (herdr-test-with-server
+      (herdr-state-live-test--tab-list-server
+       [((tab_id . "w1:t1") (workspace_id . "w1") (label . "renamed"))
+        ((tab_id . "w1:t2") (workspace_id . "w1") (label . "new"))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((tabs . (((tab_id . "w1:t1") (workspace_id . "w1")
+                        (label . "old"))))))))
+      (should (herdr-state-reconcile-tabs))
+      (should (= 2 (length (herdr-state-tabs herdr-state--current))))
+      (should (equal "renamed"
+                     (alist-get 'label
+                                (seq-find (lambda (tab) (equal "w1:t1"
+                                                               (alist-get 'tab_id tab)))
+                                          (herdr-state-tabs herdr-state--current))))))))
+
+(ert-deftest herdr-state-reconcile-tabs-reports-no-change-when-in-sync ()
+  (herdr-test-with-server
+      (herdr-state-live-test--tab-list-server
+       [((tab_id . "w1:t1") (workspace_id . "w1") (label . "kept"))])
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((tabs . (((tab_id . "w1:t1") (workspace_id . "w1")
+                        (label . "kept"))))))))
+      (should-not (herdr-state-reconcile-tabs)))))
+
 (provide 'herdr-state-live-test)
 ;;; herdr-state-live-test.el ends here
