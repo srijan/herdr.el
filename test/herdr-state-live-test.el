@@ -82,17 +82,25 @@
     (should (herdr-state-pane herdr-state--current "w1:p7"))
     (should (= 1 (length (herdr-state-agents herdr-state--current))))))
 
-(ert-deftest herdr-state-pane-subscriptions-cover-every-pane ()
-  "Connection B must name every pane, since these subscriptions are per-pane."
+(ert-deftest herdr-state-pane-subscriptions-cover-attachable-panes-only ()
+  "Connection B names the attachable panes, not every pane.
+
+Each per-pane subscription makes the herdr server poll a `pane.get'
+into its main loop every 100ms for as long as it lives, so subscribing
+plain shells paid a steady server-side cost to watch statuses nothing
+displays.  Adopted shells stay in: they are fronted with buffers, the
+same slice the terminal backend reconciles against."
   (let ((herdr-state--current
          (herdr-state-from-snapshot
-          '((panes . (((pane_id . "w1:p1")) ((pane_id . "w1:p2"))))))))
+          '((panes . (((pane_id . "w1:p1") (agent . "claude"))
+                      ((pane_id . "w1:p2"))
+                      ((pane_id . "w1:p3") (agent . "shell"))))))))
     (let ((subs (herdr-state--pane-subscriptions)))
       ;; A vector, so it serializes as a JSON array rather than an object.
       (should (vectorp subs))
       (should (= 2 (length subs)))
       (should (equal "pane.agent_status_changed" (alist-get 'type (aref subs 0))))
-      (should (equal '("w1:p1" "w1:p2")
+      (should (equal '("w1:p1" "w1:p3")
                      (mapcar (lambda (s) (alist-get 'pane_id s)) subs))))))
 
 (ert-deftest herdr-state-start-signals-when-no-server ()
@@ -127,11 +135,12 @@
   "No event is swallowed, replayed ones included.
 
 The hook used to be suppressed until the stream fell silent for 0.4s,
-to absorb a replay believed to be about 150 events of history.  The
-replay is one retained event per subscribed type — 8 in 4 ms across all
-24 — while the live stream's median gap is 0.105s, so on a real
-timeline that window held the hook for 54.3 seconds and swallowed 533
-events.  Anything that reintroduces a suppression window fails here."
+to absorb a replay believed to be about 150 events of history.  But
+the replay is drip-fed from the server's ring at one event per type
+per 100ms tick — it has no silent edge — while the live stream's
+median gap is 0.105s, so on a real timeline that window held the hook
+for 54.3 seconds and swallowed 533 events.  Anything that reintroduces
+a suppression window fails here."
   (let* ((events nil)
          (herdr-state--current (herdr-state-empty))
          (herdr-state-change-hook
@@ -154,14 +163,14 @@ events.  Anything that reintroduces a suppression window fails here."
 (ert-deftest herdr-state-settle-reconciles-ghost-panes-away ()
   "Connecting must end with the pane set the server actually has.
 
-`events.subscribe\\=' retains the last event of each subscribed type, so a
-fresh subscription replays a `pane_created\\=' for whatever pane was made
-last — a ghost, when that pane closed minutes ago.  The retained
-`pane_closed\\=' folds it away only because `pane.created\\=' happens to be
-listed before `pane.closed\\=' in `herdr-state-global-subscriptions\\=';
-nothing in the protocol guarantees it.  So the settle after connecting
-reconciles, and rebuilds connection B afterwards so its per-pane
-subscriptions name the reconciled set rather than the ghost."
+A fresh `events.subscribe\\=' replays the server's ring history, so it
+can deliver a `pane_created\\=' for a pane that closed minutes ago — a
+ghost.  The replayed `pane_closed\\=' folds it away only because
+`pane.created\\=' happens to be listed before `pane.closed\\=' in
+`herdr-state-global-subscriptions\\='; nothing in the protocol
+guarantees it.  So the settle after connecting reconciles, and rebuilds
+connection B afterwards so its per-pane subscriptions name the
+reconciled set rather than the ghost."
   (let (subscribed)
     (herdr-test-with-server
         (lambda (req)
@@ -169,6 +178,7 @@ subscriptions name the reconciled set rather than the ghost."
             ("pane.list"
              (cons (herdr-test-ok req '((type . "pane_list")
                                         (panes . [((pane_id . "w1:p1")
+                                                   (agent . "claude")
                                                    (cwd . "/tmp"))])))
                    nil))
             ("events.subscribe"
@@ -177,12 +187,14 @@ subscriptions name the reconciled set rather than the ghost."
             (_ (cons (herdr-test-ok req '((type . "ok"))) nil))))
       (let ((herdr-state--running t)
             (herdr-state--pane-process nil)
+            (herdr-state--pane-stream-ids nil)
             (herdr-state--resubscribe-timer nil)
             (herdr-state--settle-timer nil)
             (herdr-state--current
              (herdr-state-from-snapshot
-              '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))
-                          ((pane_id . "w1:ghost"))))))))
+              '((panes . (((pane_id . "w1:p1") (agent . "claude")
+                           (cwd . "/tmp"))
+                          ((pane_id . "w1:ghost") (agent . "codex"))))))))
         (unwind-protect
             (progn
               (herdr-state--settle)
@@ -198,31 +210,63 @@ subscriptions name the reconciled set rather than the ghost."
 
 ;;; What counts as a change to the pane set
 
-(defun herdr-state-live-test--rebuilds-p (kind)
-  "Return non-nil when KIND schedules a rebuild of connection B."
-  (let ((herdr-state--resubscribe-timer nil))
+(defun herdr-state-live-test--rebuilds-p (stream-ids)
+  "Return non-nil when the cache's watched set drifting from STREAM-IDS
+schedules a rebuild of connection B.  The event kind is passed as a
+kind nothing dispatches on, because the comparison must not care."
+  (let ((herdr-state--running t)
+        (herdr-state--pane-stream-ids stream-ids)
+        (herdr-state--resubscribe-timer nil))
     (unwind-protect
-        (progn (herdr-state--note-pane-set-change kind nil)
+        (progn (herdr-state--note-pane-set-change "whatever" nil)
                (and herdr-state--resubscribe-timer t))
       (when herdr-state--resubscribe-timer
         (cancel-timer herdr-state--resubscribe-timer)))))
 
-(ert-deftest herdr-state-only-pane-lifecycle-rebuilds-connection-b ()
-  "B subscribes per pane, so only adding or removing a pane can change it.
+(ert-deftest herdr-state-watched-set-drift-rebuilds-connection-b ()
+  "B rebuilds when the attachable set drifts from what it subscribed —
+whatever event moved it.
 
-`pane_agent_detected' was on this list for a long time even though
-`herdr-state--pane-subscriptions' names every pane rather than every
-pane with an agent — so it could never alter the result, while every
-agent start and stop paid for a teardown, a reopen and a
-`session.snapshot'.  A rebuild has a gap in it; this one bought
-nothing."
-  (dolist (kind '("pane_created" "pane_closed" "pane_exited"))
-    (should (equal (list kind t)
-                   (list kind (herdr-state-live-test--rebuilds-p kind)))))
-  (dolist (kind '("pane_agent_detected" "pane_updated" "pane_focused"
-                  "resync"))
-    (should (equal (list kind nil)
-                   (list kind (herdr-state-live-test--rebuilds-p kind))))))
+This used to dispatch on event kind, which was right while B named
+every pane: only pane lifecycle could change the list, and
+`pane_agent_detected' rebuilding it was a teardown bought for nothing.
+B naming the attachable panes inverts that — an agent detected on or
+released from an existing pane changes exactly what B should watch, and
+a kind list curated for the old rule missed both.  Comparing sets
+cannot go stale that way.  Order must not matter: a reconcile can
+reorder the cache without changing what B watches."
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot
+          '((panes . (((pane_id . "w1:p1") (agent . "claude"))
+                      ((pane_id . "w1:p2"))
+                      ((pane_id . "w1:p3") (agent . "codex"))))))))
+    ;; In sync, any order: no rebuild.
+    (should-not (herdr-state-live-test--rebuilds-p '("w1:p1" "w1:p3")))
+    (should-not (herdr-state-live-test--rebuilds-p '("w1:p3" "w1:p1")))
+    ;; An agent B is not watching, an agent it lost, a stale extra: rebuild.
+    (should (herdr-state-live-test--rebuilds-p '("w1:p1")))
+    (should (herdr-state-live-test--rebuilds-p '("w1:p1" "w1:p3" "w1:gone")))
+    (should (herdr-state-live-test--rebuilds-p nil))))
+
+(ert-deftest herdr-state-resubscribe-rechecks-the-set-at-fire-time ()
+  "The connect window schedules a rebuild that the settle then performs
+itself moments later; re-checking at fire time turns the duplicate into
+a no-op instead of a second teardown and its gap."
+  (let* ((rebuilt nil)
+         (herdr-state--running t)
+         (herdr-state--resubscribe-timer nil)
+         (herdr-state--current
+          (herdr-state-from-snapshot
+           '((panes . (((pane_id . "w1:p1") (agent . "claude")))))))
+         (herdr-state--pane-stream-ids '("w1:p1")))
+    (cl-letf (((symbol-function 'herdr-state--open-pane-stream)
+               (lambda () (setq rebuilt t)))
+              ((symbol-function 'herdr-state--refresh-statuses) #'ignore))
+      (herdr-state--resubscribe-panes)
+      (should-not rebuilt)
+      (setq herdr-state--pane-stream-ids nil)
+      (herdr-state--resubscribe-panes)
+      (should rebuilt))))
 
 ;;; Reconnecting after a dropped stream
 
@@ -439,13 +483,17 @@ reporting `shell' indefinitely."
         (should (equal "working" (alist-get 'agent_status pane))))
       (should (= 1 (length (herdr-state-agents herdr-state--current)))))))
 
-(ert-deftest herdr-state-reconcile-ignores-a-title-only-change ()
-  "The terminal title is the most volatile field a pane has.
-Claude animates a spinner and a second counter inside it, so it differs
-on essentially every poll while an agent works — 662 of 662
-`pane_updated' events in one measured window.  Treating that as
-significant made every poll replace every pane record and re-run the
-directory sync.  Titles arrive on the event stream regardless."
+(ert-deftest herdr-state-reconcile-refreshes-a-title-silently ()
+  "A title-only drift refreshes the cache without reporting a change.
+
+The terminal title is the most volatile field a pane has — Claude
+animates a spinner and a second counter inside it — so treating it as
+significant made every poll replace every record and re-run the
+directory sync.  But with `pane.updated' unsubscribed, this poll is
+also the only way titles reach the cache at all.  Both halves matter:
+the return value stays nil so the change hook and directory sync keep
+their cadence, and the record still ends up holding the server's
+title."
   (herdr-test-with-server
       (herdr-state-live-test--pane-list-server
        [((pane_id . "w1:p1") (cwd . "/tmp")
@@ -454,12 +502,16 @@ directory sync.  Titles arrive on the event stream regardless."
            (herdr-state-from-snapshot
             '((panes . (((pane_id . "w1:p1") (cwd . "/tmp")
                          (terminal_title_stripped . "- Herding (11s)"))))))))
-      (should-not (herdr-state-reconcile-panes)))))
+      (should-not (herdr-state-reconcile-panes))
+      (should (equal "* Herding (12s)"
+                     (alist-get 'terminal_title_stripped
+                                (herdr-state-pane herdr-state--current
+                                                  "w1:p1")))))))
 
 (ert-deftest herdr-state-pane-updated-still-carries-the-title-in ()
-  "The other half of leaving the title out of the reconcile poll: the
-event stream carries the whole PaneInfo, so the dashboard still sees a
-new title as soon as herdr publishes one."
+  "The reduce keeps folding a full PaneInfo under `pane_updated': the
+reconcile poll feeds records through that same kind, so a fresh title
+lands however it arrives."
   (let ((next (herdr-state-reduce
                (herdr-state-from-snapshot
                 '((panes . (((pane_id . "w1:p1") (cwd . "/tmp")

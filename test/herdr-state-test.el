@@ -628,5 +628,62 @@ background bound, and fold the reply in when it lands."
                                   (herdr-state-pane herdr-state--current
                                                     "w1:p1"))))))))
 
+(ert-deftest herdr-state-global-subscriptions-exclude-pane-updated ()
+  "`pane.updated' fires on every animated-title frame with a full
+PaneInfo, and the server delivers at most one event per subscribed type
+per 100ms — one busy agent nearly saturates the channel and two put it
+permanently behind, which was measured here as multi-second status lag.
+Everything it carries arrives through connection B, the lifecycle
+events, or the reconcile poll; resubscribing it reopens the firehose
+and the lag."
+  (should-not (member "pane.updated" herdr-state-global-subscriptions))
+  ;; The ghost-folding order the reconcile docstring leans on.
+  (should (< (seq-position herdr-state-global-subscriptions "pane.created")
+             (seq-position herdr-state-global-subscriptions "pane.closed"))))
+
+(ert-deftest herdr-state-reduce-status-event-merges-display-agent ()
+  "With `pane.updated' gone, the B event is the only prompt carrier of
+`display_agent', which buffer naming and the dashboard rows prefer."
+  (let ((next (herdr-state-reduce
+               (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (agent . "claude"))))))
+               "pane.agent_status_changed"
+               '((pane_id . "w1:p1") (agent_status . "working")
+                 (agent . "claude") (display_agent . "Claude Code")))))
+    (let ((pane (herdr-state-pane next "w1:p1")))
+      (should (equal "working" (alist-get 'agent_status pane)))
+      (should (equal "Claude Code" (alist-get 'display_agent pane))))))
+
+(ert-deftest herdr-state-reconcile-failure-schedules-a-reconnect ()
+  "The reconcile poll doubles as the liveness watchdog.  The server
+sends nothing on a quiet subscription, so a wedged server leaves both
+event streams open and silent — indistinguishable from a calm session —
+and only this periodic RPC can notice.  Its failure while the state is
+running must schedule a reconnect; when nothing is running there is
+nothing to reconnect, and a failed poll stays a failed poll."
+  (cl-letf (((symbol-function 'herdr-rpc-call)
+             (lambda (&rest _) (error "socket stopped answering"))))
+    (let ((herdr-state--running t)
+          (herdr-state--reconnect-timer nil)
+          (herdr-state--reconnect-delay nil)
+          (herdr-state--current
+           (herdr-state-from-snapshot
+            '((panes . (((pane_id . "w1:p1"))))))))
+      (unwind-protect
+          (progn
+            (should-not (herdr-state-reconcile-panes))
+            (should herdr-state--reconnect-timer)
+            ;; The failed poll must not touch the cache either.
+            (should (equal '("w1:p1")
+                           (herdr-state-pane-ids herdr-state--current))))
+        (when herdr-state--reconnect-timer
+          (cancel-timer herdr-state--reconnect-timer))))
+    (let ((herdr-state--running nil)
+          (herdr-state--reconnect-timer nil)
+          (herdr-state--reconnect-delay nil)
+          (herdr-state--current (herdr-state-empty)))
+      (should-not (herdr-state-reconcile-panes))
+      (should-not herdr-state--reconnect-timer))))
+
 (provide 'herdr-state-test)
 ;;; herdr-state-test.el ends here

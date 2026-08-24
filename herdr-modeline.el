@@ -84,13 +84,14 @@ comparing against this is comparing against the displayed segment.")
 (defun herdr-modeline--refresh (&rest _)
   "Recompute the modeline segment, and redisplay only if it changed.
 
-The change hook fires for every event — about 7.5 a second per busy
-agent, nearly all of it title churn the segment does not display.
-This used to rebuild the string and call `force-mode-line-update'
-across every frame each time regardless, which is a redisplay of
-every mode line in Emacs several times a second for text that almost
-never differs: the flicker.  The counts change rarely; only then is
-there anything to redraw."
+The change hook fires for every event, and most events do not move the
+counts this segment shows.  When `pane.updated\\=' was still subscribed
+that meant about 7.5 firings a second per busy agent, each rebuilding
+the string and calling `force-mode-line-update' across every frame — a
+redisplay of every mode line in Emacs several times a second for text
+that almost never differed: the flicker.  The subscription is gone, but
+the guard stays: bursts still happen (replays, reconciles, status
+refreshes), and only a changed count is worth a redisplay."
   (let ((text (herdr-modeline--segment (herdr-state-current))))
     (unless (equal text herdr-modeline--text)
       (setq herdr-modeline--text text)
