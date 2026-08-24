@@ -60,6 +60,20 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
     (should (string-match-p "/tmp/herdr.el" line))
     (should (string-match-p (herdr-tree-glyph "blocked") line))))
 
+(ert-deftest herdr-tree-workspace-line-abbreviates-a-home-relative-directory ()
+  "A known-project row already shows `~/\\=' for free, since
+`project-known-project-roots' hands those back pre-abbreviated; a
+workspace's directory is derived from a pane's cwd instead and had
+nothing shortening it, so the two looked inconsistent side by side."
+  (let* ((dir (expand-file-name "~/herdr-test-project"))
+         (state (herdr-tree-test--state
+                 `(panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (tab_id . "w1:t1") (agent . "claude")
+                             (agent_status . "working") (cwd . ,dir)))))))
+    (let ((line (nth 2 (car (herdr-tree-build state nil)))))
+      (should (string-match-p "~/herdr-test-project" line))
+      (should-not (string-match-p (regexp-quote dir) line)))))
+
 (ert-deftest herdr-tree-counts-children-in-parentheses ()
   "magit\\='s idiom, because the dashboard is read next to magit-status.
 
@@ -598,6 +612,18 @@ column a workspace row already carries."
                                                  worktrees))))
          (worktree (car (nth 3 (car (last children))))))
     (should (string-match-p "/tmp/herdr.el-feat" (nth 2 worktree)))))
+
+(ert-deftest herdr-tree-worktree-row-abbreviates-a-home-relative-path ()
+  "The path the server reports is the full absolute one, unlike a
+known-project root, which `project-known-project-roots' already hands
+back abbreviated -- so this is the one place that had nothing shortening
+it."
+  (let* ((dir (expand-file-name "~/herdr-test-worktree"))
+         (line (nth 2 (herdr-tree--worktree-node
+                       `((path . ,dir) (branch . "feat/dispatch"))
+                       20))))
+    (should (string-match-p "~/herdr-test-worktree" line))
+    (should-not (string-match-p (regexp-quote dir) line))))
 
 (ert-deftest herdr-tree-worktree-row-is-dimmed-like-a-known-project-row ()
   "The whole row is dimmed, not just the path -- the same `shadow'

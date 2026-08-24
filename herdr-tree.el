@@ -382,7 +382,15 @@ The whole line is dimmed with `shadow\\=', the same treatment
 `herdr-tree--known-project-node\\=' gives an unopened project: a worktree
 is not itself running anything either, and a bright branch name next to
 a dimmed directory made the two look like they belonged to different
-kinds of row when they are the same kind."
+kinds of row when they are the same kind.
+
+The displayed path is abbreviated with `abbreviate-file-name\\=' — the
+same `~/\\=' shortening a known-project row already gets for free, since
+`project-known-project-roots\\=' hands those back pre-abbreviated, while
+a server-reported worktree path arrives as the full absolute path and
+had nothing shortening it.  VALUE stays the real, unabbreviated path:
+commands need the path the server actually understands, not the one a
+human reads faster."
   (let ((open (alist-get 'open_workspace_id worktree)))
     (list 'herdr-worktree (alist-get 'path worktree)
           (herdr-tree--faced
@@ -391,7 +399,7 @@ kinds of row when they are the same kind."
                     (or (alist-get 'branch worktree)
                         (alist-get 'label worktree)
                         "?")
-                    (or (alist-get 'path worktree) "")
+                    (abbreviate-file-name (or (alist-get 'path worktree) ""))
                     (if open (format "open as %s" open) "")))
            'shadow)
           nil)))
@@ -442,7 +450,13 @@ than as a `3 panes\\=' column of its own.  That is magit's idiom for the
 same thing (`Unstaged changes (1)\\='), and it is the shape that reads as
 a container: a heading that owns a countable number of children, told
 apart at a glance from the leaf rows that own none.  The tab and
-worktrees headings are counted the same way for the same reason."
+worktrees headings are counted the same way for the same reason.
+
+The directory is abbreviated with `abbreviate-file-name\\=' — the `~/\\='
+a known-project row already shows for free, since
+`project-known-project-roots\\=' hands those back pre-abbreviated, while
+`herdr-state-workspace-directory\\=' derives this one from a pane\\='s
+`cwd\\=' and had nothing shortening it."
   (let* ((id (alist-get 'workspace_id workspace))
          (tabs (herdr-tree--tabs-in-workspace state id))
          ;; One tab is not structure.  Unnamed tabs are labelled by
@@ -465,7 +479,8 @@ worktrees headings are counted the same way for the same reason."
                            (or (alist-get 'label workspace) id)
                            (or (alist-get 'pane_count workspace) 0))
                    (herdr-tree--faced
-                    (or (herdr-state-workspace-directory state id) "")
+                    (abbreviate-file-name
+                     (or (herdr-state-workspace-directory state id) ""))
                     'font-lock-comment-face)
                    (herdr-tree--rollup (alist-get 'agent_status workspace))))
           (if worktree-node (append children (list worktree-node)) children))))
