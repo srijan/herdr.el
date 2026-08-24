@@ -1923,6 +1923,54 @@ worktree's directory, and asserting the exact params reaching
                            (herdr-workspace-focus herdr-rpc-call)
                          (herdr-dispatch-open-worktree))))))))
 
+;;; Known projects with no workspace open
+
+(defconst herdr-dispatch-test--known-project-nodes
+  '((herdr-known-project "/tmp/other-project/" "other-project (0)  /tmp/other-project/" nil))
+  "One `herdr-known-project\\=' row, for the tests below.")
+
+(ert-deftest herdr-dispatch-visit-creates-a-workspace-for-a-known-project ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
+    (let ((herdr-state--current (herdr-state-empty)))
+      (search-forward "other-project (0)")
+      (should (equal '((herdr-rpc-call "workspace.create"
+                                       ((cwd . "/tmp/other-project/")
+                                        (label . "other-project")))
+                       (herdr-term-display))
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-rpc-call herdr-term-display)
+                       (herdr-dispatch-visit)))))))
+
+(ert-deftest herdr-dispatch-visit-focuses-rather-than-double-creates ()
+  "The row is built only for a root with no workspace open, but the
+render can be one poll tick behind by the time RET lands — this is the
+same TOCTOU `herdr-state-workspace-for-directory' exists to close, and
+the test that would catch losing the check."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w9"))))
+              (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
+                         (cwd . "/tmp/other-project"))))))))
+      (search-forward "other-project (0)")
+      (should (equal '((herdr-rpc-call "workspace.focus"
+                                       ((workspace_id . "w9")))
+                       (herdr-term-display))
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-rpc-call herdr-term-display)
+                       (herdr-dispatch-visit)))))))
+
+(ert-deftest herdr-dispatch-focus-refuses-a-known-project-and-points-at-ret ()
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
+    (search-forward "other-project (0)")
+    (should-error (herdr-dispatch-focus) :type 'user-error)
+    (let ((message
+           (condition-case err
+               (herdr-dispatch-focus)
+             (user-error (error-message-string err)))))
+      (should (string-match-p "other-project" message))
+      (should (string-match-p "RET" message)))))
+
 (ert-deftest herdr-dispatch-binds-question-mark-to-the-transient ()
   (should (eq #'herdr-transient
               (lookup-key herdr-dispatch-mode-map "?"))))

@@ -524,6 +524,27 @@ arrays."
     (should-not (herdr-state-workspace-directory state "w1"))
     (should-not (herdr-state-workspace-directory state "w9"))))
 
+(ert-deftest herdr-state-workspace-for-directory-matches-with-or-without-a-trailing-slash ()
+  "Shared with `herdr-tree.el' now, so this pins the contract at its new
+home rather than only through `herdr-project' in test/herdr-project-test.el."
+  (let ((state (herdr-state-from-snapshot
+                '((workspaces . (((workspace_id . "w1"))))
+                  (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (cwd . "/tmp/project"))))))))
+    (should (equal "w1" (alist-get 'workspace_id
+                                   (herdr-state-workspace-for-directory
+                                    state "/tmp/project"))))
+    (should (equal "w1" (alist-get 'workspace_id
+                                   (herdr-state-workspace-for-directory
+                                    state "/tmp/project/"))))))
+
+(ert-deftest herdr-state-workspace-for-directory-is-nil-for-an-unknown-root ()
+  (let ((state (herdr-state-from-snapshot
+                '((workspaces . (((workspace_id . "w1"))))
+                  (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (cwd . "/tmp/project"))))))))
+    (should-not (herdr-state-workspace-for-directory state "/tmp/elsewhere"))))
+
 ;;; Failure paths around the live connections
 
 (ert-deftest herdr-state-stop-announces-the-emptied-cache ()

@@ -310,8 +310,8 @@ than inside, so folding a workspace does not swallow the gap that sets
 it apart from the next.
 
 `magit-insert-section\\=' takes its type as an unevaluated symbol, so the
-five types are spelled out rather than passed through.  A runtime `eval\\='
-would collapse these into one branch; five explicit branches byte-compile
+six types are spelled out rather than passed through.  A runtime `eval\\='
+would collapse these into one branch; six explicit branches byte-compile
 and do not need defending."
   (let ((depth (or depth 0))
         (separate nil))
@@ -343,6 +343,10 @@ and do not need defending."
               (herdr-dispatch--insert-nodes children (1+ depth)))))
           ('herdr-worktree
            (magit-insert-section (herdr-worktree value)
+             (herdr-dispatch--insert-leaf line depth)
+             (herdr-dispatch--insert-nodes children (1+ depth))))
+          ('herdr-known-project
+           (magit-insert-section (herdr-known-project value)
              (herdr-dispatch--insert-leaf line depth)
              (herdr-dispatch--insert-nodes children (1+ depth)))))))))
 
@@ -761,14 +765,40 @@ others refuse."
                           (cwd . ,dir)
                           (focus . t)))))))
 
+(herdr-dispatch-defverb herdr-dispatch-open-known-project ()
+  "Open the known project at point as a new workspace.
+
+Reached only from a `herdr-known-project\\=' row, which
+`herdr-tree--known-project-nodes\\=' builds only for a root with no
+workspace currently open — so this always creates one.  The check for
+an existing workspace stays anyway: the row was built from a state that
+could be one poll tick behind by the time RET lands, and creating a
+second workspace for a directory that already has one is the exact bug
+`herdr-state-workspace-for-directory\\=' exists to prevent — the same
+guard `herdr-project\\=' makes before it creates."
+  (let* ((root (herdr-dispatch--require 'herdr-known-project
+                                        "a known project"))
+         (existing (herdr-state-workspace-for-directory
+                    (herdr-state-current) root)))
+    (if existing
+        (herdr-rpc-call "workspace.focus"
+                        `((workspace_id . ,(alist-get 'workspace_id existing))))
+      (herdr-rpc-call "workspace.create"
+                      `((cwd . ,root)
+                        (label . ,(file-name-nondirectory
+                                   (directory-file-name root))))))
+    (herdr-term-display)))
+
 ;;; The read-only verbs
 
 (herdr-dispatch-defverb herdr-dispatch-visit ()
   "Go to the thing at point.
 A pane is focused and its buffer shown; a tab or workspace is focused
 and then followed to whichever pane herdr lands on, which is the
-server\\='s choice rather than ours.  The worktrees heading has nowhere
-to go; see `herdr-dispatch--refuse-worktrees-heading\\='."
+server\\='s choice rather than ours.  A known project with no workspace
+open yet is created and focused instead — see
+`herdr-dispatch-open-known-project\\='.  The worktrees heading has
+nowhere to go; see `herdr-dispatch--refuse-worktrees-heading\\='."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-focus (herdr-dispatch--value-at-point 'herdr-pane)))
@@ -777,6 +807,8 @@ to go; see `herdr-dispatch--refuse-worktrees-heading\\='."
    ((herdr-dispatch--value-at-point 'herdr-worktrees)
     (herdr-dispatch--refuse-worktrees-heading
      "a group of worktrees is not somewhere to go"))
+   ((herdr-dispatch--value-at-point 'herdr-known-project)
+    (herdr-dispatch-open-known-project))
    ((herdr-dispatch--value-at-point 'herdr-tab)
     (herdr-tab-focus (herdr-dispatch--value-at-point 'herdr-tab)))
    ((herdr-dispatch--value-at-point 'herdr-workspace)
@@ -796,8 +828,11 @@ to go; see `herdr-dispatch--refuse-worktrees-heading\\='."
 (herdr-dispatch-defverb herdr-dispatch-focus ()
   "Focus the thing at point server-side, without moving Emacs.
 A worktree is focused as the workspace herdr has opened it as; a worktree
-that is not open as one has nothing to focus and says so.  Neither has
-the worktrees heading; see `herdr-dispatch--refuse-worktrees-heading\\='."
+that is not open as one has nothing to focus and says so, and neither
+does a known project with no workspace open — RET creates one instead
+of merely focusing, so this refuses rather than doing that on the wrong
+key.  Neither has the worktrees heading; see
+`herdr-dispatch--refuse-worktrees-heading\\='."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (herdr-rpc-call "workspace.focus"
@@ -805,6 +840,9 @@ the worktrees heading; see `herdr-dispatch--refuse-worktrees-heading\\='."
    ((herdr-dispatch--value-at-point 'herdr-worktrees)
     (herdr-dispatch--refuse-worktrees-heading
      "a group of worktrees cannot be focused"))
+   ((herdr-dispatch--value-at-point 'herdr-known-project)
+    (user-error "herdr: %s has no workspace open yet (RET opens it)"
+                (herdr-dispatch--value-at-point 'herdr-known-project)))
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-rpc-call "pane.focus"
                     `((pane_id . ,(herdr-dispatch--value-at-point 'herdr-pane)))))
@@ -1063,6 +1101,14 @@ not the workspace at point, matching the treatment already given to
     ("-k" "agent kind" "--kind=")
     ("-d" "directory" "--directory=")]])
 
+(defun herdr-dispatch--known-project-roots ()
+  "Return `project-known-project-roots\\=', or nil without project.el.
+Guarded rather than required: `herdr-project\\=' checks the same way
+\(`fboundp\\=' \\='project-current\\='\), so the dispatcher asks nothing of
+project.el that the rest of the package does not already ask."
+  (when (fboundp 'project-known-project-roots)
+    (project-known-project-roots)))
+
 (defun herdr-dispatch--header (state)
   "Return the header line summarising STATE.
 Ends with `herdr-tree-status-summary\\=' rather than an agent count: a
@@ -1136,7 +1182,8 @@ lets the skip engage at all while an agent is working."
       (when force (herdr-dispatch--retry-unanswered-worktrees))
       (let* ((state (herdr-state-current))
              (header (herdr-dispatch--header state))
-             (tree (herdr-tree-build state herdr-dispatch--worktrees)))
+             (tree (herdr-tree-build state herdr-dispatch--worktrees
+                                     (herdr-dispatch--known-project-roots))))
         (when (or force
                   (not (equal header herdr-dispatch--rendered-header))
                   (not (equal tree herdr-dispatch--rendered-tree)))

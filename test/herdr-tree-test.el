@@ -634,5 +634,42 @@ then working, then done — regardless of the order agents were created in."
                      (herdr-tree-test--status-state
                       '("w1:p1" "claude" "idle"))))))
 
+;;; Known projects with no workspace open
+
+(ert-deftest herdr-tree-known-project-nodes-excludes-an-open-workspace ()
+  "A project you already have open needs no second, dimmer entry for the
+same directory at the bottom of its own tree."
+  (should-not (herdr-tree--known-project-nodes
+               (herdr-tree-test--state) '("/tmp/herdr.el/"))))
+
+(ert-deftest herdr-tree-known-project-nodes-includes-an-unopened-root ()
+  (let ((nodes (herdr-tree--known-project-nodes
+                (herdr-tree-test--state) '("/tmp/other-project/"))))
+    (should (= 1 (length nodes)))
+    (should (equal 'herdr-known-project (nth 0 (car nodes))))
+    (should (equal "/tmp/other-project/" (nth 1 (car nodes))))
+    (should-not (nth 3 (car nodes)))))
+
+(ert-deftest herdr-tree-known-project-node-shows-a-zero-count-and-is-dimmed ()
+  "\"(0)\" is the tell: a real workspace cannot reach zero panes and
+survive, so a workspace-shaped row with a zero count is unambiguously
+one that is not actually open."
+  (let ((line (nth 2 (herdr-tree--known-project-node "/tmp/other-project/"))))
+    (should (string-match-p "other-project (0)" line))
+    (should (string-match-p "/tmp/other-project/" line))
+    (should (eq 'shadow (get-text-property 0 'font-lock-face line)))))
+
+(ert-deftest herdr-tree-known-project-nodes-ignores-a-nil-root-list ()
+  "The default when no caller passes anything -- most `herdr-tree-build'
+callers in this file among them -- must add nothing, not error."
+  (should-not (herdr-tree--known-project-nodes (herdr-tree-test--state) nil)))
+
+(ert-deftest herdr-tree-build-appends-known-projects-after-every-workspace ()
+  (let ((tree (herdr-tree-build (herdr-tree-test--state) nil
+                                '("/tmp/herdr.el/" "/tmp/other-project/"))))
+    (should (equal '(herdr-workspace herdr-known-project)
+                   (mapcar (lambda (node) (nth 0 node)) tree)))
+    (should (equal "/tmp/other-project/" (nth 1 (nth 1 tree))))))
+
 (provide 'herdr-tree-test)
 ;;; herdr-tree-test.el ends here
