@@ -310,9 +310,9 @@ than inside, so folding a workspace does not swallow the gap that sets
 it apart from the next.
 
 `magit-insert-section\\=' takes its type as an unevaluated symbol, so the
-six types are spelled out rather than passed through.  A runtime `eval\\='
-would collapse these into one branch; six explicit branches byte-compile
-and do not need defending."
+seven types are spelled out rather than passed through.  A runtime
+`eval\\=' would collapse these into one branch; seven explicit branches
+byte-compile and do not need defending."
   (let ((depth (or depth 0))
         (separate nil))
     (dolist (node nodes)
@@ -348,7 +348,12 @@ and do not need defending."
           ('herdr-known-project
            (magit-insert-section (herdr-known-project value)
              (herdr-dispatch--insert-leaf line depth)
-             (herdr-dispatch--insert-nodes children (1+ depth)))))))))
+             (herdr-dispatch--insert-nodes children (1+ depth))))
+          ('herdr-known-projects
+           (herdr-dispatch--apply-fold
+            (magit-insert-section (herdr-known-projects value)
+              (herdr-dispatch--insert-container line depth)
+              (herdr-dispatch--insert-nodes children (1+ depth))))))))))
 
 ;;; The object at point
 
@@ -569,6 +574,23 @@ here."
                   (member id herdr-dispatch--worktrees-pending))
         (herdr-dispatch--fetch-worktrees id directory)))))
 
+(defun herdr-dispatch--request-known-project-worktrees (known-project-roots)
+  "Ask for the worktrees of every root in KNOWN-PROJECT-ROOTS with none cached.
+
+The known-project sibling of `herdr-dispatch--request-worktrees\\=', reusing
+the same cache and the same `herdr-dispatch--fetch-worktrees\\=' — a root
+here is both the id the reply is cached under and the directory the
+request is made about, since a known project always has a directory to
+ask about.  That is the one case `herdr-dispatch--request-worktrees\\='
+handles specially for a workspace with no panes yet — no-directory,
+retried once a directory exists — and it cannot arise here, so there is
+nothing to mirror from it."
+  (dolist (root known-project-roots)
+    (unless (or (assoc root herdr-dispatch--worktrees)
+                (member root herdr-dispatch--worktrees-pending))
+      (herdr-dispatch--fetch-worktrees
+       root (file-name-as-directory (expand-file-name root))))))
+
 (defun herdr-dispatch--retry-unanswered-worktrees ()
   "Forget every workspace that has no answer, and ask again.
 The next `herdr-dispatch--request-worktrees\\=' asks them.  Only those: a
@@ -711,15 +733,18 @@ function\\='s own name asks is left here."
                         (alist-get 'path worktree)
                         "at point")))))
 
-(defun herdr-dispatch--refuse-worktrees-heading (complaint)
-  "Refuse a verb on a `worktrees (N)\\=' heading, COMPLAINT saying which.
+(defun herdr-dispatch--refuse-heading (complaint)
+  "Refuse a verb on a grouping heading, COMPLAINT saying which.
+Covers both group headings this buffer draws: a `worktrees (N)\\=' list
+and the `Inactive (N)\\=' known-projects group.
 
 The heading names a list, not a herdr object.  Every verb in this buffer
-acts on something with an id — a pane, a tab, a workspace, or the
-workspace a worktree is open as — and this section has none: it is a
-container this file draws around a cached `worktree.list\\=' reply, and
-its value is the id of the workspace it was fetched for, which is not
-the same claim at all.
+acts on something with an id — a pane, a tab, a workspace, the workspace
+a worktree is open as, or a known project's root — and a heading has
+none: it is a container this file draws around a cached reply (a
+`worktree.list\\=' answer, or the filtered known-project list), and its
+value either names the id the reply was fetched for or is a stable
+placeholder, neither of which is the same claim as a herdr object.
 
 Refusing rather than doing nothing is the point.
 `herdr-dispatch--value-at-point\\=' walks up from point, so a verb with no
@@ -729,12 +754,15 @@ and `f\\=' on a `worktrees (N)\\=' heading reached `workspace.close\\=',
 `workspace.rename\\=' and `workspace.focus\\=', each naming the repository
 whose worktrees the heading was counting.  That is the same defect shape
 as the one `herdr-tree-linked-worktree-p\\=' describes, one line above
-these arms in the same `cond\\='.
+these arms in the same `cond\\='.  The `Inactive (N)\\=' heading has no
+enclosing workspace to fall through to — it sits at the top level — so
+for it this is a belt rather than the braces, but the same explicit
+refusal keeps both headings consistent under every verb.
 
 `RET\\=' and `f\\=' refuse for that reason too, rather than approximating.
 Sending them to the enclosing workspace would be the fall-through
 dressed up as a decision, and there is no other server-side object here
-to go to.  The heading\\='s one useful action is folding, which
+to go to.  Each heading's one useful action is folding, which
 \\[magit-section-toggle] already does — hence the hint."
   (user-error "herdr: %s; TAB folds it" complaint))
 
@@ -798,17 +826,20 @@ and then followed to whichever pane herdr lands on, which is the
 server\\='s choice rather than ours.  A known project with no workspace
 open yet is created and focused instead — see
 `herdr-dispatch-open-known-project\\='.  The worktrees heading has
-nowhere to go; see `herdr-dispatch--refuse-worktrees-heading\\='."
+nowhere to go; see `herdr-dispatch--refuse-heading\\='."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-focus (herdr-dispatch--value-at-point 'herdr-pane)))
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (herdr-dispatch-open-worktree))
    ((herdr-dispatch--value-at-point 'herdr-worktrees)
-    (herdr-dispatch--refuse-worktrees-heading
+    (herdr-dispatch--refuse-heading
      "a group of worktrees is not somewhere to go"))
    ((herdr-dispatch--value-at-point 'herdr-known-project)
     (herdr-dispatch-open-known-project))
+   ((herdr-dispatch--value-at-point 'herdr-known-projects)
+    (herdr-dispatch--refuse-heading
+     "the inactive-projects group is not somewhere to go"))
    ((herdr-dispatch--value-at-point 'herdr-tab)
     (herdr-tab-focus (herdr-dispatch--value-at-point 'herdr-tab)))
    ((herdr-dispatch--value-at-point 'herdr-workspace)
@@ -832,17 +863,20 @@ that is not open as one has nothing to focus and says so, and neither
 does a known project with no workspace open — RET creates one instead
 of merely focusing, so this refuses rather than doing that on the wrong
 key.  Neither has the worktrees heading; see
-`herdr-dispatch--refuse-worktrees-heading\\='."
+`herdr-dispatch--refuse-heading\\='."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (herdr-rpc-call "workspace.focus"
                     `((workspace_id . ,(herdr-dispatch--worktree-workspace)))))
    ((herdr-dispatch--value-at-point 'herdr-worktrees)
-    (herdr-dispatch--refuse-worktrees-heading
+    (herdr-dispatch--refuse-heading
      "a group of worktrees cannot be focused"))
    ((herdr-dispatch--value-at-point 'herdr-known-project)
     (user-error "herdr: %s has no workspace open yet (RET opens it)"
                 (herdr-dispatch--value-at-point 'herdr-known-project)))
+   ((herdr-dispatch--value-at-point 'herdr-known-projects)
+    (herdr-dispatch--refuse-heading
+     "the inactive-projects group cannot be focused"))
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-rpc-call "pane.focus"
                     `((pane_id . ,(herdr-dispatch--value-at-point 'herdr-pane)))))
@@ -864,14 +898,19 @@ pane, which is the thing you are looking at, rather than its tab or
 workspace.  A worktree has no rename operation at all, so it is refused
 rather than allowed to fall through to the repository workspace whose
 list it was expanded from — and neither has the heading that groups
-them; see `herdr-dispatch--refuse-worktrees-heading\\='."
+them; see `herdr-dispatch--refuse-heading\\='."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (user-error
      "herdr: a worktree cannot be renamed; rename its branch with git"))
    ((herdr-dispatch--value-at-point 'herdr-worktrees)
-    (herdr-dispatch--refuse-worktrees-heading
+    (herdr-dispatch--refuse-heading
      "a group of worktrees cannot be renamed"))
+   ((herdr-dispatch--value-at-point 'herdr-known-project)
+    (user-error "herdr: a known project has no label of its own to rename"))
+   ((herdr-dispatch--value-at-point 'herdr-known-projects)
+    (herdr-dispatch--refuse-heading
+     "the inactive-projects group cannot be renamed"))
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-rename (read-string "Pane label: ")
                        (herdr-dispatch--value-at-point 'herdr-pane)))
@@ -895,13 +934,18 @@ workspace: that is the repository whose worktree list this row was
 expanded from, and removing it would destroy something other than the row
 under point.  The heading that groups the rows is refused outright, for
 the same reason and with more at stake; see
-`herdr-dispatch--refuse-worktrees-heading\\='."
+`herdr-dispatch--refuse-heading\\='."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (herdr-worktree-remove (herdr-dispatch--worktree-workspace)))
    ((herdr-dispatch--value-at-point 'herdr-worktrees)
-    (herdr-dispatch--refuse-worktrees-heading
+    (herdr-dispatch--refuse-heading
      "a group of worktrees cannot be closed"))
+   ((herdr-dispatch--value-at-point 'herdr-known-project)
+    (user-error "herdr: a known project with no workspace open has nothing to close"))
+   ((herdr-dispatch--value-at-point 'herdr-known-projects)
+    (herdr-dispatch--refuse-heading
+     "the inactive-projects group cannot be closed"))
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-close (herdr-dispatch--value-at-point 'herdr-pane)))
    ((herdr-dispatch--value-at-point 'herdr-tab)
@@ -1166,11 +1210,14 @@ reset the cursor and left folds acting on dead sections.  Non-nil FORCE
 redraws regardless, which is what \\[herdr-dispatch-refresh] does.
 
 Also where worktrees are fetched, since this is the one place that knows
-a workspace is being drawn.  The request goes out whether or not this
-call redraws, and the reply schedules its own redraw rather than forcing
-one; see `herdr-dispatch--request-worktrees\\='.  FORCE additionally
-retries the workspaces whose last fetch could not be answered, which is
-the manual cure for a `worktree.list\\=' that failed.
+a workspace is being drawn — and, the same way, the one place that knows
+which known-but-unopened projects are being drawn under `Inactive\\='; see
+`herdr-dispatch--request-worktrees\\=' and its sibling
+`herdr-dispatch--request-known-project-worktrees\\='.  Both requests go
+out whether or not this call redraws, and each reply schedules its own
+redraw rather than forcing one.  FORCE additionally retries the
+workspaces whose last fetch could not be answered, which is the manual
+cure for a `worktree.list\\=' that failed.
 
 A redraw that does happen restores the section highlight as well as
 point and folds; see the comment where it does.  The skip is the other
@@ -1181,9 +1228,10 @@ lets the skip engage at all while an agent is working."
     (with-current-buffer buffer
       (when force (herdr-dispatch--retry-unanswered-worktrees))
       (let* ((state (herdr-state-current))
+             (known-roots (herdr-dispatch--known-project-roots))
              (header (herdr-dispatch--header state))
              (tree (herdr-tree-build state herdr-dispatch--worktrees
-                                     (herdr-dispatch--known-project-roots))))
+                                     known-roots)))
         (when (or force
                   (not (equal header herdr-dispatch--rendered-header))
                   (not (equal tree herdr-dispatch--rendered-tree)))
@@ -1250,7 +1298,8 @@ lets the skip engage at all while an agent is working."
         ;; screen through the scheduled redraw, so that a callback which
         ;; caches without asking for one is a visible failure rather than
         ;; something this call papers over.
-        (herdr-dispatch--request-worktrees state)))))
+        (herdr-dispatch--request-worktrees state)
+        (herdr-dispatch--request-known-project-worktrees known-roots)))))
 
 (defun herdr-dispatch--cancel-refresh ()
   "Cancel the pending debounced redraw, if there is one."

@@ -429,8 +429,27 @@ worktrees headings are counted the same way for the same reason."
                    (herdr-tree--rollup (alist-get 'agent_status workspace))))
           (if worktree-node (append children (list worktree-node)) children))))
 
-(defun herdr-tree--known-project-node (root)
+(defun herdr-tree--known-project-worktrees-node (root worktrees)
+  "Return ROOT's worktrees node from WORKTREES, or nil when it has none.
+
+Unlike `herdr-tree--worktrees-node\\=', only `herdr-tree-linked-worktree-p\\='
+filters here.  There is no open workspace id for
+`herdr-tree-own-workspace-p\\=' to compare against — ROOT has none, being
+unopened — but none is needed: that predicate exists only to catch a
+linked worktree that happens to BE the container's own open workspace,
+and a container with no open workspace at all cannot have that problem."
+  (when-let* ((entry (assoc root worktrees))
+              (found (seq-filter #'herdr-tree-linked-worktree-p (cdr entry))))
+    (list 'herdr-worktrees root
+          (format "worktrees (%s)" (length found))
+          (mapcar #'herdr-tree--worktree-node found))))
+
+(defun herdr-tree--known-project-node (root worktrees)
   "Return the node for ROOT, a known project with no workspace open.
+WORKTREES is threaded through to `herdr-tree--known-project-worktrees-node\\=',
+the same cache `herdr-tree--workspace-node\\=' reads for an open workspace's
+own worktrees section — ROOT's own repository is asked about exactly the
+same way, just keyed by ROOT itself rather than a workspace id.
 
 Always \"(0)\": a real workspace cannot reach zero panes and survive —
 closing a workspace's last pane closes the workspace itself with it,
@@ -439,51 +458,72 @@ that this row is not actually open, the same way
 `herdr-tree--worktree-node\\=' marks an unopened worktree with `open as
 WORKSPACE-ID\\=' rather than leaving it looking identical to one that is.
 Dimmed with `shadow\\=' for the same reason: nothing here is running."
-  (list 'herdr-known-project root
-        (herdr-tree--faced
-         (string-trim-right
-          (format "%-28s %s"
-                  (format "%s (0)"
-                          (file-name-nondirectory (directory-file-name root)))
-                  root))
-         'shadow)
-        nil))
+  (let ((worktrees-node (herdr-tree--known-project-worktrees-node
+                         root worktrees)))
+    (list 'herdr-known-project root
+          (herdr-tree--faced
+           (string-trim-right
+            (format "%-28s %s"
+                    (format "%s (0)"
+                            (file-name-nondirectory (directory-file-name root)))
+                    root))
+           'shadow)
+          (and worktrees-node (list worktrees-node)))))
 
-(defun herdr-tree--known-project-nodes (state known-project-roots)
+(defun herdr-tree--known-project-nodes (state known-project-roots worktrees)
   "Return nodes for KNOWN-PROJECT-ROOTS with no workspace open in STATE.
 
 KNOWN-PROJECT-ROOTS is a plain list of directory strings — typically
 `project-known-project-roots\\=', but kept as a parameter rather than read
 here so this stays a pure function of its arguments, the same reason
 `herdr-tree-build\\=' takes WORKTREES as a parameter instead of fetching
-them itself.
+them itself.  WORKTREES is passed straight through to
+`herdr-tree--known-project-node\\='.
 
 Excludes any root `herdr-state-workspace-for-directory\\=' already finds
 open: a project you have open needs no second, dimmer entry for the
 same directory at the bottom of its own tree."
-  (mapcar #'herdr-tree--known-project-node
+  (mapcar (lambda (root) (herdr-tree--known-project-node root worktrees))
           (seq-remove (lambda (root)
                         (herdr-state-workspace-for-directory state root))
                       known-project-roots)))
+
+(defun herdr-tree--known-projects-node (state known-project-roots worktrees)
+  "Return one \"Inactive (N)\\=\" container node, or nil when there is nothing.
+
+Wrapping every `herdr-known-project\\=' row under one foldable heading is
+what removes the blank line `herdr-dispatch--insert-nodes\\=' otherwise
+puts between top-level nodes: only top-level siblings get one, and inside
+this container the rows are children, not siblings of the workspaces
+above.  VALUE is a stable placeholder string rather than nil, because a
+`nil\\=' section value reads to `herdr-dispatch--value-at-point\\=' as
+`nothing found here\\=' even while point is on the heading."
+  (when-let* ((nodes (herdr-tree--known-project-nodes
+                      state known-project-roots worktrees)))
+    (list 'herdr-known-projects "inactive"
+          (format "Inactive (%s)" (length nodes))
+          nodes)))
 
 (defun herdr-tree-build (state worktrees &optional known-project-roots)
   "Return the dispatcher tree for STATE.
 
 Each node is the list (TYPE VALUE LINE CHILDREN).  TYPE is one of
 `herdr-workspace\\=', `herdr-tab\\=', `herdr-pane\\=', `herdr-worktrees\\=',
-`herdr-worktree\\=' or `herdr-known-project\\='; VALUE is the id a command
-needs; LINE is the rendered text; CHILDREN is a list of nodes.
+`herdr-worktree\\=', `herdr-known-project\\=' or `herdr-known-projects\\=';
+VALUE is the id a command needs; LINE is the rendered text; CHILDREN is a
+list of nodes.
 
-WORKTREES is an alist of (WORKSPACE-ID . LIST-OF-WORKTREEINFO) for the
-workspaces whose worktrees have been fetched.  A workspace missing from
-it simply gets no worktrees section — absence of knowledge, not absence
-of worktrees.
+WORKTREES is an alist of (ID . LIST-OF-WORKTREEINFO) for every workspace
+or known-project root whose worktrees have been fetched, keyed either way
+by the same id its own node uses.  An id missing from it simply gets no
+worktrees section — absence of knowledge, not absence of worktrees.
 
-KNOWN-PROJECT-ROOTS, when given, appends one dimmed row per project with
-no workspace currently open — see `herdr-tree--known-project-nodes\\=' —
-after every real workspace, so a project you are not in right now is
-still one keystroke from being opened, at the bottom rather than mixed
-in among the workspaces actually running something.
+KNOWN-PROJECT-ROOTS, when given, appends one \"Inactive (N)\\=\" container
+after every real workspace — see `herdr-tree--known-projects-node\\=' —
+holding one dimmed row per project with no workspace currently open, so
+a project you are not in right now is still one keystroke from being
+opened, folded away at the bottom rather than mixed in among the
+workspaces actually running something.
 
 The agent column width is computed once here, from every pane in STATE,
 so it is consistent across every workspace rather than fitted separately
@@ -494,7 +534,9 @@ ones in another would otherwise show two different column widths."
                       (herdr-tree--workspace-node state workspace worktrees
                                                   width))
                     (herdr-state-workspaces state))
-            (herdr-tree--known-project-nodes state known-project-roots))))
+            (when-let* ((inactive (herdr-tree--known-projects-node
+                                   state known-project-roots worktrees)))
+              (list inactive)))))
 
 (provide 'herdr-tree)
 ;;; herdr-tree.el ends here
