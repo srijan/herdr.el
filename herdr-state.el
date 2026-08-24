@@ -1001,6 +1001,89 @@ killed by the agent-windows reap listening on the change hook)."
 (define-obsolete-function-alias 'herdr-state-refresh-directories
   'herdr-state-reconcile-panes "0.1.0")
 
+(defun herdr-state-reconcile-workspaces ()
+  "Make the cached workspace set match the server.
+
+Panes get this from `herdr-state-reconcile-panes' every poll; workspaces
+and tabs never did, because nothing periodic called `workspace.list' or
+`tab.list' the way the pane poll calls `pane.list'.  A missed
+`workspace.closed' — the same disconnect-window and ring-replay gaps
+`herdr-state-reconcile-panes' defends panes against — then leaves a
+ghost workspace in the cache indefinitely: not just until the next
+poll, since there is no next poll for it, but until the next full
+resync, which only fires on reconnect.  A session that never
+disconnects never reconnects, so the ghost is permanent — it shows up
+in the dispatcher, the modeline, and every picker for the rest of the
+session.  `herdr-state-reconcile-tabs' is the tab-scoped sibling of
+this function, called alongside it from the same periodic poll; see
+`herdr-term--poll-directories'.
+
+`workspace.list', like `pane.list', takes no required parameters and
+answers with every live workspace, so one call resolves both closures
+and updates in a single pass.  Returns non-nil when anything changed."
+  (when-let* ((workspaces (ignore-errors
+                            (alist-get 'workspaces
+                                       (herdr-rpc-call "workspace.list")))))
+    (let* ((live-ids (mapcar (lambda (w) (alist-get 'workspace_id w))
+                             workspaces))
+           (stale (seq-remove (lambda (w) (member (alist-get 'workspace_id w)
+                                                  live-ids))
+                              (herdr-state-workspaces herdr-state--current)))
+           (changed nil))
+      (dolist (workspace stale)
+        (setq changed t)
+        (setq herdr-state--current
+              (herdr-state-reduce herdr-state--current "workspace_closed"
+                                  `((workspace_id
+                                     . ,(alist-get 'workspace_id workspace))))))
+      (dolist (workspace workspaces)
+        (let* ((id (alist-get 'workspace_id workspace))
+               (known (seq-find (lambda (w) (equal id (alist-get 'workspace_id w)))
+                                (herdr-state-workspaces herdr-state--current))))
+          (unless (equal known workspace)
+            (setq changed t)
+            (setq herdr-state--current
+                  (herdr-state-reduce herdr-state--current "workspace_updated"
+                                      `((workspace . ,workspace)))))))
+      (when changed
+        (run-hook-with-args 'herdr-state-change-functions "reconcile" nil))
+      changed)))
+
+(defun herdr-state-reconcile-tabs ()
+  "Make the cached tab set match the server.
+The tab-scoped sibling of `herdr-state-reconcile-workspaces'; see its
+docstring for why this exists.  A tab whose workspace closed is
+orphaned the same way a pane is when its own owner disappears without
+a `pane.closed' — this sweep catches it without `workspace_closed'
+needing to know to cascade into the tabs it owned.
+
+`tab.list' with no `workspace_id' filter, like `pane.list', answers
+with every live tab across every workspace.  Returns non-nil when
+anything changed."
+  (when-let* ((tabs (ignore-errors (alist-get 'tabs (herdr-rpc-call "tab.list")))))
+    (let* ((live-ids (mapcar (lambda (tab) (alist-get 'tab_id tab)) tabs))
+           (stale (seq-remove (lambda (tab) (member (alist-get 'tab_id tab)
+                                                     live-ids))
+                              (herdr-state-tabs herdr-state--current)))
+           (changed nil))
+      (dolist (tab stale)
+        (setq changed t)
+        (setq herdr-state--current
+              (herdr-state-reduce herdr-state--current "tab_closed"
+                                  `((tab_id . ,(alist-get 'tab_id tab))))))
+      (dolist (tab tabs)
+        (let* ((id (alist-get 'tab_id tab))
+               (known (seq-find (lambda (c) (equal id (alist-get 'tab_id c)))
+                                (herdr-state-tabs herdr-state--current))))
+          (unless (equal known tab)
+            (setq changed t)
+            (setq herdr-state--current
+                  (herdr-state-reduce herdr-state--current "tab_created"
+                                      `((tab . ,tab)))))))
+      (when changed
+        (run-hook-with-args 'herdr-state-change-functions "reconcile" nil))
+      changed)))
+
 (defun herdr-state-refresh ()
   "Replace the cache from a fresh snapshot, leaving subscriptions alone.
 

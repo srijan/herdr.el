@@ -570,6 +570,23 @@ thawed.  So the poll's RPCs run under `herdr-rpc-background-timeout'."
       (herdr-term--poll-directories)
       (should (equal 2.0 seen)))))
 
+(ert-deftest herdr-term-poll-also-reconciles-workspaces-and-tabs ()
+  "Workspaces and tabs had no periodic repair at all before this: a
+missed `workspace.closed' or `tab.closed' left a ghost in the cache
+until the next full resync, which only fires on reconnect — and a
+session that never disconnects never reconnects.  This is the one
+periodic tick, so it is where both get called from."
+  (let ((herdr-state--running t)
+        workspaces-called tabs-called)
+    (cl-letf (((symbol-function 'herdr-state-reconcile-panes) (lambda () nil))
+              ((symbol-function 'herdr-state-reconcile-workspaces)
+               (lambda () (setq workspaces-called t) nil))
+              ((symbol-function 'herdr-state-reconcile-tabs)
+               (lambda () (setq tabs-called t) nil)))
+      (herdr-term--poll-directories)
+      (should workspaces-called)
+      (should tabs-called))))
+
 (ert-deftest herdr-term-poll-does-not-nest-inside-its-own-wait ()
   "`accept-process-output' runs due timers, and the poll's worst case
 used to exceed its own interval — so the next poll fired re-entrantly
