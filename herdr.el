@@ -76,20 +76,6 @@ The herdr server keeps running; agents are unaffected."
   (herdr-term-teardown)
   (herdr-state-stop))
 
-(defun herdr--workspace-for-directory (state root)
-  "Return the workspace in STATE rooted at ROOT, or nil.
-
-Compared through `herdr-state-workspace-directory\\=' because protocol 19
-workspaces carry no cwd.  This used to compare against an `identity_cwd\\='
-field that does not exist, so it never matched and `herdr-project\\=' made a
-fresh workspace every time."
-  (let ((root (file-name-as-directory (expand-file-name root))))
-    (seq-find (lambda (workspace)
-                (equal root
-                       (herdr-state-workspace-directory
-                        state (alist-get 'workspace_id workspace))))
-              (herdr-state-workspaces state))))
-
 ;;;###autoload
 (defun herdr-project ()
   "Focus the herdr workspace for the current project, creating it if absent."
@@ -99,7 +85,8 @@ fresh workspace every time."
                      (when-let* ((project (project-current nil)))
                        (expand-file-name (project-root project))))
                    default-directory))
-         (existing (herdr--workspace-for-directory (herdr-state-current) root)))
+         (existing (herdr-state-workspace-for-directory
+                    (herdr-state-current) root)))
     (if existing
         (herdr-rpc-call "workspace.focus"
                         `((workspace_id . ,(alist-get 'workspace_id existing))))

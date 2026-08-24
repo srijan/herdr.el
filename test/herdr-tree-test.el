@@ -60,6 +60,20 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
     (should (string-match-p "/tmp/herdr.el" line))
     (should (string-match-p (herdr-tree-glyph "blocked") line))))
 
+(ert-deftest herdr-tree-workspace-line-abbreviates-a-home-relative-directory ()
+  "A known-project row already shows `~/\\=' for free, since
+`project-known-project-roots' hands those back pre-abbreviated; a
+workspace's directory is derived from a pane's cwd instead and had
+nothing shortening it, so the two looked inconsistent side by side."
+  (let* ((dir (expand-file-name "~/herdr-test-project"))
+         (state (herdr-tree-test--state
+                 `(panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (tab_id . "w1:t1") (agent . "claude")
+                             (agent_status . "working") (cwd . ,dir)))))))
+    (let ((line (nth 2 (car (herdr-tree-build state nil)))))
+      (should (string-match-p "~/herdr-test-project" line))
+      (should-not (string-match-p (regexp-quote dir) line)))))
+
 (ert-deftest herdr-tree-counts-children-in-parentheses ()
   "magit\\='s idiom, because the dashboard is read next to magit-status.
 
@@ -586,6 +600,62 @@ So absence reads as not linked."
   (should-not (herdr-tree-linked-worktree-p '((is_linked_worktree . nil))))
   (should (herdr-tree-linked-worktree-p '((is_linked_worktree . t)))))
 
+(ert-deftest herdr-tree-worktree-row-shows-its-own-directory ()
+  "A worktree row named only by branch gave no way to tell two
+same-named branches in different repositories apart, or to see where a
+worktree actually lives without opening it first -- the same directory
+column a workspace row already carries."
+  (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el-feat")
+                                (is_linked_worktree . t)
+                                (branch . "feat/dispatch"))))))
+         (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
+                                                 worktrees))))
+         (worktree (car (nth 3 (car (last children))))))
+    (should (string-match-p "/tmp/herdr.el-feat" (nth 2 worktree)))))
+
+(ert-deftest herdr-tree-worktree-row-abbreviates-a-home-relative-path ()
+  "The path the server reports is the full absolute one, unlike a
+known-project root, which `project-known-project-roots' already hands
+back abbreviated -- so this is the one place that had nothing shortening
+it."
+  (let* ((dir (expand-file-name "~/herdr-test-worktree"))
+         (line (nth 2 (herdr-tree--worktree-node
+                       `((path . ,dir) (branch . "feat/dispatch"))
+                       20))))
+    (should (string-match-p "~/herdr-test-worktree" line))
+    (should-not (string-match-p (regexp-quote dir) line))))
+
+(ert-deftest herdr-tree-worktree-row-is-dimmed-like-a-known-project-row ()
+  "The whole row is dimmed, not just the path -- the same `shadow'
+treatment `herdr-tree--known-project-node' gives an unopened project,
+since a worktree is not itself running anything either.  Only dimming
+the path made a worktree row look like it belonged to a different kind
+of row than an inactive project, when they mean the same thing."
+  (let ((line (nth 2 (herdr-tree--worktree-node
+                      '((path . "/tmp/herdr.el-feat") (branch . "feat/dispatch"))
+                      20))))
+    (should (eq 'shadow (get-text-property 0 'font-lock-face line)))
+    (should (eq 'shadow (get-text-property
+                         (string-match "/tmp/herdr.el-feat" line)
+                         'font-lock-face line)))))
+
+(ert-deftest herdr-tree-worktree-column-widens-to-fit-the-longest-branch ()
+  "A fixed column ran long branch names straight into the directory
+column with no gap at all; this is computed the same way the agent
+column is, from the widest name actually present."
+  (let ((worktrees '(("w1" . (((path . "/tmp/a") (branch . "short"))
+                              ((path . "/tmp/b")
+                               (branch . "a-rather-long-feature-branch-name")))))))
+    (should (= (length "a-rather-long-feature-branch-name")
+               (herdr-tree--worktree-column-width worktrees)))))
+
+(ert-deftest herdr-tree-worktree-column-width-has-a-floor ()
+  (should (= herdr-tree-worktree-column-min
+             (herdr-tree--worktree-column-width nil)))
+  (should (= herdr-tree-worktree-column-min
+             (herdr-tree--worktree-column-width
+              '(("w1" . (((path . "/tmp/a") (branch . "x")))))))))
+
 (ert-deftest herdr-tree-dims-a-worktree-already-open-as-a-workspace ()
   (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el-feat")
                                 (is_linked_worktree . t)
@@ -633,6 +703,95 @@ then working, then done — regardless of the order agents were created in."
   (should (equal "" (herdr-tree-status-summary
                      (herdr-tree-test--status-state
                       '("w1:p1" "claude" "idle"))))))
+
+;;; Known projects with no workspace open
+
+(ert-deftest herdr-tree-known-project-nodes-excludes-an-open-workspace ()
+  "A project you already have open needs no second, dimmer entry for the
+same directory at the bottom of its own tree."
+  (should-not (herdr-tree--known-project-nodes
+               (herdr-tree-test--state) '("/tmp/herdr.el/") nil 20)))
+
+(ert-deftest herdr-tree-known-project-nodes-includes-an-unopened-root ()
+  (let ((nodes (herdr-tree--known-project-nodes
+                (herdr-tree-test--state) '("/tmp/other-project/") nil 20)))
+    (should (= 1 (length nodes)))
+    (should (equal 'herdr-known-project (nth 0 (car nodes))))
+    (should (equal "/tmp/other-project/" (nth 1 (car nodes))))
+    (should-not (nth 3 (car nodes)))))
+
+(ert-deftest herdr-tree-known-project-node-shows-a-zero-count-and-is-dimmed ()
+  "\"(0)\" is the tell: a real workspace cannot reach zero panes and
+survive, so a workspace-shaped row with a zero count is unambiguously
+one that is not actually open."
+  (let ((line (nth 2 (herdr-tree--known-project-node
+                      "/tmp/other-project/" nil 20))))
+    (should (string-match-p "other-project (0)" line))
+    (should (string-match-p "/tmp/other-project/" line))
+    (should (eq 'shadow (get-text-property 0 'font-lock-face line)))))
+
+(ert-deftest herdr-tree-known-project-node-includes-its-own-worktrees ()
+  "A known project is still a repository, and its worktrees are shown the
+same way an open workspace's are -- only `herdr-tree-linked-worktree-p'
+filters here, since there is no open workspace id for
+`herdr-tree-own-workspace-p' to compare against; the main checkout is
+already excluded by not being a linked worktree at all."
+  (let* ((worktrees `(("/tmp/other-project/"
+                       . (((path . "/tmp/other-project/") (branch . "main")
+                           (is_linked_worktree . nil))
+                          ((path . "/tmp/other-project-fix/") (branch . "fix")
+                           (is_linked_worktree . t))))))
+         (node (herdr-tree--known-project-node
+                "/tmp/other-project/" worktrees 20))
+         (children (nth 3 node)))
+    (should (= 1 (length children)))
+    (should (equal 'herdr-worktrees (nth 0 (car children))))
+    (should (equal "worktrees (1)" (nth 2 (car children))))))
+
+(ert-deftest herdr-tree-known-project-node-has-no-worktrees-section-when-uncached ()
+  "Absence of knowledge, not absence of worktrees -- the same contract
+`herdr-tree--worktrees-node' keeps for an open workspace."
+  (should-not (nth 3 (herdr-tree--known-project-node
+                      "/tmp/other-project/" nil 20))))
+
+(ert-deftest herdr-tree-known-project-nodes-ignores-a-nil-root-list ()
+  "The default when no caller passes anything -- most `herdr-tree-build'
+callers in this file among them -- must add nothing, not error."
+  (should-not (herdr-tree--known-project-nodes
+              (herdr-tree-test--state) nil nil 20)))
+
+(ert-deftest herdr-tree-known-projects-node-is-nil-with-nothing-to-show ()
+  (should-not (herdr-tree--known-projects-node
+              (herdr-tree-test--state) nil nil 20))
+  (should-not (herdr-tree--known-projects-node
+               (herdr-tree-test--state) '("/tmp/herdr.el/") nil 20)))
+
+(ert-deftest herdr-tree-known-projects-node-counts-and-nests-its-rows ()
+  "One container, not one row per project at the top level -- that is
+what removes the blank line between them; see
+`herdr-dispatch--insert-nodes'."
+  (let ((node (herdr-tree--known-projects-node
+               (herdr-tree-test--state)
+               '("/tmp/a/" "/tmp/b/" "/tmp/herdr.el/") nil 20)))
+    (should (equal 'herdr-known-projects (nth 0 node)))
+    (should (equal "inactive" (nth 1 node)))
+    (should (equal "Inactive (2)" (nth 2 node)))
+    (should (equal '("/tmp/a/" "/tmp/b/")
+                   (mapcar (lambda (n) (nth 1 n)) (nth 3 node))))))
+
+(ert-deftest herdr-tree-build-appends-one-inactive-container-after-every-workspace ()
+  (let ((tree (herdr-tree-build (herdr-tree-test--state) nil
+                                '("/tmp/herdr.el/" "/tmp/other-project/"))))
+    (should (equal '(herdr-workspace herdr-known-projects)
+                   (mapcar (lambda (node) (nth 0 node)) tree)))
+    (should (equal '("/tmp/other-project/")
+                   (mapcar (lambda (n) (nth 1 n)) (nth 3 (nth 1 tree)))))))
+
+(ert-deftest herdr-tree-build-adds-no-inactive-container-when-everything-is-open ()
+  (let ((tree (herdr-tree-build (herdr-tree-test--state) nil
+                                '("/tmp/herdr.el/"))))
+    (should (equal '(herdr-workspace)
+                   (mapcar (lambda (node) (nth 0 node)) tree)))))
 
 (provide 'herdr-tree-test)
 ;;; herdr-tree-test.el ends here
