@@ -34,6 +34,20 @@
       (should (equal (alist-get 'type result) "pong"))
       (should (equal (alist-get 'protocol result) 17)))))
 
+(ert-deftest herdr-rpc-call-returns-on-complete-line-without-eof ()
+  "A full response line completes the call even without EOF.
+Waiting for EOF alone livelocked Emacs: with close sentinels starved
+under nested timer handlers, every call burned its whole deadline
+spinning on a socket whose answer had already arrived."
+  (herdr-test-with-server
+      (lambda (req)
+        (cons (herdr-test-ok req '((type . "pong"))) t))
+    (let* ((herdr-rpc-timeout 5.0)
+           (start (float-time))
+           (result (herdr-rpc-call "ping")))
+      (should (equal (alist-get 'type result) "pong"))
+      (should (< (- (float-time) start) 1.0)))))
+
 (ert-deftest herdr-rpc-call-passes-params-through ()
   (let (seen)
     (herdr-test-with-server
