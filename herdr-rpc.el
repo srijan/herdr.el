@@ -156,10 +156,16 @@ timeout."
         (progn
           (process-send-string proc (herdr-rpc-encode (herdr-rpc--next-id)
                                                       method params))
-          ;; The server closes after responding, so EOF is the completion
-          ;; signal rather than anything we have to parse for.
+          ;; A full line is the completion signal; the EOF the server
+          ;; sends after responding is only a fallback.  Waiting for EOF
+          ;; alone once livelocked Emacs: with close sentinels starved
+          ;; under nested timer handlers, every call burned its whole
+          ;; deadline spinning on a socket whose answer had already
+          ;; arrived, and polls re-fired faster than they finished.
           (let ((deadline (+ (float-time) herdr-rpc-timeout)))
-            (while (and (not closed) (< (float-time) deadline))
+            (while (and (not closed)
+                        (not (and chunks (string-search "\n" (car chunks))))
+                        (< (float-time) deadline))
               (accept-process-output proc 0.05)))
           (let ((text (apply #'concat (nreverse chunks))))
             (when (string-empty-p (string-trim text))
