@@ -1,3 +1,7 @@
+> **Historical record.** This document shows the plan or the design at the date in its
+> title. It is not current documentation. The code has moved since. For current
+> documentation, see [`docs/`](../README.md).
+
 # herdr dispatcher Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
