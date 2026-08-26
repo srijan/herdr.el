@@ -36,14 +36,12 @@
       (herdr-worktrees "w1" "worktrees 1"
        ((herdr-worktree "/tmp/herdr.el-fix" "fix  open as w2" nil)))))
     (herdr-workspace "w2" "api  /tmp/api  2 panes"
-     ((herdr-tab "w2:t1" "main  1 panes"
-       ((herdr-pane "w2:p1" "> claude working w2:p1" nil)))
-      (herdr-tab "w2:t2" "spike  1 panes"
-       ((herdr-pane "w2:p2" "· gemini idle w2:p2" nil))))))
+     ((herdr-pane "w2:p1" "> claude working w2:p1" nil)
+      (herdr-pane "w2:p2" "· gemini idle w2:p2" nil))))
   "One workspace of each shape `herdr-tree-build' emits.
-`w1' is the flattened single-tab case, carrying a worktrees section;
-`w2' keeps its tab level because it has more than one tab.  Between them
-every node type the renderer must handle appears.")
+`w1' carries a worktrees section; `w2' does not.  There is no tab level
+in either — `herdr-tree-build' never nests a pane under one — so between
+them every node type the renderer must handle still appears.")
 
 (defun herdr-dispatch-test--section-at (text)
   "Return the section whose line contains TEXT."
@@ -94,15 +92,8 @@ renderer consuming them, which is the seam such a typo would hide in."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (should (eq 'herdr-workspace (herdr-dispatch-test--type-at "herdr.el")))
     (should (eq 'herdr-pane      (herdr-dispatch-test--type-at "w1:p1")))
-    (should (eq 'herdr-tab       (herdr-dispatch-test--type-at "main")))
     (should (eq 'herdr-worktrees (herdr-dispatch-test--type-at "worktrees 1")))
     (should (eq 'herdr-worktree  (herdr-dispatch-test--type-at "open as w2")))))
-
-(ert-deftest herdr-dispatch-nests-children-under-a-tab ()
-  "A dropped child list is invisible unless something looks under a tab."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "w2:p1")
-    (should (eq 'herdr-tab (oref (oref (magit-current-section) parent) type)))))
 
 (defun herdr-dispatch-test--indent-at (text)
   "Return the leading whitespace width of the line containing TEXT."
@@ -112,22 +103,22 @@ renderer consuming them, which is the seam such a typo would hide in."
   (skip-chars-forward " ")
   (current-column))
 
-(ert-deftest herdr-dispatch-indents-a-pane-under-a-tab-deeper-than-one-under-a-workspace ()
+(ert-deftest herdr-dispatch-panes-of-a-two-tab-workspace-render-at-the-same-depth ()
   "The hierarchy has to be visible, not just navigable.
 
-`w1:p1\\=' hangs directly off its workspace (the single-tab flattened
-case); `w2:p1\\=' hangs off a tab which hangs off its workspace.  The
-second must read one level deeper than the first, with no
-special-casing for the flattened shape."
+`w2\\=' used to keep its tab level because it had more than one tab;
+`herdr-tree-build\\=' no longer nests panes under a tab at all, so both of
+`w2\\='s panes must now hang directly off the workspace, indented one
+level below its heading and no deeper than each other."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (let ((workspace-indent (herdr-dispatch-test--indent-at "herdr.el"))
-          (flattened-pane-indent (herdr-dispatch-test--indent-at "w1:p1"))
-          (tab-indent (herdr-dispatch-test--indent-at "main"))
-          (nested-pane-indent (herdr-dispatch-test--indent-at "w2:p1")))
-      (should (< workspace-indent flattened-pane-indent))
-      (should (= tab-indent flattened-pane-indent))
-      (should (< tab-indent nested-pane-indent))
-      (should (< flattened-pane-indent nested-pane-indent)))))
+    (search-forward "w2:p1")
+    (should (eq 'herdr-workspace (oref (oref (magit-current-section) parent)
+                                       type)))
+    (let ((workspace-indent (herdr-dispatch-test--indent-at "api"))
+          (first-pane-indent (herdr-dispatch-test--indent-at "w2:p1"))
+          (second-pane-indent (herdr-dispatch-test--indent-at "w2:p2")))
+      (should (< workspace-indent first-pane-indent))
+      (should (= first-pane-indent second-pane-indent)))))
 
 ;;; Headings and leaves
 
@@ -146,7 +137,7 @@ heading keymap, `magit-section-content-p' — keys on it, so it is the
 assertion that catches a leaf promoted back to a heading no matter how
 the promotion is spelled."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (dolist (text '("herdr.el" "main" "worktrees 1"))
+    (dolist (text '("herdr.el" "api" "worktrees 1"))
       (should (oref (herdr-dispatch-test--section-at text) content)))
     (dolist (text '("w1:p1" "w2:p2" "open as w2"))
       (should-not (oref (herdr-dispatch-test--section-at text) content)))))
@@ -158,7 +149,7 @@ A heading whose face said nothing was the reported problem, so the
 difference is asserted where it shows: `magit-section-heading' begins a
 container line and does not begin a leaf line."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (dolist (text '("herdr.el" "main" "worktrees 1"))
+    (dolist (text '("herdr.el" "api" "worktrees 1"))
       (should (eq 'magit-section-heading (herdr-dispatch-test--face-at text))))
     (dolist (text '("w1:p1" "w2:p2" "open as w2"))
       (should-not (eq 'magit-section-heading
@@ -317,12 +308,11 @@ A leaf that stopped being a heading must not stop being a section: every
 verb in this buffer resolves the object under point by walking up from
 `magit-current-section', so a pane row folded into its workspace's
 section would answer `RET', `k' and `R' with the workspace.  Type and
-value are checked for all five node types, leaves included, because that
+value are checked for all four node types, leaves included, because that
 pair is the entire interface the verbs have to the tree."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (dolist (spec '(("herdr.el"    herdr-workspace "w1")
                     ("w1:p1"       herdr-pane      "w1:p1")
-                    ("main"        herdr-tab       "w2:t1")
                     ("w2:p2"       herdr-pane      "w2:p2")
                     ("worktrees 1" herdr-worktrees "w1")
                     ("open as w2"  herdr-worktree  "/tmp/herdr.el-fix")))
@@ -694,11 +684,10 @@ under the same `erase-buffer'."
     (should-not (herdr-dispatch--value-at-point 'herdr-pane))))
 
 (ert-deftest herdr-dispatch-resolves-every-ancestor-type ()
-  "One pane line has to answer for its tab and its workspace as well."
+  "One pane line has to answer for its workspace as well."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (search-forward "w2:p2")
     (should (equal "w2:p2" (herdr-dispatch--value-at-point 'herdr-pane)))
-    (should (equal "w2:t2" (herdr-dispatch--value-at-point 'herdr-tab)))
     (should (equal "w2" (herdr-dispatch--value-at-point 'herdr-workspace)))))
 
 (ert-deftest herdr-dispatch-resolution-prefers-the-innermost-match ()
@@ -2478,16 +2467,15 @@ same contract has to be reasserted here rather than inherited."
       (herdr-pane "w1:p2" "· shell           w1:p2" nil)
       (herdr-pane "w1:p3" "  shell           w1:p3" nil)))
     (herdr-workspace "w2" "api  /tmp/api  2 panes"
-     ((herdr-tab "w2:t1" "main  1 panes"
-       ((herdr-pane "w2:p1" "  shell           w2:p1" nil)))
-      (herdr-tab "w2:t2" "spike  1 panes"
-       ((herdr-pane "w2:p2" "· gemini idle w2:p2" nil))))))
+     ((herdr-pane "w2:p1" "  shell           w2:p1" nil)
+      (herdr-pane "w2:p2" "· gemini idle w2:p2" nil))))
   "A tree holding every case `a\\=' has to answer for.
 
-`w1\\=' is the flattened single-tab shape, so its heading encloses no
-`herdr-tab\\=' section at all — the case the split-target chain used to
-dead-end on.  Its panes are, in order, one running a real agent, one
-adopted as a shell, and one with no agent.  `w2\\=' keeps its tab level.")
+Every heading encloses no `herdr-tab\\=' section — `herdr-tree-build\\='
+never nests a pane under one — which is the case the split-target chain
+used to dead-end on for a single-tab workspace like `w1\\='.  Its panes
+are, in order, one running a real agent, one adopted as a shell, and one
+with no agent.")
 
 (defconst herdr-dispatch-test--start-snapshot
   '((workspaces . (((workspace_id . "w1") (label . "herdr.el"))

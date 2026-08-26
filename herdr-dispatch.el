@@ -299,9 +299,9 @@ whether or not its parent is folded."
 
 DEPTH is the nesting level, defaulting to 0.  Each line is prefixed with
 two spaces per DEPTH, so the hierarchy is visible on screen instead of
-every line beginning at column 0 regardless of nesting — a pane parented
-directly to a workspace indents one level, a pane under a tab indents
-two, with no special-casing for either shape.
+every line beginning at column 0 regardless of nesting — every pane
+indents exactly one level under its workspace, with no tab level to add
+a second.
 
 Top-level nodes are separated by a blank line, the way magit separates
 the sections of a status buffer.  It goes between them rather than after
@@ -310,9 +310,9 @@ than inside, so folding a workspace does not swallow the gap that sets
 it apart from the next.
 
 `magit-insert-section\\=' takes its type as an unevaluated symbol, so the
-seven types are spelled out rather than passed through.  A runtime
-`eval\\=' would collapse these into one branch; seven explicit branches
-byte-compile and do not need defending."
+six types are spelled out rather than passed through.  A runtime `eval\\='
+would collapse these into one branch; six explicit branches byte-compile
+and do not need defending."
   (let ((depth (or depth 0))
         (separate nil))
     (dolist (node nodes)
@@ -325,11 +325,6 @@ byte-compile and do not need defending."
           ('herdr-workspace
            (herdr-dispatch--apply-fold
             (magit-insert-section (herdr-workspace value)
-              (herdr-dispatch--insert-container line depth)
-              (herdr-dispatch--insert-nodes children (1+ depth)))))
-          ('herdr-tab
-           (herdr-dispatch--apply-fold
-            (magit-insert-section (herdr-tab value)
               (herdr-dispatch--insert-container line depth)
               (herdr-dispatch--insert-nodes children (1+ depth)))))
           ('herdr-pane
