@@ -41,11 +41,11 @@
 (declare-function herdr-pane-zoom "herdr-cmd" (&optional pane-id))
 (declare-function herdr-agent-prompt "herdr-cmd" (text &optional target))
 
-(defconst herdr-select-create-new-shell "＋ new shell pane"
+(defconst herdr-select-create-new-shell "＋ new terminal"
   "Sentinel entry offered by `herdr-select-available-shell'.
 Choosing it means \"make a fresh shell for me\" rather than naming an
-existing pane; `herdr-agent-start' turns that into a split.  Its text is
-deliberately unlike a pane id so it cannot be confused for one.")
+existing pane; `herdr-agent-start' turns that into a fresh tab.  Its
+text is deliberately unlike a pane id so it cannot be confused for one.")
 
 (defun herdr-select--status-glyph (status)
   "Return a short glyph for agent STATUS."
@@ -59,7 +59,7 @@ deliberately unlike a pane id so it cannot be confused for one.")
 (defun herdr-select--annotate-pane (pane-id)
   "Return the annotation string for PANE-ID."
   (if (equal pane-id herdr-select-create-new-shell)
-      "  split the current pane and start the agent in it"
+      "  create a new tab and start the agent in it"
     (let ((pane (herdr-state-pane (herdr-state-current) pane-id)))
       (if (not pane)
           ""
@@ -134,12 +134,10 @@ than one extra round trip, and the cache can drift."
 (defun herdr-select--available-shell-ids (state)
   "Return the ids of panes in STATE that `agent.start' can take over.
 A pane is available only when it has no agent at all.  The server
-refuses every pane carrying a reported agent — the adopted-shell label
-included, since adoption reports one — with \"not an available shell\",
-so an adopted shell offered here would buy nothing but that rejection.
-Reaching such a pane is still possible: release it, or take the
-`herdr-select-create-new-shell' entry and get a pane with no agent on
-it."
+refuses every pane carrying a reported agent with \"not an available
+shell\", so a busy pane offered here would buy nothing but that
+rejection; the `herdr-select-create-new-shell' entry is the way to a
+pane with no agent on it."
   (mapcar (lambda (pane) (alist-get 'pane_id pane))
           (seq-remove (lambda (pane) (alist-get 'agent pane))
                       (herdr-state-panes state))))
@@ -154,7 +152,7 @@ pane is busy — where the old behaviour was to error and send you off to
 split by hand.
 
 Returns a pane id, or the symbol `:create-new' when that entry is chosen;
-the caller splits a pane for it."
+the caller creates a fresh tab for it."
   (herdr-state-refresh)
   (let* ((ids (herdr-select--available-shell-ids (herdr-state-current)))
          (choice (herdr-select--read

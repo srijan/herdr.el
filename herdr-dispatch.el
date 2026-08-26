@@ -131,7 +131,6 @@ tells itself apart from a redraw of an empty session.")
     (define-key map (kbd "TAB") #'magit-section-toggle)
     (define-key map "c" #'herdr-dispatch-create)
     (define-key map "w" #'herdr-dispatch-create-workspace)
-    (define-key map "t" #'herdr-dispatch-create-tab)
     (define-key map "n" #'herdr-dispatch-create-pane)
     (define-key map "a" #'herdr-dispatch-create-agent)
     (define-key map "%" #'herdr-dispatch-create-worktree)
@@ -816,9 +815,9 @@ guard `herdr-project\\=' makes before it creates."
 
 (herdr-dispatch-defverb herdr-dispatch-visit ()
   "Go to the thing at point.
-A pane is focused and its buffer shown; a tab or workspace is focused
-and then followed to whichever pane herdr lands on, which is the
-server\\='s choice rather than ours.  A known project with no workspace
+A pane is focused and its buffer shown; a workspace is focused and then
+followed to whichever pane herdr lands on, which is the server\\='s
+choice rather than ours.  A known project with no workspace
 open yet is created and focused instead — see
 `herdr-dispatch-open-known-project\\='.  The worktrees heading has
 nowhere to go; see `herdr-dispatch--refuse-heading\\='."
@@ -835,8 +834,6 @@ nowhere to go; see `herdr-dispatch--refuse-heading\\='."
    ((herdr-dispatch--value-at-point 'herdr-known-projects)
     (herdr-dispatch--refuse-heading
      "the inactive-projects group is not somewhere to go"))
-   ((herdr-dispatch--value-at-point 'herdr-tab)
-    (herdr-tab-focus (herdr-dispatch--value-at-point 'herdr-tab)))
    ((herdr-dispatch--value-at-point 'herdr-workspace)
     (herdr-workspace-focus (herdr-dispatch--value-at-point 'herdr-workspace)))
    (t (user-error "herdr: nothing at point"))))
@@ -875,9 +872,6 @@ key.  Neither has the worktrees heading; see
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-rpc-call "pane.focus"
                     `((pane_id . ,(herdr-dispatch--value-at-point 'herdr-pane)))))
-   ((herdr-dispatch--value-at-point 'herdr-tab)
-    (herdr-rpc-call "tab.focus"
-                    `((tab_id . ,(herdr-dispatch--value-at-point 'herdr-tab)))))
    ((herdr-dispatch--value-at-point 'herdr-workspace)
     (herdr-rpc-call "workspace.focus"
                     `((workspace_id . ,(herdr-dispatch--value-at-point
@@ -889,7 +883,7 @@ key.  Neither has the worktrees heading; see
 (herdr-dispatch-defverb herdr-dispatch-rename ()
   "Rename the thing at point.
 Most specific section wins: a pane line inside a workspace renames the
-pane, which is the thing you are looking at, rather than its tab or
+pane, which is the thing you are looking at, rather than its
 workspace.  A worktree has no rename operation at all, so it is refused
 rather than allowed to fall through to the repository workspace whose
 list it was expanded from — and neither has the heading that groups
@@ -909,9 +903,6 @@ them; see `herdr-dispatch--refuse-heading\\='."
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-rename (read-string "Pane label: ")
                        (herdr-dispatch--value-at-point 'herdr-pane)))
-   ((herdr-dispatch--value-at-point 'herdr-tab)
-    (herdr-tab-rename (read-string "Tab label: ")
-                      (herdr-dispatch--value-at-point 'herdr-tab)))
    ((herdr-dispatch--value-at-point 'herdr-workspace)
     (herdr-workspace-rename (read-string "Workspace label: ")
                             (herdr-dispatch--value-at-point 'herdr-workspace)))
@@ -919,9 +910,9 @@ them; see `herdr-dispatch--refuse-heading\\='."
 
 (herdr-dispatch-defverb herdr-dispatch-close ()
   "Close or remove the thing at point.
-The underlying commands — `herdr-pane-close\\=', `herdr-tab-close\\=',
-`herdr-workspace-close\\=' and `herdr-worktree-remove\\=' — all prompt for
-confirmation, so this adds no second prompt.
+The underlying commands — `herdr-pane-close\\=', `herdr-workspace-close\\='
+and `herdr-worktree-remove\\=' — all prompt for confirmation, so this adds
+no second prompt.
 
 A worktree is removed as the workspace herdr has opened it as, which is
 the only handle `worktree.remove\\=' has on it.  Not the enclosing
@@ -943,8 +934,6 @@ the same reason and with more at stake; see
      "the inactive-projects group cannot be closed"))
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-close (herdr-dispatch--value-at-point 'herdr-pane)))
-   ((herdr-dispatch--value-at-point 'herdr-tab)
-    (herdr-tab-close (herdr-dispatch--value-at-point 'herdr-tab)))
    ((herdr-dispatch--value-at-point 'herdr-workspace)
     (herdr-workspace-close (herdr-dispatch--value-at-point 'herdr-workspace)))
    (t (user-error "herdr: nothing at point to close"))))
@@ -980,61 +969,21 @@ to the directory of the workspace at point."
                   (read-directory-name "Workspace directory: " default))))
     (herdr-workspace-create dir (herdr-dispatch--arg args "--label"))))
 
-(herdr-dispatch-defverb herdr-dispatch-create-tab ()
-  "Create a tab in the workspace at point."
-  (let ((workspace (herdr-dispatch--require 'herdr-workspace "a workspace"))
-        (label (or (herdr-dispatch--arg (herdr-dispatch--args) "--label")
-                   (read-string "Tab label (optional): "))))
-    ;; tab.create has no workspace_id parameter: it creates in whatever
-    ;; workspace is focused, so focus first.
-    (herdr-rpc-call "workspace.focus" `((workspace_id . ,workspace)))
-    (herdr-cmd--follow-new-pane
-     (herdr-cmd--created-pane-id
-      (herdr-rpc-call "tab.create"
-                      `((label . ,(unless (string-empty-p label) label))
-                        (focus . t)))))))
-
-(defun herdr-dispatch--first-pane-of (state key id)
-  "Return the id of the first pane in STATE whose KEY field equals ID.
-Nil when ID is nil, so this composes into a fallback chain."
-  (when id
-    (alist-get 'pane_id
-               (seq-find (lambda (pane) (equal id (alist-get key pane)))
-                         (herdr-state-panes state)))))
-
-(defun herdr-dispatch--split-target ()
-  "Return the pane a split at point should target, or nil.
-
-`pane.split' needs a pane, and most lines in the dashboard are not one,
-so a container resolves to a pane it holds: pane at point, else the
-first pane of the tab at point, else the first pane of the workspace at
-point.
-
-That last step is not redundant with the tab step.  A workspace with a
-single tab is rendered flattened — `herdr-tree' drops the tab level
-entirely and hangs the panes off the workspace — so a workspace heading
-in that shape encloses no `herdr-tab' section at all, and a chain that
-stops at tabs finds nothing on the one workspace shape that is most
-common.  Walking to the workspace is what makes the answer independent
-of which shape the tree happened to render."
-  (let ((state (herdr-state-current)))
-    (or (herdr-dispatch--value-at-point 'herdr-pane)
-        (herdr-dispatch--first-pane-of
-         state 'tab_id (herdr-dispatch--value-at-point 'herdr-tab))
-        (herdr-dispatch--first-pane-of
-         state 'workspace_id (herdr-dispatch--value-at-point 'herdr-workspace)))))
-
-(defun herdr-dispatch--require-split-target ()
-  "Return the pane a split at point should target, or refuse."
-  (or (herdr-dispatch--split-target)
-      (user-error "herdr: no pane here to split")))
+(defun herdr-dispatch--workspace-target ()
+  "Return the workspace id point resolves to, or nil for the focused one.
+A pane row resolves through its own record; a workspace heading is
+itself; anywhere else defers to the server's focused workspace, which is
+what `tab.create' does with a nil workspace_id."
+  (or (herdr-dispatch--value-at-point 'herdr-workspace)
+      (when-let* ((pane-id (herdr-dispatch--value-at-point 'herdr-pane))
+                  (pane (herdr-state-pane (herdr-state-current) pane-id)))
+        (alist-get 'workspace_id pane))))
 
 (defun herdr-dispatch--free-pane-at-point ()
   "Return the pane at point when `agent.start' would take it, else nil.
 
 Only a pane with no agent at all qualifies.  The server refuses any pane
-carrying a reported agent — an adopted shell\\='s `herdr-shell-agent-name\\='
-label included — as \"not an available shell\", which is the
+carrying a reported agent as \"not an available shell\", which is the
 `agent_pane_busy' this answer exists to keep the user away from.
 
 A pane on screen that the cache does not know is treated as unusable
@@ -1058,42 +1007,23 @@ name you would have picked anyway for the first agent of its kind, and
     (if (string-empty-p name) kind name)))
 
 (herdr-dispatch-defverb herdr-dispatch-create-pane ()
-  "Split a new pane beside whatever pane point resolves to.
-See `herdr-dispatch--split-target' for how a workspace or tab heading
-resolves to one."
+  "Create a new terminal: a fresh tab in the workspace at point."
   (herdr-cmd--follow-new-pane
-   (herdr-cmd--created-pane-id
-    (herdr-rpc-call "pane.split"
-                    `((direction . "right")
-                      (target_pane_id . ,(herdr-dispatch--require-split-target))
-                      (focus . t))))))
+   (herdr-cmd--new-tab-pane (herdr-dispatch--workspace-target))))
 
 (herdr-dispatch-defverb herdr-dispatch-create-agent ()
-  "Start an agent in the pane at point, or in a fresh pane beside it.
-
-The pane at point is used only when it has no agent.  Anywhere else —
-a busy pane, an adopted `shell\\=', a tab or workspace heading, a
-worktree row — a new pane is split for the agent instead, so `a\\=' has an
-answer everywhere in the buffer.  It used to refuse every line that was
-not a free pane, which is how pressing it on a shell pane reached the
-server only to be told the pane was busy.
-
-The split goes through `herdr-cmd--split-new-shell', which deliberately
-does not adopt the pane it makes: adoption reports an agent, and a pane
-with a reported agent is the one thing `agent.start' will not take.
-`herdr-agent-start' focuses and shows the pane once the agent is running,
-so nothing is created invisibly.
-
-Both prompts come before the split, so abandoning either leaves no
-orphan pane behind."
+  "Start an agent in the pane at point, or in a fresh tab.
+The pane at point is used only when it has no agent; anywhere else a new
+tab is created in the workspace at point, so `a\\=' has an answer
+everywhere in the buffer.  Both prompts come before the create, so
+abandoning either leaves nothing behind."
   (let* ((args (herdr-dispatch--args))
          (kind (or (herdr-dispatch--arg args "--kind")
                    (completing-read "Agent kind: " herdr-agent-kinds nil nil)))
          (name (or (herdr-dispatch--arg args "--label")
                    (herdr-dispatch--read-agent-name kind)))
          (pane (or (herdr-dispatch--free-pane-at-point)
-                   (herdr-cmd--split-new-shell
-                    (herdr-dispatch--require-split-target)))))
+                   (herdr-cmd--new-tab-pane (herdr-dispatch--workspace-target)))))
     (herdr-agent-start name kind pane)))
 
 (herdr-dispatch-defverb herdr-dispatch-create-worktree ()
@@ -1121,7 +1051,6 @@ not the workspace at point, matching the treatment already given to
   "Return the create menu heading, naming what point resolves to."
   (format "Create   [%s]"
           (or (herdr-dispatch--value-at-point 'herdr-pane)
-              (herdr-dispatch--value-at-point 'herdr-tab)
               (herdr-dispatch--value-at-point 'herdr-workspace)
               "nothing at point")))
 
@@ -1130,8 +1059,7 @@ not the workspace at point, matching the treatment already given to
   [:description herdr-dispatch--create-heading
    ["Create"
     ("w" "workspace" herdr-dispatch-create-workspace)
-    ("t" "tab"       herdr-dispatch-create-tab)
-    ("n" "pane"      herdr-dispatch-create-pane)
+    ("n" "terminal"  herdr-dispatch-create-pane)
     ("a" "agent"     herdr-dispatch-create-agent)
     ("%" "worktree"  herdr-dispatch-create-worktree)]
    ["Arguments"
