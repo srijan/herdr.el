@@ -1952,6 +1952,40 @@ worktree's directory, and asserting the exact params reaching
 
 ;;; Known projects with no workspace open
 
+(ert-deftest herdr-dispatch-live-project-root-p-answers-for-the-filesystem ()
+  "project.el remembers a project until told to forget one, and nothing
+tells it when a directory is deleted -- so a removed worktree kept an
+`Inactive' row for a path that is not there."
+  (let ((directory (make-temp-file "herdr-dispatch-test-" t)))
+    (unwind-protect
+        (progn
+          (should (herdr-dispatch--live-project-root-p directory))
+          (should-not (herdr-dispatch--live-project-root-p
+                       (expand-file-name "gone/" directory))))
+      (delete-directory directory t))
+    (should-not (herdr-dispatch--live-project-root-p directory))))
+
+(ert-deftest herdr-dispatch-live-project-root-p-trusts-a-remote-root ()
+  "`file-directory-p' over TRAMP is a round trip to another machine, and
+this runs on every redraw.  A stale row costs a line; a redraw that
+blocks on an unreachable host costs the dashboard.  No connection is
+attempted here -- `file-remote-p' answers from the name alone."
+  (should (herdr-dispatch--live-project-root-p
+           "/ssh:nowhere.invalid:/tmp/never-existed/")))
+
+(ert-deftest herdr-dispatch-known-project-roots-drops-a-deleted-directory ()
+  "The filter runs where project.el's answer enters the dashboard, so
+everything downstream -- the `Inactive' rows and the `worktree.list'
+round trip each one would otherwise cost -- sees only live roots."
+  (let ((directory (make-temp-file "herdr-dispatch-test-" t)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'project-known-project-roots)
+                   (lambda () (list directory
+                                    (expand-file-name "gone/" directory)))))
+          (should (equal (list directory)
+                         (herdr-dispatch--known-project-roots))))
+      (delete-directory directory t))))
+
 (defconst herdr-dispatch-test--known-project-nodes
   '((herdr-known-project "/tmp/other-project/" "other-project (0)  /tmp/other-project/" nil))
   "One `herdr-known-project\\=' row, for the tests below.")

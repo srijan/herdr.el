@@ -1145,13 +1145,52 @@ not the workspace at point, matching the treatment already given to
     ("-k" "agent kind" "--kind=")
     ("-d" "directory" "--directory=")]])
 
+(defun herdr-dispatch--live-project-root-p (root)
+  "Return non-nil when ROOT is a directory that still exists.
+
+project.el remembers a project until it is told to forget one, and
+nothing tells it when a directory is deleted.  A worktree removed with
+`herdr-worktree-remove\\=', or any project directory deleted outside
+Emacs, therefore stays in `project-known-project-roots\\=' and
+kept drawing an `Inactive\\=' row for a path that is not there — a row
+`RET\\=' could only fail on, and one that no longer even appeared under
+the repository it came from, since the repository had stopped listing it
+as a worktree.
+
+A remote root is taken on trust.  `file-directory-p\\=' over TRAMP is a
+round trip to another machine, and this runs on every redraw; a row for
+a directory that has since gone from a remote host is a far smaller cost
+than a dashboard that blocks on an unreachable host every time an event
+arrives.
+
+This hides such a row; it does not forget the project.  Removing it from
+project.el is `project-forget-zombie-projects\\=', which is project.el's
+own command for exactly this and which writes to the user's
+`project-list-file\\=' — not something a dashboard redraw should do on
+its own."
+  (or (file-remote-p root)
+      (file-directory-p root)))
+
 (defun herdr-dispatch--known-project-roots ()
-  "Return `project-known-project-roots\\=', or nil without project.el.
-Guarded rather than required: `herdr-project\\=' checks the same way
-\(`fboundp\\=' \\='project-current\\='\), so the dispatcher asks nothing of
-project.el that the rest of the package does not already ask."
+  "Return the still-existing `project-known-project-roots\\=', or nil.
+Nil without project.el; guarded rather than required, since
+`herdr-project\\=' checks the same way \(`fboundp\\=' \\='project-current\\='\),
+so the dispatcher asks nothing of project.el that the rest of the
+package does not already ask.
+
+Roots whose directory has been deleted are dropped here rather than in
+`herdr-tree.el\\=', which is a pure function of its arguments and stays
+that way: this is already the boundary where project.el's own answer
+enters the dashboard, and the only place that touches the filesystem to
+find out what that answer is worth.  See
+`herdr-dispatch--live-project-root-p\\='.
+
+Dropping them here also spares each one a `worktree.list\\=' round trip,
+since `herdr-dispatch--request-known-project-worktrees\\=' is given this
+filtered list."
   (when (fboundp 'project-known-project-roots)
-    (project-known-project-roots)))
+    (seq-filter #'herdr-dispatch--live-project-root-p
+                (project-known-project-roots))))
 
 (defun herdr-dispatch--header (state)
   "Return the header line summarising STATE.
