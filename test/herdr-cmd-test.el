@@ -96,6 +96,19 @@ Emacs has to be moved to match or the command looks like a no-op."
         (herdr-pane-focus "w1:p7")
         (should (equal "w1:p7" selected))))))
 
+(ert-deftest herdr-pane-focus-waits-when-select-fails ()
+  "When the immediate select cannot show the pane yet — the cache has
+not caught up with the focus change — the retry chain is armed instead
+of the command silently going nowhere."
+  (let (deferred)
+    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) nil))
+              ((symbol-function 'herdr-cmd--select-pane-when-ready)
+               (lambda (pane) (setq deferred pane))))
+      (herdr-test-with-server
+          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-pane-focus "w1:p7")
+        (should (equal "w1:p7" deferred))))))
+
 (ert-deftest herdr-agent-focus-selects-a-buffer ()
   (let (selected)
     (cl-letf (((symbol-function 'herdr-term-select-pane)
@@ -126,6 +139,18 @@ Emacs has to be moved to match or the command looks like a no-op."
           (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
         (herdr-workspace-focus "w2")
         (should asked)))))
+
+(ert-deftest herdr-cmd-follow-focus-waits-when-nothing-is-selected ()
+  "When neither the immediate select-focused nor the fallback pane
+lookup can show anything yet, the miss is handed to the retry chain
+rather than the command going silently nowhere."
+  (let (deferred)
+    (cl-letf (((symbol-function 'herdr-term-select-focused) (lambda () nil))
+              ((symbol-function 'herdr-cmd--current-pane-id) (lambda () "w1:p4"))
+              ((symbol-function 'herdr-cmd--select-pane-when-ready)
+               (lambda (pane) (setq deferred pane))))
+      (herdr-cmd--follow-focus)
+      (should (equal "w1:p4" deferred)))))
 
 ;;; Panes created from Emacs must become visible
 
@@ -171,6 +196,19 @@ on the pane."
       (herdr-cmd--follow-new-pane "w1:p9")
       (should (equal "w1:p9" deferred))
       (should-not reported))))
+
+(ert-deftest herdr-cmd-follow-new-pane-waits-only-when-select-fails ()
+  "The retry chain is armed exactly when the immediate select comes up
+empty; a pane already in the cache must not also be handed to it."
+  (dolist (select-succeeds '(nil t))
+    (let ((herdr-terminal-backend 'agent-windows)
+          deferred)
+      (cl-letf (((symbol-function 'herdr-term-select-pane)
+                 (lambda (_) select-succeeds))
+                ((symbol-function 'herdr-cmd--select-pane-when-ready)
+                 (lambda (pane) (setq deferred pane))))
+        (herdr-cmd--follow-new-pane "w1:p9")
+        (should (equal (unless select-succeeds "w1:p9") deferred))))))
 
 (ert-deftest herdr-cmd-created-pane-is-left-alone-under-session ()
   "The session backend shows every pane already; adopting would only
