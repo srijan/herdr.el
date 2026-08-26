@@ -108,9 +108,9 @@ is always on screen stops being read.")
     ""))
 
 (defun herdr-tree-status-counts (state)
-  "Return an alist of (STATUS . COUNT) over the real agents in STATE.
-Real agents only: `herdr-state-agents\\=' excludes adopted shells, which
-have no status lifecycle worth counting.  Shared by the modeline segment
+  "Return an alist of (STATUS . COUNT) over the agent panes in STATE.
+`herdr-state-agents' is the source: over the agent panes in STATE
+\(panes whose `agent' field is set).  Shared by the modeline segment
 and the dispatcher header so the two surfaces cannot disagree."
   (let ((counts nil))
     (dolist (pane (herdr-state-agents state))
@@ -139,7 +139,8 @@ always on screen stops being read.  Empty when nothing is noteworthy."
   "Return the agent column for PANE in STATE.
 Adopted shells are marked rather than named, since they have no agent
 lifecycle.  A name set through `agent.rename\\=' is appended to the kind."
-  (if (herdr-state-shell-pane-p pane)
+  (if (with-suppressed-warnings ((obsolete herdr-state-shell-pane-p))
+        (herdr-state-shell-pane-p pane))
       "shell*"
     (let* ((kind (or (alist-get 'display_agent pane)
                      (alist-get 'agent pane)
@@ -252,7 +253,8 @@ The status governs both the glyph and the word, which makes the leading
 column a colour strip you can read down without reading any of the
 words."
   (let* ((id (alist-get 'pane_id pane))
-         (shell (herdr-state-shell-pane-p pane))
+         (shell (with-suppressed-warnings ((obsolete herdr-state-shell-pane-p))
+                  (herdr-state-shell-pane-p pane)))
          (status (if shell "" (or (alist-get 'agent_status pane) "")))
          (face (herdr-tree-status-face status)))
     (list 'herdr-pane id

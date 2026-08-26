@@ -622,7 +622,9 @@ lifecycle.  Reverse it with `herdr-release-shell'."
     (herdr-rpc-call "pane.report_agent"
                     `((pane_id . ,pane)
                       (source . ,herdr-cmd-adopt-source)
-                      (agent . ,herdr-shell-agent-name)
+                      (agent . ,(with-suppressed-warnings
+                                    ((obsolete herdr-shell-agent-name))
+                                  herdr-shell-agent-name))
                       (state . "idle")))
     ;; Adoption and release are not reliably announced on the event
     ;; stream, so settle the cache rather than waiting for news.
@@ -637,13 +639,17 @@ The pane and its shell are untouched; only the reported agent goes away."
                   (herdr-select--read
                    "Release shell pane: "
                    (mapcar (lambda (p) (alist-get 'pane_id p))
-                           (seq-filter #'herdr-state-shell-pane-p
-                                       (herdr-state-panes (herdr-state-current))))
+                           (with-suppressed-warnings
+                               ((obsolete herdr-state-shell-pane-p))
+                             (seq-filter #'herdr-state-shell-pane-p
+                                         (herdr-state-panes (herdr-state-current)))))
                    'herdr-pane #'herdr-select--annotate-pane))))
     (herdr-rpc-call "pane.release_agent"
                     `((pane_id . ,pane)
                       (source . ,herdr-cmd-adopt-source)
-                      (agent . ,herdr-shell-agent-name)))
+                      (agent . ,(with-suppressed-warnings
+                                    ((obsolete herdr-shell-agent-name))
+                                  herdr-shell-agent-name))))
     (herdr-state-resync)
     (message "herdr: released %s" pane)))
 
