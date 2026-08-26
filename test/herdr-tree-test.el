@@ -804,6 +804,116 @@ already excluded by not being a linked worktree at all."
   (should-not (nth 3 (herdr-tree--known-project-node
                       "/tmp/other-project/" nil 20))))
 
+(ert-deftest herdr-tree-known-project-worktrees-node-omits-the-root-itself ()
+  "A directory that is itself a linked worktree of another repository
+appears in its own `worktree.list' reply, flagged linked, because that is
+what it is.  Only `herdr-tree-linked-worktree-p' filtered here, so that
+entry survived and the root rendered as a child of its own heading."
+  (let* ((worktrees '(("/tmp/repo-worktrees/feature/"
+                       . (((path . "/tmp/repo") (branch . "main")
+                           (is_linked_worktree . nil))
+                          ((path . "/tmp/repo-worktrees/feature")
+                           (branch . "feature") (is_linked_worktree . t))
+                          ((path . "/tmp/repo-worktrees/other")
+                           (branch . "other") (is_linked_worktree . t))))))
+         (node (herdr-tree--known-project-worktrees-node
+                "/tmp/repo-worktrees/feature/" worktrees 20)))
+    (should (equal "worktrees (1)" (nth 2 node)))
+    (should (equal '("/tmp/repo-worktrees/other")
+                   (mapcar (lambda (child) (nth 1 child)) (nth 3 node))))))
+
+(ert-deftest herdr-tree-main-checkout-is-the-entry-that-is-not-linked ()
+  "The reply names no repository root of its own; the entry that is not a
+linked worktree is that root, whatever the directory asked about was."
+  (let ((worktrees '(("/tmp/repo-worktrees/feature/"
+                      . (((path . "/tmp/repo-worktrees/feature")
+                          (is_linked_worktree . t))
+                         ((path . "/tmp/repo") (is_linked_worktree . nil)))))))
+    (should (equal "/tmp/repo"
+                   (herdr-tree--main-checkout
+                    "/tmp/repo-worktrees/feature/" worktrees)))
+    (should-not (herdr-tree--main-checkout "/tmp/never-fetched/" worktrees))
+    (should-not (herdr-tree--main-checkout "/tmp/repo-worktrees/feature/" nil))))
+
+(defun herdr-tree-test--worktree-cache (&rest roots)
+  "Return a worktree cache answering for each of ROOTS with one repository.
+Every root gets the same two-entry reply: `/tmp/repo' as the main
+checkout and `/tmp/repo-worktrees/feature' as its one linked worktree,
+which is the shape a repository and a worktree of it both produce."
+  (mapcar (lambda (root)
+            (cons root '(((path . "/tmp/repo") (branch . "main")
+                          (is_linked_worktree . nil))
+                         ((path . "/tmp/repo-worktrees/feature")
+                          (branch . "feature") (is_linked_worktree . t)))))
+          roots))
+
+(ert-deftest herdr-tree-known-project-nodes-drops-a-worktree-of-a-listed-project ()
+  "Opening a worktree as a project in Emacs makes project.el remember it
+as a project in its own right, so the repository and its worktree both
+drew a row -- each carrying a full copy of the same worktrees section.
+The repository is the row worth keeping; its section already names the
+worktree."
+  (let* ((roots '("/tmp/repo/" "/tmp/repo-worktrees/feature/"))
+         (nodes (herdr-tree--known-project-nodes
+                 (herdr-tree-test--state) roots
+                 (apply #'herdr-tree-test--worktree-cache roots)
+                 20)))
+    (should (equal '("/tmp/repo/")
+                   (mapcar (lambda (node) (nth 1 node)) nodes)))))
+
+(ert-deftest herdr-tree-known-project-nodes-drops-a-worktree-of-an-open-workspace ()
+  "The repository need not be an inactive row to count as shown: a
+worktree of a workspace that is open is already listed in that
+workspace's own worktrees section."
+  (let ((worktrees '(("/tmp/herdr.el-feat/"
+                      . (((path . "/tmp/herdr.el") (is_linked_worktree . nil))
+                         ((path . "/tmp/herdr.el-feat")
+                          (is_linked_worktree . t)))))))
+    (should-not (herdr-tree--known-project-nodes
+                 (herdr-tree-test--state) '("/tmp/herdr.el-feat/")
+                 worktrees 20))))
+
+(ert-deftest herdr-tree-known-project-nodes-keeps-an-orphan-worktree ()
+  "A worktree whose repository is neither open nor a known project keeps
+its row.  Hiding it would take away the tree's only mention of it, which
+is worse than the duplication this filter exists to remove."
+  (let* ((roots '("/tmp/repo-worktrees/feature/"))
+         (nodes (herdr-tree--known-project-nodes
+                 (herdr-tree-test--state) roots
+                 (apply #'herdr-tree-test--worktree-cache roots)
+                 20)))
+    (should (equal roots (mapcar (lambda (node) (nth 1 node)) nodes)))))
+
+(ert-deftest herdr-tree-secondary-worktree-p-compares-normalized-paths ()
+  "Known-project roots arrive slash-terminated from project.el and
+worktree paths arrive bare from the server, so the comparison that
+decides this is made on directory names rather than on the strings as
+they came in."
+  (let ((worktrees (herdr-tree-test--worktree-cache
+                    "/tmp/repo-worktrees/feature")))
+    (should (herdr-tree--secondary-worktree-p
+             (herdr-tree-test--state) "/tmp/repo-worktrees/feature"
+             '("/tmp/repo/") worktrees))
+    (should-not (herdr-tree--secondary-worktree-p
+                 (herdr-tree-test--state) "/tmp/repo-worktrees/feature"
+                 '("/tmp/somewhere-else/") worktrees))))
+
+(ert-deftest herdr-tree-secondary-worktree-p-never-drops-a-main-checkout ()
+  "A repository's own root has itself as its main checkout, so the rule
+cannot turn on the row it exists to keep."
+  (let ((worktrees (herdr-tree-test--worktree-cache "/tmp/repo/")))
+    (should-not (herdr-tree--secondary-worktree-p
+                 (herdr-tree-test--state) "/tmp/repo/"
+                 '("/tmp/repo/") worktrees))))
+
+(ert-deftest herdr-tree-secondary-worktree-p-is-nil-before-the-reply-lands ()
+  "Worktrees are fetched as the dashboard renders, so every root is
+unfetched for a moment.  Absence of knowledge must show the row, not
+hide it."
+  (should-not (herdr-tree--secondary-worktree-p
+               (herdr-tree-test--state) "/tmp/repo-worktrees/feature/"
+               '("/tmp/repo/") nil)))
+
 (ert-deftest herdr-tree-known-project-nodes-ignores-a-nil-root-list ()
   "The default when no caller passes anything -- most `herdr-tree-build'
 callers in this file among them -- must add nothing, not error."
