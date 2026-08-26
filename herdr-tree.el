@@ -137,11 +137,10 @@ always on screen stops being read.  Empty when nothing is noteworthy."
 
 (defun herdr-tree--agent-label (state pane)
   "Return the agent column for PANE in STATE.
-Adopted shells are marked rather than named, since they have no agent
-lifecycle.  A name set through `agent.rename\\=' is appended to the kind."
-  (if (with-suppressed-warnings ((obsolete herdr-state-shell-pane-p))
-        (herdr-state-shell-pane-p pane))
-      "shell*"
+A pane with no agent reads as a shell, since it has no agent lifecycle.
+A name set through `agent.rename\\=' is appended to the kind."
+  (if (not (alist-get 'agent pane))
+      "shell"
     (let* ((kind (or (alist-get 'display_agent pane)
                      (alist-get 'agent pane)
                      "shell"))
@@ -253,8 +252,7 @@ The status governs both the glyph and the word, which makes the leading
 column a colour strip you can read down without reading any of the
 words."
   (let* ((id (alist-get 'pane_id pane))
-         (shell (with-suppressed-warnings ((obsolete herdr-state-shell-pane-p))
-                  (herdr-state-shell-pane-p pane)))
+         (shell (not (alist-get 'agent pane)))
          (status (if shell "" (or (alist-get 'agent_status pane) "")))
          (face (herdr-tree-status-face status)))
     (list 'herdr-pane id
@@ -270,51 +268,17 @@ words."
                                       'font-lock-doc-face)))
           nil)))
 
-(defun herdr-tree--panes-in-tab (state tab-id width)
-  "Return the nodes for every pane of TAB-ID in STATE, agent column WIDTH wide."
+(defun herdr-tree--panes-in-workspace (state workspace-id width)
+  "Return nodes for every pane of WORKSPACE-ID in STATE, agent column WIDTH.
+Tabs are server-side layout: under `agent-windows' every pane is its own
+Emacs buffer, so grouping rows by tab explained nothing and cost a level.
+Listing panes directly also closes the lost-pane hole the old orphan
+handling existed for — a pane whose tab the cache does not hold is just
+another pane of its workspace here."
   (mapcar (lambda (pane) (herdr-tree--pane-node state pane width))
           (seq-filter (lambda (pane)
-                        (equal tab-id (alist-get 'tab_id pane)))
+                        (equal workspace-id (alist-get 'workspace_id pane)))
                       (herdr-state-panes state))))
-
-(defun herdr-tree--orphan-panes-in-workspace (state workspace-id width)
-  "Return nodes for WORKSPACE-ID\\='s panes whose tab is not in STATE.
-
-Panes are drawn under their tab, so a pane naming a tab the cache does
-not hold would otherwise be drawn nowhere at all: the workspace heading
-would go on counting it while no row existed to read, prompt or close it.
-
-That state is reachable rather than theoretical — a `tab_created\\=' event
-carrying no `tab\\=' payload is dropped, and a resync races the events
-around it — and losing a pane is the one failure the flat listing this
-tree replaced could not have.  Showing them directly under the workspace
-keeps every pane reachable no matter what the tab cache knows."
-  (let ((known (mapcar (lambda (tab) (alist-get 'tab_id tab))
-                       (herdr-state-tabs state))))
-    (mapcar (lambda (pane) (herdr-tree--pane-node state pane width))
-            (seq-filter (lambda (pane)
-                          (and (equal workspace-id
-                                      (alist-get 'workspace_id pane))
-                               (not (member (alist-get 'tab_id pane) known))))
-                        (herdr-state-panes state)))))
-
-(defun herdr-tree--tab-node (state tab width)
-  "Return the node for TAB in STATE, its pane column WIDTH wide."
-  (let ((id (alist-get 'tab_id tab)))
-    (list 'herdr-tab id
-          (string-trim-right
-           (format "%-28s %s"
-                   (format "%s (%s)"
-                           (or (alist-get 'label tab) id)
-                           (or (alist-get 'pane_count tab) 0))
-                   (herdr-tree--rollup (alist-get 'agent_status tab))))
-          (herdr-tree--panes-in-tab state id width))))
-
-(defun herdr-tree--tabs-in-workspace (state workspace-id)
-  "Return TABs of WORKSPACE-ID in STATE, in cache order."
-  (seq-filter (lambda (tab)
-                (equal workspace-id (alist-get 'workspace_id tab)))
-              (herdr-state-tabs state)))
 
 (defun herdr-tree-linked-worktree-p (worktree)
   "Return non-nil when WORKTREE is a linked worktree, not the main checkout.
@@ -479,8 +443,8 @@ The pane count rides in parentheses on the label — `repo (3)\\=' — rather
 than as a `3 panes\\=' column of its own.  That is magit's idiom for the
 same thing (`Unstaged changes (1)\\='), and it is the shape that reads as
 a container: a heading that owns a countable number of children, told
-apart at a glance from the leaf rows that own none.  The tab and
-worktrees headings are counted the same way for the same reason.
+apart at a glance from the leaf rows that own none.  The worktrees
+heading is counted the same way for the same reason.
 
 The directory is abbreviated with `abbreviate-file-name\\=' — the `~/\\='
 a known-project row already shows for free, since
@@ -488,19 +452,7 @@ a known-project row already shows for free, since
 `herdr-state-workspace-directory\\=' derives this one from a pane\\='s
 `cwd\\=' and had nothing shortening it."
   (let* ((id (alist-get 'workspace_id workspace))
-         (tabs (herdr-tree--tabs-in-workspace state id))
-         ;; One tab is not structure.  Unnamed tabs are labelled by
-         ;; number, so keeping the level would indent every pane behind a
-         ;; heading that reads "1".
-         ;; Panes whose tab the cache does not hold sit alongside the tab
-         ;; nodes rather than being dropped with the tab they name.
-         (children (append (if (= (length tabs) 1)
-                               (herdr-tree--panes-in-tab
-                                state (alist-get 'tab_id (car tabs)) width)
-                             (mapcar (lambda (tab)
-                                       (herdr-tree--tab-node state tab width))
-                                     tabs))
-                           (herdr-tree--orphan-panes-in-workspace state id width)))
+         (children (herdr-tree--panes-in-workspace state id width))
          (worktree-node (herdr-tree--worktrees-node id worktrees worktree-width)))
     (list 'herdr-workspace id
           (string-trim-right
@@ -599,7 +551,7 @@ above.  VALUE is a stable placeholder string rather than nil, because a
   "Return the dispatcher tree for STATE.
 
 Each node is the list (TYPE VALUE LINE CHILDREN).  TYPE is one of
-`herdr-workspace\\=', `herdr-tab\\=', `herdr-pane\\=', `herdr-worktrees\\=',
+`herdr-workspace\\=', `herdr-pane\\=', `herdr-worktrees\\=',
 `herdr-worktree\\=', `herdr-known-project\\=' or `herdr-known-projects\\=';
 VALUE is the id a command needs; LINE is the rendered text; CHILDREN is a
 list of nodes.
