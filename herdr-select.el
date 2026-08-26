@@ -249,9 +249,10 @@ you last went to — which could be a different agent entirely."
 (defun herdr-select-panes-with-buffers ()
   "Return pane ids that currently have an Emacs buffer.
 
-Under `agent-windows' a pane without an agent has no buffer, so it is
-not something a buffer switcher can switch to.  Under `session' every
-pane shares the one herdr buffer, so all of them qualify."
+Under `agent-windows' a pane not yet attached to has no buffer — every
+pane is attachable, but attaching is lazy, on demand — so it is not
+something a buffer switcher can switch to.  Under `session' every pane
+shares the one herdr buffer, so all of them qualify."
   (seq-filter (lambda (id)
                 (buffer-live-p (herdr-term-buffer-for-pane id)))
               (herdr-state-pane-ids (herdr-state-current))))
@@ -268,7 +269,7 @@ pane shares the one herdr buffer, so all of them qualify."
 Listing panes with no buffer would put entries in a buffer switcher that
 it cannot switch to — they appear in the list, and selecting one leaves
 you where you were.  Panes without buffers stay reachable through the
-transient, which can offer to adopt them."
+transient, which attaches to any of them directly."
   `(:name "herdr pane"
     :narrow ?h
     :category herdr-pane

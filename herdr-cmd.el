@@ -68,17 +68,15 @@ Each entry is (COMMAND METHOD PARAM...).  Verified against the live
 schema by the drift test.")
 
 (defcustom herdr-adopt-created-shells t
-  "Whether panes created from Emacs are adopted so they get a buffer.
+  "Obsolete and unread: no code path consults this variable any more.
 
-Only relevant under `agent-windows', where herdr refuses to attach to a
-pane that has no agent, so a newly created shell pane would otherwise be
-invisible.
-
-The rule is deliberately about provenance rather than about shells in
-general: a pane you asked herdr.el to create is one you want to see, so
-it is adopted.  Panes that appear from anywhere else are left alone
-rather than silently claimed on your behalf — use `herdr-adopt-shell'
-for those.  Set this to nil to be told instead of followed."
+It used to decide whether panes created from Emacs were adopted so they
+got a buffer.  Every pane is attachable under `agent-windows' since
+herdr 0.8.2, so a newly created pane is shown the same way regardless —
+there is nothing left to opt into.  Kept only so a config that still
+sets it does not error; use `herdr-adopt-shell' if you want a pane
+labelled and reported as an agent, which is unrelated to whether it
+gets a buffer."
   :type 'boolean
   :group 'herdr)
 (make-obsolete-variable 'herdr-adopt-created-shells nil "0.2.0")
