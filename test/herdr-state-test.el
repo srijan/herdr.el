@@ -446,32 +446,26 @@ arrays."
     (should (equal (herdr-state-focused-pane-id state)
                    (herdr-state-focused-pane-id b)))))
 
-;;; Adopted shells
+;;; Attachability
 
-(ert-deftest herdr-state-attachable-includes-adopted-shells ()
-  "Reconciliation attaches anything herdr will accept, shells included."
+(ert-deftest herdr-state-attachable-is-every-pane ()
+  "herdr terminal attach takes any pane, agent or not."
   (let ((state (herdr-state-from-snapshot
                 `((panes . (((pane_id . "w1:p1") (agent . "claude"))
                             ((pane_id . "w1:p2") (agent . "shell"))
                             ((pane_id . "w1:p3") (agent . nil))))))))
-    (should (equal '("w1:p1" "w1:p2")
+    (should (equal '("w1:p1" "w1:p2" "w1:p3")
                    (mapcar (lambda (p) (alist-get 'pane_id p))
                            (herdr-state-attachable state))))))
 
-(ert-deftest herdr-state-agents-excludes-adopted-shells ()
-  "A shell is not an agent; counting it would inflate the modeline."
+(ert-deftest herdr-state-agents-is-every-pane-with-an-agent ()
+  "An agent is a process herdr recognizes inside a pane — nothing more."
   (let ((state (herdr-state-from-snapshot
                 `((panes . (((pane_id . "w1:p1") (agent . "claude"))
-                            ((pane_id . "w1:p2") (agent . "shell"))))))))
+                            ((pane_id . "w1:p2") (agent . nil))))))))
     (should (equal '("w1:p1")
                    (mapcar (lambda (p) (alist-get 'pane_id p))
                            (herdr-state-agents state))))))
-
-(ert-deftest herdr-state-shell-pane-p-keys-off-the-configured-name ()
-  (let ((herdr-shell-agent-name "adopted"))
-    (should (herdr-state-shell-pane-p '((agent . "adopted"))))
-    (should-not (herdr-state-shell-pane-p '((agent . "shell"))))
-    (should-not (herdr-state-shell-pane-p '((agent . nil))))))
 
 (ert-deftest herdr-state-pane-directory-prefers-cwd ()
   (should (equal "/tmp/" (herdr-state-pane-directory
