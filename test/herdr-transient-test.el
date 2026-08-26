@@ -214,16 +214,6 @@ roundabout way to reach a pane."
     (when (eq 'herdr-workspace-focus (plist-get node :command))
       (should-not (plist-get node :if)))))
 
-(ert-deftest herdr-transient-adoption-is-offered-and-hidden-under-session ()
-  "Adoption exists to make a pane attachable under `agent-windows'.
-The session TUI already shows every pane, so adopting there only adds a
-fake agent row to herdr's own sidebar."
-  (let ((commands (mapcar (lambda (n) (plist-get n :command))
-                          (herdr-transient-test--all-suffix-plists
-                           'herdr-transient-pane))))
-    (dolist (want '(herdr-adopt-shell herdr-release-shell))
-      (should (equal (list want t) (list want (and (memq want commands) t)))))))
-
 (ert-deftest herdr-transient-every-curated-command-is-reachable ()
   "Every command in the registry should be on a menu or deliberately
 listed here as reachable only through `herdr-call'.  Catches entries
@@ -237,8 +227,12 @@ that were meant to be added and silently were not."
                                            (herdr-transient-test--suffixes p)))
                                  prefixes)))
          ;; Reachable only via `herdr-call', by choice.
+         ;; `herdr-adopt-shell' and `herdr-release-shell' are obsolete
+         ;; (every pane is attachable now) and deliberately dropped from
+         ;; the menu, though the registry keeps their entries.
          (deliberately-absent '(herdr-pane-send-text herdr-agent-start
-                                herdr-notification-show herdr-pane-swap))
+                                herdr-notification-show herdr-pane-swap
+                                herdr-adopt-shell herdr-release-shell))
          (missing nil))
     (dolist (entry herdr-cmd-methods)
       (let ((command (car entry)))

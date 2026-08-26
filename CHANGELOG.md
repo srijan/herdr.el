@@ -14,7 +14,7 @@ This entry covers the whole divergence from
 ### Added
 
 - **A dashboard.** The buffer `*herdr-agents*` now shows the session as a foldable tree of
-  workspaces, tabs and panes. Every command is reachable from it, and each command acts on the
+  workspaces and panes. Every command is reachable from it, and each command acts on the
   item under point. Two new files hold it: `herdr-tree.el` builds the tree as data, and
   `herdr-dispatch.el` renders the tree with `magit-section`.
 - **An `Inactive` section.** The dashboard lists each `project.el` project that has no open
@@ -29,7 +29,7 @@ This entry covers the whole divergence from
   sizes itself to the widest branch in the session.
 - **`herdr-menu`.** The command runs the same start sequence as `herdr` but ends on the compact
   menu. Use it from inside a terminal buffer, where a full-window dashboard is the wrong result.
-- **A test suite.** 473 hermetic tests across 16 files, and a live suite that includes a schema
+- **A test suite.** 478 hermetic tests across 16 files, and a live suite that includes a schema
   drift test.
 - **Dependency resolution for the build.** `test/herdr-deps.el` finds `magit-section` and
   `transient` in the directories of `elpaca`, `package.el` and `straight.el`. A missing
@@ -48,6 +48,15 @@ This entry covers the whole divergence from
   the real path.
 - **`herdr-state-workspace-for-directory` is now public.** Both `herdr-project` and the
   `Inactive` section use it.
+- **The dashboard tree flattened to two levels.** Workspace and pane only; a tab no longer gets
+  its own row, since herdr's own attach client, `herdr terminal attach`, now takes any pane and
+  no longer needs an agent first. `n` creates a terminal as a fresh tab directly, and `t` is gone
+  from the dashboard keymap; `herdr-tab-create` and the tab commands remain reachable from
+  `herdr-transient-tab` for TUI users.
+- **Shell adoption no longer controls whether a pane is attachable.** Every pane already is.
+  `herdr-adopt-shell` and `herdr-release-shell` still work, and still put a pane in herdr's own
+  agent list — the modeline count, the agent picker and notifications — but nothing needs them
+  for a shell pane to get an Emacs buffer.
 
 ### Removed
 

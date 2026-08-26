@@ -82,14 +82,17 @@
     (should (herdr-state-pane herdr-state--current "w1:p7"))
     (should (= 1 (length (herdr-state-agents herdr-state--current))))))
 
-(ert-deftest herdr-state-pane-subscriptions-cover-attachable-panes-only ()
-  "Connection B names the attachable panes, not every pane.
+(ert-deftest herdr-state-pane-subscriptions-cover-agent-panes-only ()
+  "Connection B names the agent panes, not every pane.
 
 Each per-pane subscription makes the herdr server poll a `pane.get'
-into its main loop every 100ms for as long as it lives, so subscribing
-plain shells paid a steady server-side cost to watch statuses nothing
-displays.  Adopted shells stay in: they are fronted with buffers, the
-same slice the terminal backend reconciles against."
+into its main loop every 100ms for as long as it lives, and
+`pane.agent_status_changed' has nothing to say about a pane running no
+agent, so the watch set is `herdr-state-agents', not every pane.
+Buffers are a separate, wider slice: `herdr-term-reconcile' fronts
+every pane in `herdr-state-attachable' with one, agent or not, since
+`herdr terminal attach' needs no reported agent.  A plain shell can
+therefore have a buffer without ever appearing on this connection."
   (let ((herdr-state--current
          (herdr-state-from-snapshot
           '((panes . (((pane_id . "w1:p1") (agent . "claude"))

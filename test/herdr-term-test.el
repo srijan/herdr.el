@@ -29,14 +29,14 @@
                    (mapcar (lambda (p) (alist-get 'pane_id p)) (car result))))
     (should (null (cdr result)))))
 
-(ert-deftest herdr-term-reconcile-ignores-panes-without-an-agent ()
-  "Only detected agents are attachable; plain shells get no buffer."
+(ert-deftest herdr-term-reconcile-offers-every-pane ()
+  "TO-CREATE covers agentless panes too; attach needs no agent."
   (let* ((state (herdr-term-test--state
                  (herdr-term-test--pane "w1:p1" "claude")
                  (herdr-term-test--pane "w1:p2")))
          (result (herdr-term-reconcile state nil)))
-    (should (= 1 (length (car result))))
-    (should (equal "w1:p1" (alist-get 'pane_id (car (car result)))))))
+    (should (equal '("w1:p1" "w1:p2")
+                   (mapcar (lambda (p) (alist-get 'pane_id p)) (car result))))))
 
 (ert-deftest herdr-term-reconcile-reaps-buffers-whose-pane-is-gone ()
   (let* ((state (herdr-term-test--state
@@ -46,12 +46,13 @@
     (should (null (car result)))
     (should (equal '(:buf9) (cdr result)))))
 
-(ert-deftest herdr-term-reconcile-reaps-buffers-whose-agent-disappeared ()
-  "A pane that loses its agent is no longer attachable, so reap it."
+(ert-deftest herdr-term-reconcile-reaps-only-when-the-pane-is-gone ()
+  "A pane losing its agent keeps its buffer; only a closed pane is reaped."
   (let* ((state (herdr-term-test--state (herdr-term-test--pane "w1:p1")))
-         (result (herdr-term-reconcile state '(("w1:p1" . :buf1)))))
+         (result (herdr-term-reconcile state '(("w1:p1" . :buf1)
+                                               ("w1:p9" . :buf9)))))
     (should (null (car result)))
-    (should (equal '(:buf1) (cdr result)))))
+    (should (equal '(:buf9) (cdr result)))))
 
 (ert-deftest herdr-term-reconcile-is-stable-when-nothing-changed ()
   (let* ((state (herdr-term-test--state
@@ -112,16 +113,15 @@ nobody who renames agents today sees their buffers change."
     (should (equal "*herdr: claude@srijan.ch*"
                    (herdr-term-agent-buffer-name state pane)))))
 
-(ert-deftest herdr-term-agent-buffer-name-reads-an-adopted-shell-naturally ()
-  "An adopted shell's agent field is already the shell placeholder name,
-so it needs no special case to read as `shell@WORKSPACE'."
+(ert-deftest herdr-term-agent-buffer-name-reads-a-plain-shell-naturally ()
+  "A plain pane carries no `agent' field at all — `herdr terminal attach'
+needs no detected agent — so the kind fallback of `shell' is what makes
+it read as `shell@WORKSPACE' rather than `agent@WORKSPACE'."
   (let* ((state (herdr-state-from-snapshot
-                 `((workspaces . (((workspace_id . "w7") (label . ".emacs.d"))))
+                 '((workspaces . (((workspace_id . "w7") (label . ".emacs.d"))))
                    (panes . (((pane_id . "w7:p9")
-                              (agent . ,herdr-shell-agent-name)
                               (workspace_id . "w7")))))))
          (pane (herdr-state-pane state "w7:p9")))
-    (should (herdr-state-shell-pane-p pane))
     (should (equal "*herdr: shell@.emacs.d*"
                    (herdr-term-agent-buffer-name state pane)))))
 
@@ -137,7 +137,7 @@ so it needs no special case to read as `shell@WORKSPACE'."
 
 (ert-deftest herdr-term-agent-buffer-name-has-a-sensible-floor ()
   "Neither a kind nor a workspace must not produce `*herdr: @*'."
-  (should (equal "*herdr: agent*"
+  (should (equal "*herdr: shell*"
                  (herdr-term-agent-buffer-name
                   (herdr-state-empty) '((pane_id . "p1"))))))
 
@@ -178,17 +178,22 @@ to make that impossible."
             (kill-buffer created)))
       (kill-buffer existing))))
 
-(ert-deftest herdr-term-attach-args-target-the-pane ()
-  (should (equal '("agent" "attach" "w1:p1")
-                 (herdr-term-attach-args "w1:p1" nil)))
-  (should (equal '("agent" "attach" "w1:p1" "--takeover")
-                 (herdr-term-attach-args "w1:p1" t))))
+(ert-deftest herdr-term-attach-args-target-the-terminal-stream ()
+  "Attach goes through `herdr terminal attach', which takes any pane."
+  (should (equal '("terminal" "attach" "t7")
+                 (herdr-term-attach-args '((pane_id . "w1:p1") (terminal_id . "t7")) nil)))
+  (should (equal '("terminal" "attach" "t7" "--takeover")
+                 (herdr-term-attach-args '((pane_id . "w1:p1") (terminal_id . "t7")) t))))
+
+(ert-deftest herdr-term-attach-args-refuses-a-pane-without-a-terminal-id ()
+  (should-error (herdr-term-attach-args '((pane_id . "w1:p1")) nil)
+                :type 'user-error))
 
 (ert-deftest herdr-term-session-args-are-empty ()
   "The session backend runs bare herdr, which attaches the whole session."
   (should (equal nil (herdr-term-session-args))))
 
-;;; Adopted shells and directory tracking
+;;; Directory tracking
 
 (ert-deftest herdr-term-reconcile-creates-a-buffer-for-an-adopted-shell ()
   "An adopted shell is attachable, so it must get a buffer."
@@ -198,13 +203,6 @@ to make that impossible."
          (result (herdr-term-reconcile state nil)))
     (should (equal '("w1:p1" "w1:p2")
                    (mapcar (lambda (p) (alist-get 'pane_id p)) (car result))))))
-
-(ert-deftest herdr-term-reconcile-reaps-a-released-shell ()
-  "Releasing the adopted agent makes the pane unattachable again."
-  (let* ((state (herdr-term-test--state (herdr-term-test--pane "w1:p2" nil)))
-         (result (herdr-term-reconcile state '(("w1:p2" . :buf)))))
-    (should (null (car result)))
-    (should (equal '(:buf) (cdr result)))))
 
 (ert-deftest herdr-term-set-directory-follows-the-pane ()
   (with-temp-buffer

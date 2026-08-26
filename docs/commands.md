@@ -105,9 +105,9 @@ server cannot find a repository that has no open workspace.
 | `herdr-agent-focus` | `agent.focus` | Focus an agent and select its buffer. |
 | `herdr-agent-explain` | `agent.explain` | Show how herdr detected the agent. |
 
-The picker of `herdr-agent-start` offers a last entry that reads `＋ new shell pane`. That entry
-splits the current pane and starts the agent there. A session with no free pane is therefore
-never a dead end.
+The picker of `herdr-agent-start` offers a last entry that reads `＋ new terminal`. That entry
+creates a fresh tab and starts the agent there. A session with no free pane is therefore never a
+dead end.
 
 `herdr-agent-wait` does not block Emacs.
 
@@ -115,8 +115,8 @@ never a dead end.
 
 | Command | Method | Function |
 |---|---|---|
-| `herdr-adopt-shell` | `pane.report_agent` | Give a plain shell pane a buffer in Emacs. |
-| `herdr-release-shell` | `pane.release_agent` | Undo the adoption and remove the buffer. |
+| `herdr-adopt-shell` | `pane.report_agent` | Make herdr watch a plain shell pane as an agent. |
+| `herdr-release-shell` | `pane.release_agent` | Undo the report. |
 | `herdr-notification-show` | `notification.show` | Show a notification on the herdr side. |
 
 Read the "Adopting a shell" section of the main [README](../README.md) before you use these two

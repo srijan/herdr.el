@@ -17,7 +17,7 @@
 ;; Two event connections, for a measured reason.  Connection A carries
 ;; the global subscriptions, which need no pane id and are never rebuilt.
 ;; Connection B carries per-pane `pane.agent_status_changed'
-;; subscriptions for the attachable panes and is rebuilt whenever that
+;; subscriptions for the agent panes and is rebuilt whenever that
 ;; set changes.
 ;;
 ;; Connection B is the status channel, and it is prompt by
@@ -140,31 +140,30 @@ first line of defence.")
             (herdr-state-panes state)))
 
 (defcustom herdr-shell-agent-name "shell"
-  "Agent name reported for shell panes adopted by `herdr-adopt-shell'.
-
-herdr will only attach to a pane that has a reported agent, so adopting
-a plain shell means reporting one.  Panes carrying this name are treated
-as terminals rather than agents: they get a buffer, but they are kept
-out of the modeline count, the agent picker, and notifications, because
-a shell has no lifecycle worth reporting on."
+  "Agent name `herdr-adopt-shell' used to report for plain shells.
+Obsolete: since herdr 0.8.2, `herdr terminal attach' takes any pane, so
+nothing needs to be reported to make a pane attachable."
   :type 'string
   :group 'herdr)
+(make-obsolete-variable 'herdr-shell-agent-name nil "0.2.0")
 
 (defun herdr-state-shell-pane-p (pane)
-  "Return non-nil when PANE is a shell adopted via `herdr-shell-agent-name'."
-  (equal (alist-get 'agent pane) herdr-shell-agent-name))
+  "Return non-nil when PANE was adopted via `herdr-adopt-shell'."
+  (equal (alist-get 'agent pane) (bound-and-true-p herdr-shell-agent-name)))
+(make-obsolete 'herdr-state-shell-pane-p
+               "test (alist-get 'agent pane) instead; every pane is attachable now."
+               "0.2.0")
 
 (defun herdr-state-attachable (state)
-  "Return the panes in STATE that herdr will let a client attach to.
-That is every pane with a reported agent, adopted shells included."
-  (seq-filter (lambda (pane) (alist-get 'agent pane))
-              (herdr-state-panes state)))
+  "Return the panes in STATE a terminal client can attach to.
+`herdr terminal attach' takes any pane's raw terminal stream, so that
+is every pane; the function survives as the single place that says so."
+  (herdr-state-panes state))
 
 (defun herdr-state-agents (state)
-  "Return the panes in STATE running a real agent.
-Adopted shells are excluded; see `herdr-state-attachable' for the set
-that gets terminal buffers."
-  (seq-remove #'herdr-state-shell-pane-p (herdr-state-attachable state)))
+  "Return the panes in STATE with a detected or reported agent."
+  (seq-filter (lambda (pane) (alist-get 'agent pane))
+              (herdr-state-panes state)))
 
 (defun herdr-state-pane-directory (pane)
   "Return PANE's working directory as a directory name, or nil.
@@ -647,7 +646,7 @@ navigated to.  `pane.list\\=' is authoritative and settles it either
 way.
 
 Realigning connection B afterwards, not before: reconciling is what
-makes the pane set final, and B subscribes the attachable slice of it."
+makes the pane set final, and B subscribes the agent slice of it."
   (setq herdr-state--settle-timer nil)
   (when herdr-state--running
     ;; The replayed pane events have already queued a debounced rebuild
@@ -739,16 +738,17 @@ subscribe, so a failed rebuild keeps looking stale and is retried.")
 (defun herdr-state--watched-pane-ids ()
   "Return ids of the panes connection B should subscribe to.
 
-The attachable panes, not every pane.  Each per-pane subscription makes
-the herdr server dispatch a `pane.get\\=' into its main loop every 100ms
-for as long as the subscription lives (herdr 0.8.2,
-api/subscriptions.rs) — subscribing every pane meant a session with a
-dozen shells paid ~120 server-side requests a second to watch statuses
-nothing here displays.  Attachable is the same slice the terminal
-backend fronts with buffers, so B watches exactly the panes whose
-transitions have an audience."
+The agent panes, not every pane — `herdr-state-attachable' widened to
+every pane once `herdr terminal attach' stopped requiring a reported
+agent, but `pane.agent_status_changed' still only has something to say
+about a pane running an agent.  Each per-pane subscription makes the
+herdr server dispatch a `pane.get\\=' into its main loop every 100ms for
+as long as the subscription lives (herdr 0.8.2, api/subscriptions.rs) —
+subscribing every pane meant a session with a dozen plain shells paid
+~120 server-side requests a second to watch statuses nothing here
+displays."
   (mapcar (lambda (pane) (alist-get 'pane_id pane))
-          (herdr-state-attachable herdr-state--current)))
+          (herdr-state-agents herdr-state--current)))
 
 (defun herdr-state--pane-subscriptions ()
   "Return per-pane status subscriptions for the watched panes.
@@ -830,7 +830,7 @@ then."
   "Rebuild connection B, debounced, when the watched pane set drifted.
 
 A set comparison rather than a dispatch on event kind, because B now
-subscribes the attachable panes only, and what changes that set is not
+subscribes the agent panes only, and what changes that set is not
 just pane lifecycle: `pane_agent_detected\\=' gives a pane an agent or
 takes one away, and a reconcile can relabel a pane wholesale.  When
 this dispatched on kind, `pane_agent_detected\\=' was deliberately

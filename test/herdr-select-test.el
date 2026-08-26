@@ -226,21 +226,6 @@ follow Emacs."
     (should (equal '("w1:p2" "w1:p3")
                    (herdr-select--available-shell-ids (herdr-state-current))))))
 
-(ert-deftest herdr-select-available-shell-excludes-adopted-shells ()
-  "An adopted shell runs no agent, but it does carry a reported one, and
-`agent.start' refuses every pane that carries one — measured against the
-server, which answers `agent_pane_busy' for an adopted `shell' exactly as
-it does for a real agent.  Offering it therefore only buys a rejection.
-The create-new entry is the way out, not this pane."
-  (let ((herdr-shell-agent-name "herdr-shell"))
-    (herdr-select-test-with-state
-        `(((pane_id . "w1:p1") (agent . ,herdr-shell-agent-name))
-          ((pane_id . "w1:p2") (agent . "codex"))
-          ((pane_id . "w1:p3") (agent . nil)))
-      (should (equal '("w1:p3")
-                     (herdr-select--available-shell-ids
-                      (herdr-state-current)))))))
-
 ;;; A "create new" entry lets agent.start make its own shell
 
 (ert-deftest herdr-select-available-shell-offers-create-new-last ()
@@ -300,8 +285,8 @@ Annotated through a copy of the marker, not the marker itself:
 the annotator would pass against the constant here and answer nothing at
 all in use."
   (should (string-match-p
-           "split" (herdr-select--annotate-pane
-                    (copy-sequence herdr-select-create-new-shell)))))
+           "tab" (herdr-select--annotate-pane
+                  (copy-sequence herdr-select-create-new-shell)))))
 
 ;;; Every glyph, and the two annotators nothing exercised
 
