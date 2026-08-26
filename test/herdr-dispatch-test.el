@@ -818,8 +818,7 @@ this branch exists to prevent — hence the ordering assertion."
   (goto-char (point-min))
   (search-forward text)
   (herdr-dispatch-test-with-recorders
-      (herdr-pane-focus herdr-tab-focus herdr-workspace-focus
-                        herdr-dispatch-open-worktree)
+      (herdr-pane-focus herdr-workspace-focus herdr-dispatch-open-worktree)
     (herdr-dispatch-visit)))
 
 (ert-deftest herdr-dispatch-visit-goes-to-the-thing-at-point ()
@@ -827,14 +826,16 @@ this branch exists to prevent — hence the ordering assertion."
 
 A pane line sits inside a workspace, and a worktree line inside one too,
 so a resolver checked in the wrong order would focus the workspace from
-both and still look like it worked."
+both and still look like it worked.  Two panes from different workspaces
+are checked, so a resolver that always answers the first pane still
+looks wrong."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (should (equal '((herdr-pane-focus "w1:p2"))
                    (herdr-dispatch-test--visit-from "w1:p2")))
     (should (equal '((herdr-dispatch-open-worktree))
                    (herdr-dispatch-test--visit-from "open as w2")))
-    (should (equal '((herdr-tab-focus "w2:t2"))
-                   (herdr-dispatch-test--visit-from "spike")))
+    (should (equal '((herdr-pane-focus "w2:p1"))
+                   (herdr-dispatch-test--visit-from "w2:p1")))
     (should (equal '((herdr-workspace-focus "w2"))
                    (herdr-dispatch-test--visit-from "api")))))
 
@@ -877,7 +878,7 @@ them apart."
   (goto-char (point-min))
   (search-forward text)
   (herdr-dispatch-test-with-recorders
-      (herdr-rpc-call herdr-pane-focus herdr-tab-focus herdr-workspace-focus)
+      (herdr-rpc-call herdr-pane-focus herdr-workspace-focus)
     (herdr-dispatch-focus)))
 
 (ert-deftest herdr-dispatch-focus-stays-in-emacs ()
@@ -885,12 +886,14 @@ them apart."
 
 `herdr-pane-focus' and friends move Emacs as well; `f' is the verb for
 when you want the terminal to move and Emacs to stay put, so it must not
-be implemented in terms of them."
+be implemented in terms of them.  Two panes from different workspaces are
+checked alongside a workspace, so a resolver that always answers the
+same pane still looks wrong."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (should (equal '((herdr-rpc-call "pane.focus" ((pane_id . "w1:p2"))))
                    (herdr-dispatch-test--focus-from "w1:p2")))
-    (should (equal '((herdr-rpc-call "tab.focus" ((tab_id . "w2:t2"))))
-                   (herdr-dispatch-test--focus-from "spike")))
+    (should (equal '((herdr-rpc-call "pane.focus" ((pane_id . "w2:p1"))))
+                   (herdr-dispatch-test--focus-from "w2:p1")))
     (should (equal '((herdr-rpc-call "workspace.focus"
                                      ((workspace_id . "w2"))))
                    (herdr-dispatch-test--focus-from "api")))))
@@ -2092,17 +2095,6 @@ these rows are children of it, not siblings of the workspaces above."
         (herdr-dispatch-rename)
         (should (equal '(workspace "new" "w1") called))))))
 
-(ert-deftest herdr-dispatch-rename-on-a-tab-renames-the-tab ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "spike")
-    (should (equal '((herdr-tab-rename "new" "w2:t2"))
-                   (cl-letf (((symbol-function 'read-string)
-                              (lambda (&rest _) "new")))
-                     (herdr-dispatch-test-with-recorders
-                         (herdr-pane-rename herdr-tab-rename
-                                            herdr-workspace-rename)
-                       (herdr-dispatch-rename)))))))
-
 (ert-deftest herdr-dispatch-rename-prefers-the-pane-over-its-tab-and-workspace ()
   "A pane nested under both a tab and a workspace must still rename the
 pane: only `w2:p1\\=' has all three ancestors to distinguish a `cond\\=' that
@@ -2142,15 +2134,6 @@ from, a different object under a name the user never aimed at."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (search-forward "w2:p1")
     (should (equal '((herdr-pane-close "w2:p1"))
-                   (herdr-dispatch-test-with-recorders
-                       (herdr-pane-close herdr-tab-close herdr-workspace-close
-                                         herdr-worktree-remove)
-                     (herdr-dispatch-close))))))
-
-(ert-deftest herdr-dispatch-close-on-a-tab-closes-the-tab ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "spike")
-    (should (equal '((herdr-tab-close "w2:t2"))
                    (herdr-dispatch-test-with-recorders
                        (herdr-pane-close herdr-tab-close herdr-workspace-close
                                          herdr-worktree-remove)
@@ -2359,64 +2342,29 @@ message points at TAB, which is the heading's one real action."
 
 ;;; Create
 
-(ert-deftest herdr-dispatch-create-tab-focuses-the-workspace-first ()
-  "tab.create takes no workspace_id, so the workspace has to be focused."
-  (let ((calls nil))
+(ert-deftest herdr-dispatch-create-pane-creates-a-tab-in-the-workspace-at-point ()
+  "tab.create takes a workspace_id rather than a pane to split into."
+  (let ((params nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (method params) (push (cons method params) calls) nil))
-              ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore)
-              ((symbol-function 'transient-args) (lambda (_) nil))
-              ((symbol-function 'read-string) (lambda (&rest _) "")))
-      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-        (search-forward "herdr.el")
-        (herdr-dispatch-create-tab)
-        (should (equal '("workspace.focus" "tab.create")
-                       (reverse (mapcar #'car calls))))))))
-
-(ert-deftest herdr-dispatch-create-pane-splits-a-pane-of-the-tab ()
-  "pane.split needs a target_pane_id; a tab is not one."
-  (let ((target nil))
-    (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method params)
-                 (setq target (alist-get 'target_pane_id params))
-                 nil))
-              ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore)
-              ((symbol-function 'transient-args) (lambda (_) nil)))
+               (lambda (_method p) (setq params p) nil))
+              ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
       (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
         (search-forward "w1:p2")
         (herdr-dispatch-create-pane)
-        (should (equal "w1:p2" target))))))
+        (should (equal "w1" (alist-get 'workspace_id params)))
+        (should (eq t (alist-get 'focus params)))))))
 
-(ert-deftest herdr-dispatch-create-pane-resolves-a-tab-to-one-of-its-panes ()
-  "A tab section is not a pane_id itself; splitting it must target the
-pane_id of one of its panes, found by matching tab_id in the live
-state's pane list — not the tab id passed straight through.  A real
-state is built via `herdr-state-from-snapshot\\=' rather than mocking
-`herdr-state-panes\\=', because that accessor is a `cl-defstruct\\=' slot
-reader inlined at the call site, which a `cl-letf\\=' override of its
-symbol-function does not reach."
-  (let ((target nil)
-        (herdr-state--current
+(ert-deftest herdr-dispatch-workspace-target-resolves-a-pane-through-its-own-record ()
+  "A pane row is not always nested under a `herdr-workspace\\=' section —
+the agents buffer can list panes on their own — so the fallback has to
+consult the pane's own `workspace_id\\=' rather than assume nesting."
+  (let ((herdr-state--current
          (herdr-state-from-snapshot
-          '((workspaces . (((workspace_id . "w2") (label . "api") (pane_count . 2))))
-            (tabs . (((tab_id . "w2:t1") (workspace_id . "w2") (label . "main"))
-                     ((tab_id . "w2:t2") (workspace_id . "w2") (label . "spike"))))
-            (panes . (((pane_id . "w2:p1") (agent . "claude")
-                       (agent_status . "working")
-                       (workspace_id . "w2") (tab_id . "w2:t1"))
-                      ((pane_id . "w2:p2") (agent . "gemini")
-                       (agent_status . "idle")
-                       (workspace_id . "w2") (tab_id . "w2:t2"))))))))
-    (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method params)
-                 (setq target (alist-get 'target_pane_id params))
-                 nil))
-              ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore)
-              ((symbol-function 'transient-args) (lambda (_) nil)))
-      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-        (search-forward "spike")
-        (herdr-dispatch-create-pane)
-        (should (equal "w2:p2" target))))))
+          '((panes . (((pane_id . "w9:p1") (workspace_id . "w9"))))))))
+    (herdr-dispatch-test-with-buffer
+        '((herdr-pane "w9:p1" "orphan pane w9:p1" nil))
+      (search-forward "w9:p1")
+      (should (equal "w9" (herdr-dispatch--workspace-target))))))
 
 (ert-deftest herdr-dispatch-create-reads-transient-arguments ()
   (should (equal "main" (herdr-dispatch--arg '("--base=main") "--base")))
@@ -2529,24 +2477,23 @@ the transient's arguments when set, skipping both prompts."
         (should (equal '("scout" "claude" "w1:p3") started))
         (should-not (assoc "pane.split" calls))))))
 
-(ert-deftest herdr-dispatch-create-agent-splits-when-the-pane-at-point-is-taken ()
-  "`agent.start\\=' refuses any pane carrying a reported agent — the
-adopted-shell label included, which is the `agent_pane_busy\\=' the user
-hit by pressing `a\\=' on a `shell*\\=' pane.  So a taken pane is not a
-target to retry but a pane to split beside, and the agent starts in what
-the split returns.
+(ert-deftest herdr-dispatch-create-agent-creates-a-tab-when-the-pane-at-point-is-taken ()
+  "`agent.start\\=' refuses any pane carrying a reported agent, which is
+the `agent_pane_busy\\=' the user hit by pressing `a\\=' on a `shell*\\=' pane.
+So a taken pane is not a target to retry but a reason to create a fresh
+tab in its workspace, and the agent starts in the tab's root pane.
 
 Both flavours of taken are checked: a real agent, and an adopted shell
 that runs nothing at all.  The second is the reported case and the one a
 \"has no agent running\" test would wave through."
   (dolist (pane '("w1:p1" "w1:p2"))
-    (let ((target nil)
+    (let ((workspace-id nil)
           (started nil)
           (transient-current-command 'herdr-dispatch-create))
       (cl-letf (((symbol-function 'herdr-rpc-call)
                  (lambda (_method params)
-                   (setq target (alist-get 'target_pane_id params))
-                   '((pane . ((pane_id . "w1:p9"))))))
+                   (setq workspace-id (alist-get 'workspace_id params))
+                   '((root_pane . ((pane_id . "w1:p9"))))))
                 ((symbol-function 'herdr-agent-start)
                  (lambda (name kind pane) (setq started (list name kind pane))))
                 ((symbol-function 'transient-args)
@@ -2554,22 +2501,20 @@ that runs nothing at all.  The second is the reported case and the one a
         (herdr-dispatch-test-with-start-tree
           (search-forward pane)
           (herdr-dispatch-create-agent)
-          (should (equal pane target))
+          (should (equal "w1" workspace-id))
           (should (equal '("scout" "claude" "w1:p9") started)))))))
 
 (ert-deftest herdr-dispatch-create-agent-works-on-a-flattened-workspace-heading ()
   "A single-tab workspace is rendered with its tab level dropped, so its
-heading encloses no `herdr-tab\\=' section: a split target resolved
-through tabs alone finds nothing there and `a\\=' refuses on the commonest
-workspace shape in the buffer.  The workspace's own first pane is the
-answer."
-  (let ((target nil)
+heading encloses no `herdr-tab\\=' section: the workspace id is the
+heading's own value, not something resolved through a pane."
+  (let ((workspace-id nil)
         (started nil)
         (transient-current-command 'herdr-dispatch-create))
     (cl-letf (((symbol-function 'herdr-rpc-call)
                (lambda (_method params)
-                 (setq target (alist-get 'target_pane_id params))
-                 '((pane . ((pane_id . "w1:p9"))))))
+                 (setq workspace-id (alist-get 'workspace_id params))
+                 '((root_pane . ((pane_id . "w1:p9"))))))
               ((symbol-function 'herdr-agent-start)
                (lambda (name kind pane) (setq started (list name kind pane))))
               ((symbol-function 'transient-args)
@@ -2577,16 +2522,15 @@ answer."
       (herdr-dispatch-test-with-start-tree
         (search-forward "herdr.el")
         (herdr-dispatch-create-agent)
-        (should (equal "w1:p1" target))
+        (should (equal "w1" workspace-id))
         (should (equal '("scout" "claude" "w1:p9") started))))))
 
-(ert-deftest herdr-dispatch-create-agent-never-adopts-the-pane-it-creates ()
-  "Adoption is `pane.report_agent\\=', and a pane with a reported agent is
-the one thing `agent.start\\=' will not take — so adopting the pane just
-split would reintroduce the very rejection this path exists to avoid.
-Asserted against the wire, because the failure is a call that should not
-be made and no return value would show it: the whole conversation is the
-split, the start, and the focus that surfaces it."
+(ert-deftest herdr-dispatch-create-agent-creates-a-tab-for-the-agent ()
+  "The wire is the assertion, because the failure this guards against —
+adopting the pane before starting the agent in it — is a call that
+should not be made rather than one whose return value would show it.
+The whole conversation is the tab creation, the start, and the focus
+that surfaces it, with no `pane.report_agent\\=' in between."
   (let ((methods nil)
         (transient-current-command 'herdr-dispatch-create))
     (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) t))
@@ -2597,15 +2541,15 @@ split, the start, and the focus that surfaces it."
             (let ((method (alist-get 'method req)))
               (push method methods)
               (cons (herdr-test-ok
-                     req (if (equal method "pane.split")
-                             '((type . "pane_info")
-                               (pane . ((pane_id . "w1:p9"))))
+                     req (if (equal method "tab.create")
+                             '((type . "tab_created")
+                               (root_pane . ((pane_id . "w1:p9"))))
                            '((type . "ok"))))
                     nil)))
         (herdr-dispatch-test-with-start-tree
           (search-forward "w1:p2")
           (herdr-dispatch-create-agent))))
-    (should (equal '("pane.split" "agent.start" "pane.focus")
+    (should (equal '("tab.create" "agent.start" "pane.focus")
                    (reverse methods)))))
 
 (ert-deftest herdr-dispatch-create-agent-defaults-the-name-to-the-kind ()
@@ -2630,35 +2574,25 @@ still the kind rather than an empty string on the wire."
           (should (equal '("codex" "codex" "w1:p3") started))
           (should (string-match-p "codex" prompt)))))))
 
-(ert-deftest herdr-dispatch-create-pane-splits-the-first-pane-of-a-flattened-workspace ()
+(ert-deftest herdr-dispatch-create-pane-creates-a-tab-from-a-flattened-workspace-heading ()
   "`herdr-tree\\=' renders a single-tab workspace flattened, dropping the
-tab level, so on such a heading there is no `herdr-tab\\=' section to walk
-to and a chain that ends at tabs finds nothing: `n\\=' answered \"no pane
-here to split\" on the commonest workspace shape there is.  Every other
-create-pane test uses a multi-tab fixture, which is exactly why this went
-unseen.
-
-A `user-error\\=' fails this test rather than being swallowed, since
-`herdr-dispatch--protect\\=' only handles `herdr-error\\='."
-  (let ((target nil))
+tab level, so on such a heading there is no `herdr-tab\\=' section
+underneath — but `tab.create\\=' needs a workspace id, not a pane, and the
+heading is that id directly."
+  (let ((params nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method params)
-                 (setq target (alist-get 'target_pane_id params))
-                 nil))
-              ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore)
-              ((symbol-function 'transient-args) (lambda (_) nil)))
+               (lambda (_method p) (setq params p) nil))
+              ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
       (herdr-dispatch-test-with-start-tree
         (search-forward "herdr.el")
         (herdr-dispatch-create-pane)
-        (should (equal "w1:p1" target))))))
+        (should (equal "w1" (alist-get 'workspace_id params)))))))
 
 (ert-deftest herdr-dispatch-binds-the-create-verbs ()
   (should (eq #'herdr-dispatch-create
               (lookup-key herdr-dispatch-mode-map "c")))
   (should (eq #'herdr-dispatch-create-workspace
               (lookup-key herdr-dispatch-mode-map "w")))
-  (should (eq #'herdr-dispatch-create-tab
-              (lookup-key herdr-dispatch-mode-map "t")))
   (should (eq #'herdr-dispatch-create-pane
               (lookup-key herdr-dispatch-mode-map "n")))
   (should (eq #'herdr-dispatch-create-agent
@@ -2666,7 +2600,6 @@ A `user-error\\=' fails this test rather than being swallowed, since
   (should (eq #'herdr-dispatch-create-worktree
               (lookup-key herdr-dispatch-mode-map "%")))
   (dolist (verb '(herdr-dispatch-create herdr-dispatch-create-workspace
-                                        herdr-dispatch-create-tab
                                         herdr-dispatch-create-pane
                                         herdr-dispatch-create-agent
                                         herdr-dispatch-create-worktree))

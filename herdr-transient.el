@@ -51,12 +51,6 @@ restarts, group the agents buffer, and back `herdr-project\=' — they are
 herdr's per-project unit, not TUI furniture."
   (eq herdr-terminal-backend 'session))
 
-;; Adoption is the mirror case.  It exists so `agent-windows\=' can show a
-;; pane herdr would otherwise refuse to attach to.  Under `session\=' the
-;; TUI already shows every pane, so adopting buys nothing and costs a row
-;; in herdr\='s own agents list for something that is not an agent — hence
-;; `:if-not herdr-transient-tui-p\=' on those three commands.
-
 (defun herdr-transient--origin-buffer ()
   "Return the buffer the menu was opened from.
 Descriptions are rendered with the transient\='s own buffer current, so
@@ -133,11 +127,7 @@ where magit puts the same two ideas."
    ["Manage"
     ("f" "focus"  herdr-pane-focus)
     ("R" "rename" herdr-pane-rename)
-    ("k" "close"  herdr-pane-close)]
-   ["Adopt"
-    :if-not herdr-transient-tui-p
-    ("A" "adopt shell"   herdr-adopt-shell)
-    ("U" "unadopt shell" herdr-release-shell)]])
+    ("k" "close"  herdr-pane-close)]])
 
 (transient-define-prefix herdr-transient-agent ()
   "Act on an agent."

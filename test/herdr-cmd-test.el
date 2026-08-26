@@ -139,30 +139,38 @@ Either shape names the pane just made."
                  (herdr-cmd--created-pane-id
                   '((type . "tab_created") (root_pane . ((pane_id . "w2:p0"))))))))
 
-(ert-deftest herdr-cmd-created-pane-is-adopted-so-it-gets-a-buffer ()
-  "Under `agent-windows' a new pane is a plain shell, which herdr will
-not attach to.  A pane the user asked herdr.el to create should still
-appear, so it is adopted."
-  (let ((herdr-terminal-backend 'agent-windows)
-        (herdr-adopt-created-shells t)
-        adopted selected)
-    ;; select-pane fails until adoption has run, then succeeds — the shell
-    ;; is not attachable until it wears an agent label.
-    (cl-letf (((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p)))
-              ((symbol-function 'herdr-term-select-pane)
-               (lambda (p) (setq selected p) adopted)))
-      (herdr-cmd--follow-new-pane "w1:p9")
-      (should (equal "w1:p9" adopted))
-      (should (equal "w1:p9" selected)))))
+(ert-deftest herdr-cmd-new-tab-pane-creates-a-tab-and-returns-its-root-pane ()
+  "tab.create carries the workspace to create in and focuses the result;
+the pane to show is its `root_pane', the same shape `pane.split' answers
+with `pane'."
+  (let (sent)
+    (herdr-test-with-server
+        (lambda (req)
+          (setq sent req)
+          (cons (herdr-test-ok req '((type . "tab_created")
+                                     (root_pane . ((pane_id . "wZ:p9")))))
+                nil))
+      (should (equal "wZ:p9" (herdr-cmd--new-tab-pane "wZ")))
+      (should (equal "tab.create" (alist-get 'method sent)))
+      (should (equal "wZ" (alist-get 'workspace_id (alist-get 'params sent))))
+      (should (eq t (alist-get 'focus (alist-get 'params sent)))))))
 
-(ert-deftest herdr-cmd-created-pane-is-not-adopted-when-disabled ()
+(ert-deftest herdr-cmd-follow-new-pane-selects-or-waits ()
+  "Under `agent-windows', when select cannot show the pane yet — the
+cache has not caught up with creation, announced on the event stream —
+the retry chain is armed instead of anything that would report an agent
+on the pane."
   (let ((herdr-terminal-backend 'agent-windows)
-        (herdr-adopt-created-shells nil)
-        adopted)
+        deferred reported)
     (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) nil))
-              ((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p))))
+              ((symbol-function 'herdr-cmd--select-pane-when-ready)
+               (lambda (pane) (setq deferred pane)))
+              ((symbol-function 'herdr-rpc-call)
+               (lambda (method &rest _)
+                 (when (equal method "pane.report_agent") (setq reported t)))))
       (herdr-cmd--follow-new-pane "w1:p9")
-      (should-not adopted))))
+      (should (equal "w1:p9" deferred))
+      (should-not reported))))
 
 (ert-deftest herdr-cmd-created-pane-is-left-alone-under-session ()
   "The session backend shows every pane already; adopting would only
@@ -171,16 +179,6 @@ add a spurious row to herdr's own agents list."
         (herdr-adopt-created-shells t)
         adopted)
     (cl-letf (((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p))))
-      (herdr-cmd--follow-new-pane "w1:p9")
-      (should-not adopted))))
-
-(ert-deftest herdr-cmd-existing-agent-pane-is-selected-not-adopted ()
-  "If the new pane already has an agent there is nothing to adopt."
-  (let ((herdr-terminal-backend 'agent-windows)
-        (herdr-adopt-created-shells t)
-        adopted)
-    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) t))
-              ((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p))))
       (herdr-cmd--follow-new-pane "w1:p9")
       (should-not adopted))))
 
@@ -306,8 +304,7 @@ is the very case this sentence describes."
                      (lambda (&rest _) t))
                     ((symbol-function 'herdr-term-select-focused) #'ignore)
                     ((symbol-function 'herdr-cmd--select-pane-when-ready)
-                     #'ignore)
-                    ((symbol-function 'herdr-cmd--offer-to-adopt) #'ignore))
+                     #'ignore))
             (herdr-test-with-server
                 (lambda (req)
                   (push (alist-get 'method req) wire)
@@ -440,18 +437,6 @@ types it as a boolean."
       (herdr-worktree-remove "w3" t)
       (should (eq t (alist-get 'force params))))))
 
-(ert-deftest herdr-workspace-focus-offers-to-adopt-an-unattachable-pane ()
-  "Landing on a plain shell would otherwise do nothing at all."
-  (let (offered)
-    (cl-letf (((symbol-function 'herdr-term-select-focused) (lambda () nil))
-              ((symbol-function 'herdr-cmd--current-pane-id) (lambda () "w1:p4"))
-              ((symbol-function 'herdr-cmd--offer-to-adopt)
-               (lambda (p) (setq offered p))))
-      (herdr-test-with-server
-          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
-        (herdr-workspace-focus "w1")
-        (should (equal "w1:p4" offered))))))
-
 ;;; Value-shaping wrappers: the transform is the behaviour worth locking
 
 ;; The pure passthrough commands are covered by the drift test, which
@@ -531,14 +516,12 @@ show it yet the command schedules a retry rather than giving up."
         (herdr-agent-start "web" "claude" "w1:p1")
         (should (equal "w1:p1" deferred))))))
 
-(ert-deftest herdr-agent-start-create-new-splits-then-starts-on-the-new-pane ()
-  "Picking create-new splits the current pane and starts the agent in the
-pane the split returns, then shows it — no detour through a manual split."
-  (let (split-target started-in selected)
+(ert-deftest herdr-agent-start-create-new-creates-a-tab-then-starts-on-its-root-pane ()
+  "Picking create-new creates a tab and starts the agent in its root
+pane, then shows it — no detour through a manual split."
+  (let (started-in selected)
     (cl-letf (((symbol-function 'herdr-select-available-shell)
                (lambda (&rest _) :create-new))
-              ((symbol-function 'herdr-select-current-target)
-               (lambda (&rest _) "w1:p1"))
               ((symbol-function 'herdr-term-select-pane)
                (lambda (pane) (setq selected pane) t)))
       (herdr-test-with-server
@@ -546,17 +529,15 @@ pane the split returns, then shows it — no detour through a manual split."
             (let ((method (alist-get 'method req))
                   (params (alist-get 'params req)))
               (cond
-               ((equal method "pane.split")
-                (setq split-target (alist-get 'target_pane_id params))
-                (cons (herdr-test-ok req '((type . "pane_info")
-                                           (pane . ((pane_id . "w1:p9")))))
+               ((equal method "tab.create")
+                (cons (herdr-test-ok req '((type . "tab_created")
+                                           (root_pane . ((pane_id . "w1:p9")))))
                       nil))
                ((equal method "agent.start")
                 (setq started-in (alist-get 'pane_id params))
                 (cons (herdr-test-ok req '((type . "ok"))) nil))
                (t (cons (herdr-test-ok req '((type . "ok"))) nil)))))
         (should (equal "w1:p9" (herdr-agent-start "web" "claude")))
-        (should (equal "w1:p1" split-target))
         (should (equal "w1:p9" started-in))
         (should (equal "w1:p9" selected))))))
 
