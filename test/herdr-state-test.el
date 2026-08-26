@@ -765,5 +765,22 @@ nothing to reconnect, and a failed poll stays a failed poll."
       (should-not (herdr-state-reconcile-panes))
       (should-not herdr-state--reconnect-timer))))
 
+(ert-deftest herdr-state-pane-label-is-a-significant-field ()
+  "A `pane.rename' must redraw the surfaces that now show the label.
+Left off `herdr-state-pane-significant-fields', a rename reached the
+cache silently and appeared nowhere until an unrelated change happened
+to redraw.  It is safe to watch: unlike the terminal title it moves only
+when somebody moves it."
+  (should (memq 'label herdr-state-pane-significant-fields))
+  (should (herdr-state--pane-differs-p
+           '((pane_id . "w16:p2") (agent . "claude"))
+           '((pane_id . "w16:p2") (agent . "claude") (label . "Lantern"))))
+  ;; The volatile ones stay off it.
+  (should-not (herdr-state--pane-differs-p
+               '((pane_id . "w16:p2") (agent . "claude")
+                 (terminal_title_stripped . "a"))
+               '((pane_id . "w16:p2") (agent . "claude")
+                 (terminal_title_stripped . "b")))))
+
 (provide 'herdr-state-test)
 ;;; herdr-state-test.el ends here

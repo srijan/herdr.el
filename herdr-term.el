@@ -109,26 +109,34 @@ Nil only when PANE names no workspace to begin with."
 (defun herdr-term-agent-buffer-name (state pane)
   "Return the wanted buffer name for PANE, read against STATE.
 
-Name first, workspace fallback: a name set through `agent.rename\\='
+Names first, workspace fallback.  A name set through `agent.rename\\='
 \(`herdr-state-agent-name\\=') is used verbatim, since it is the one thing
-someone chose to call this pane.  An unnamed pane instead reads as
-KIND@WORKSPACE, built from its agent kind and `herdr-term--workspace-label\\='
-— this also covers an adopted shell (`herdr-state-shell-pane-p\\='),
-whose kind is already the shell placeholder agent name.  A pane with
-neither a kind nor a workspace falls back to a bare \"agent\" rather
-than an empty `*herdr: @*\\='.
+someone chose to call this agent.  Failing that, the pane\\='s own
+`label\\=' — what `pane.rename\\=' writes (`herdr-pane-rename\\='), and what
+a plugin pane is seated carrying from its manifest title, which is how
+the Lantern chat comes through as `*herdr: Lantern*\\='.  Below the
+agent name rather than above it so nobody who renames agents today sees
+their buffers change.
+
+An unlabelled pane instead reads as KIND@WORKSPACE, built from its agent
+kind and `herdr-term--workspace-label\\=' — this also covers an adopted
+shell (`herdr-state-shell-pane-p\\='), whose kind is already the shell
+placeholder agent name.  A pane with neither a kind nor a workspace
+falls back to a bare \"agent\" rather than an empty `*herdr: @*\\='.
 
 Not unique: two unnamed panes of the same kind in the same workspace
 compute the same name here.  Callers that create a buffer from it are
 responsible for uniquifying — see `herdr-term--attach-1\\='."
   (let* ((pane-id (alist-get 'pane_id pane))
          (name (and pane-id (herdr-state-agent-name state pane-id)))
+         (label (alist-get 'label pane))
          (kind (or (alist-get 'display_agent pane)
                    (alist-get 'agent pane)
                    "agent"))
-         (label (herdr-term--workspace-label state pane)))
+         (workspace (herdr-term--workspace-label state pane)))
     (format "*herdr: %s*"
-            (or name (if label (format "%s@%s" kind label) kind)))))
+            (or name label
+                (if workspace (format "%s@%s" kind workspace) kind)))))
 
 (defun herdr-term--unique-agent-buffer-name (state pane)
   "Return a unique buffer name for PANE, from `herdr-term-agent-buffer-name'.
