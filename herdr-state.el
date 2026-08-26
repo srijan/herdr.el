@@ -890,8 +890,15 @@ without changing what B should watch."
   (herdr-state--open-pane-stream))
 
 (defconst herdr-state-pane-significant-fields
-  '(agent agent_status cwd foreground_cwd workspace_id tab_id)
+  '(agent agent_status cwd foreground_cwd workspace_id tab_id label)
   "Pane fields worth reacting to when reconciling against `pane.list\\='.
+
+`label\\=' is on the list because it is the one pane field a person or a
+plugin sets deliberately — `pane.rename\\=' writes it, and a plugin pane
+is seated carrying its `[[panes]].title\\=' as one.  It moves only when
+somebody moves it, so it costs nothing to watch, and leaving it off
+meant a rename reached the cache silently and did not appear on any
+surface until an unrelated change happened to redraw them.
 
 Deliberately excludes the volatile ones — revision, scroll and the
 terminal title — which change constantly and would make every poll look

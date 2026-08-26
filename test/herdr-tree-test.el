@@ -35,6 +35,56 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
             (cons (nth 0 node) (herdr-tree-test--types (nth 3 node))))
           nodes))
 
+(ert-deftest herdr-tree-pane-name-joins-the-label-and-the-title ()
+  "Both halves: the label says which pane this is, the title says what it
+is doing, and a row that dropped either lost something real."
+  (should (equal "Lantern · fixing tests"
+                 (herdr-tree-pane-name
+                  '((pane_id . "w16:p2") (label . "Lantern")
+                    (terminal_title_stripped . "fixing tests"))))))
+
+(ert-deftest herdr-tree-pane-name-does-not-print-a-repeat ()
+  (should (equal "Lantern"
+                 (herdr-tree-pane-name
+                  '((pane_id . "w16:p2") (label . "Lantern")
+                    (terminal_title_stripped . "Lantern"))))))
+
+(ert-deftest herdr-tree-pane-name-strips-the-spinner-from-the-title ()
+  "The title half goes through `herdr-tree--steady-title' like it always
+did, so a labelled pane does not reintroduce the churn."
+  (should (equal "Lantern · fixing tests"
+                 (herdr-tree-pane-name
+                  '((pane_id . "w16:p2") (label . "Lantern")
+                    (terminal_title_stripped . "◐ fixing tests"))))))
+
+(ert-deftest herdr-tree-pane-name-is-just-the-label-without-a-title ()
+  (should (equal "Lantern"
+                 (herdr-tree-pane-name
+                  '((pane_id . "w16:p2") (label . "Lantern"))))))
+
+(ert-deftest herdr-tree-pane-name-falls-back-to-the-steady-title ()
+  "An unlabelled pane — most of them — reads exactly as it did before."
+  (should (equal "fixing tests"
+                 (herdr-tree-pane-name
+                  '((pane_id . "w1:p1")
+                    (terminal_title_stripped . "fixing tests"))))))
+
+(ert-deftest herdr-tree-pane-name-is-empty-with-neither ()
+  (should (equal "" (herdr-tree-pane-name '((pane_id . "w1:p1"))))))
+
+(ert-deftest herdr-tree-pane-row-shows-the-label-and-the-title ()
+  "The whole point: a renamed pane's name reaches the dashboard row
+without costing the row what the agent is working on."
+  (let* ((state (herdr-tree-test--state
+                 '(panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (tab_id . "w1:t1") (agent . "claude")
+                             (agent_status . "working") (label . "Lantern")
+                             (terminal_title_stripped . "fixing tests"))))))
+         (node (herdr-tree--pane-node state (herdr-state-pane state "w1:p1")
+                                      10)))
+    (should (string-match-p "Lantern" (nth 2 node)))
+    (should (string-match-p "fixing tests" (nth 2 node)))))
+
 (ert-deftest herdr-tree-nests-workspace-tab-pane ()
   (should (equal '((herdr-workspace
                     (herdr-tab (herdr-pane) (herdr-pane))
