@@ -363,6 +363,24 @@ workspace should reach the workspace too."
       (setq section (oref section parent)))
     found))
 
+(defun herdr-dispatch--type-at-point (type)
+  "Return the value of the section at point when it is of TYPE, or nil.
+
+Deliberately does not walk up, and that is the whole difference from
+`herdr-dispatch--value-at-point\\='.  A heading is acted on only when
+point is on the heading itself; an ancestor heading is something the row
+under point sits inside, not the thing the verb was aimed at.
+
+The distinction had no teeth while a `herdr-worktrees\\=' section held
+nothing but leaf rows.  Now that a worktree open as a workspace of its
+own is drawn there in full, that heading is an ancestor of real panes,
+and a verb that walked up to it refused to act on them: \\[herdr-dispatch-close]
+on an agent inside a worktree answered \"a group of worktrees cannot be
+closed\" rather than closing the pane under point."
+  (when-let* ((section (magit-current-section))
+              ((eq type (oref section type))))
+    (oref section value)))
+
 (defun herdr-dispatch--require (type what)
   "Return the nearest enclosing TYPE value, or signal that WHAT is needed."
   (or (herdr-dispatch--value-at-point type)
@@ -826,12 +844,12 @@ nowhere to go; see `herdr-dispatch--refuse-heading\\='."
     (herdr-pane-focus (herdr-dispatch--value-at-point 'herdr-pane)))
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (herdr-dispatch-open-worktree))
-   ((herdr-dispatch--value-at-point 'herdr-worktrees)
+   ((herdr-dispatch--type-at-point 'herdr-worktrees)
     (herdr-dispatch--refuse-heading
      "a group of worktrees is not somewhere to go"))
    ((herdr-dispatch--value-at-point 'herdr-known-project)
     (herdr-dispatch-open-known-project))
-   ((herdr-dispatch--value-at-point 'herdr-known-projects)
+   ((herdr-dispatch--type-at-point 'herdr-known-projects)
     (herdr-dispatch--refuse-heading
      "the inactive-projects group is not somewhere to go"))
    ((herdr-dispatch--value-at-point 'herdr-workspace)
@@ -860,13 +878,13 @@ key.  Neither has the worktrees heading; see
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (herdr-rpc-call "workspace.focus"
                     `((workspace_id . ,(herdr-dispatch--worktree-workspace)))))
-   ((herdr-dispatch--value-at-point 'herdr-worktrees)
+   ((herdr-dispatch--type-at-point 'herdr-worktrees)
     (herdr-dispatch--refuse-heading
      "a group of worktrees cannot be focused"))
    ((herdr-dispatch--value-at-point 'herdr-known-project)
     (user-error "herdr: %s has no workspace open yet (RET opens it)"
                 (herdr-dispatch--value-at-point 'herdr-known-project)))
-   ((herdr-dispatch--value-at-point 'herdr-known-projects)
+   ((herdr-dispatch--type-at-point 'herdr-known-projects)
     (herdr-dispatch--refuse-heading
      "the inactive-projects group cannot be focused"))
    ((herdr-dispatch--value-at-point 'herdr-pane)
@@ -892,12 +910,12 @@ them; see `herdr-dispatch--refuse-heading\\='."
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (user-error
      "herdr: a worktree cannot be renamed; rename its branch with git"))
-   ((herdr-dispatch--value-at-point 'herdr-worktrees)
+   ((herdr-dispatch--type-at-point 'herdr-worktrees)
     (herdr-dispatch--refuse-heading
      "a group of worktrees cannot be renamed"))
    ((herdr-dispatch--value-at-point 'herdr-known-project)
     (user-error "herdr: a known project has no label of its own to rename"))
-   ((herdr-dispatch--value-at-point 'herdr-known-projects)
+   ((herdr-dispatch--type-at-point 'herdr-known-projects)
     (herdr-dispatch--refuse-heading
      "the inactive-projects group cannot be renamed"))
    ((herdr-dispatch--value-at-point 'herdr-pane)
@@ -924,12 +942,12 @@ the same reason and with more at stake; see
   (cond
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (herdr-worktree-remove (herdr-dispatch--worktree-workspace)))
-   ((herdr-dispatch--value-at-point 'herdr-worktrees)
+   ((herdr-dispatch--type-at-point 'herdr-worktrees)
     (herdr-dispatch--refuse-heading
      "a group of worktrees cannot be closed"))
    ((herdr-dispatch--value-at-point 'herdr-known-project)
     (user-error "herdr: a known project with no workspace open has nothing to close"))
-   ((herdr-dispatch--value-at-point 'herdr-known-projects)
+   ((herdr-dispatch--type-at-point 'herdr-known-projects)
     (herdr-dispatch--refuse-heading
      "the inactive-projects group cannot be closed"))
    ((herdr-dispatch--value-at-point 'herdr-pane)
