@@ -727,6 +727,127 @@ column is, from the widest name actually present."
     (should (equal 'herdr-worktree (nth 0 worktree)))
     (should (string-match-p "open" (nth 2 worktree)))))
 
+;;; A worktree open as a workspace of its own
+
+(defconst herdr-tree-test--worktree-reply
+  '(((path . "/tmp/herdr.el") (branch . "main")
+     (is_linked_worktree . nil) (open_workspace_id . "w1"))
+    ((path . "/tmp/herdr.el-feat") (branch . "feat")
+     (is_linked_worktree . t) (open_workspace_id . "w2"))
+    ((path . "/tmp/herdr.el-other") (branch . "other")
+     (is_linked_worktree . t)))
+  "One repository: its main checkout, a worktree open as w2, and one not open.")
+
+(defun herdr-tree-test--worktree-state (&rest workspace-ids)
+  "Return a state with one workspace per id in WORKSPACE-IDS.
+`w1' is the repository at /tmp/herdr.el; `w2' is its worktree at
+/tmp/herdr.el-feat.  Each gets one pane, since a workspace with no pane
+has no directory and so no repository either."
+  (let ((directories '(("w1" . "/tmp/herdr.el")
+                       ("w2" . "/tmp/herdr.el-feat"))))
+    (herdr-state-from-snapshot
+     `((workspaces . ,(mapcar (lambda (id)
+                                `((workspace_id . ,id) (label . ,id)
+                                  (pane_count . 1)))
+                              workspace-ids))
+       (panes . ,(mapcar (lambda (id)
+                           `((pane_id . ,(concat id ":p1"))
+                             (workspace_id . ,id) (agent . "claude")
+                             (agent_status . "idle")
+                             (cwd . ,(cdr (assoc id directories)))))
+                         workspace-ids))))))
+
+(defun herdr-tree-test--repository-cache (&rest ids)
+  "Return a worktree cache answering `herdr-tree-test--worktree-reply' for IDS.
+Distinct from `herdr-tree-test--worktree-cache', which answers for the
+known-project tests with a repository of its own."
+  (mapcar (lambda (id) (cons id herdr-tree-test--worktree-reply)) ids))
+
+(ert-deftest herdr-tree-workspace-repository-names-the-open-repository ()
+  "The worktree workspace has a repository on screen; the repository
+itself does not, being its own main checkout."
+  (let ((state (herdr-tree-test--worktree-state "w1" "w2"))
+        (worktrees (herdr-tree-test--repository-cache "w1" "w2")))
+    (should (equal "w1" (herdr-tree--workspace-repository state "w2" worktrees)))
+    (should-not (herdr-tree--workspace-repository state "w1" worktrees))))
+
+(ert-deftest herdr-tree-workspace-repository-needs-the-repository-open ()
+  "A worktree whose repository has no workspace open has nowhere to nest,
+and a workspace whose reply has not landed cannot be placed at all."
+  (should-not (herdr-tree--workspace-repository
+               (herdr-tree-test--worktree-state "w2") "w2"
+               (herdr-tree-test--repository-cache "w2")))
+  (should-not (herdr-tree--workspace-repository
+               (herdr-tree-test--worktree-state "w1" "w2") "w2" nil)))
+
+(ert-deftest herdr-tree-build-nests-a-worktree-workspace-under-its-repository ()
+  "The reported shape: `project-el' drew a top-level workspace row beside
+the repository it is a worktree of, while that repository's worktrees
+section drew a dimmed pointer at it -- the same worktree twice.  The
+workspace now takes the pointer's place, panes and all."
+  (should (equal '((herdr-workspace
+                    (herdr-pane)
+                    (herdr-worktrees
+                     (herdr-workspace (herdr-pane))
+                     (herdr-worktree))))
+                 (herdr-tree-test--types
+                  (herdr-tree-build (herdr-tree-test--worktree-state "w1" "w2")
+                                    (herdr-tree-test--repository-cache "w1" "w2"))))))
+
+(ert-deftest herdr-tree-a-nested-workspace-draws-no-worktrees-of-its-own ()
+  "A nested workspace's own reply names its siblings, and those siblings
+are drawn beside it under the same repository.  Repeating them one level
+deeper would file every worktree of the repository under every other one."
+  (let* ((tree (herdr-tree-build (herdr-tree-test--worktree-state "w1" "w2")
+                                 (herdr-tree-test--repository-cache "w1" "w2")))
+         (worktrees (car (last (nth 3 (car tree)))))
+         (nested (car (nth 3 worktrees))))
+    (should (equal "worktrees (2)" (nth 2 worktrees)))
+    (should (equal 'herdr-workspace (nth 0 nested)))
+    (should (equal "w2" (nth 1 nested)))
+    (should (equal '(herdr-pane) (mapcar (lambda (n) (nth 0 n)) (nth 3 nested))))))
+
+(ert-deftest herdr-tree-build-leaves-a-worktree-workspace-with-no-repository-open ()
+  "Nothing to nest under means nothing moves, and the workspace keeps the
+worktrees section it draws for its own siblings."
+  (should (equal '((herdr-workspace
+                    (herdr-pane)
+                    (herdr-worktrees (herdr-worktree))))
+                 (herdr-tree-test--types
+                  (herdr-tree-build (herdr-tree-test--worktree-state "w2")
+                                    (herdr-tree-test--repository-cache "w2"))))))
+
+(ert-deftest herdr-tree-nesting-refuses-a-chain ()
+  "A worktree's main checkout is the repository, so no chain of length
+two can form from a well-formed reply.  Were one to form anyway, the
+grandchild would be spliced into a section its parent never draws and
+would vanish; it stays at top level instead."
+  (let ((state (herdr-state-from-snapshot
+                '((workspaces . (((workspace_id . "w1")) ((workspace_id . "w2"))
+                                 ((workspace_id . "w3"))))
+                  (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (cwd . "/tmp/a"))
+                            ((pane_id . "w2:p1") (workspace_id . "w2")
+                             (cwd . "/tmp/a-w2"))
+                            ((pane_id . "w3:p1") (workspace_id . "w3")
+                             (cwd . "/tmp/a-w3")))))))
+        (worktrees '(("w2" . (((path . "/tmp/a-w3") (is_linked_worktree . nil))))
+                     ("w3" . (((path . "/tmp/a") (is_linked_worktree . nil)))))))
+    (should (equal '(("w3" . "w1"))
+                   (herdr-tree--nesting state (herdr-state-workspaces state)
+                                        worktrees)))))
+
+(ert-deftest herdr-tree-worktrees-node-still-points-at-an-unnested-workspace ()
+  "The `open as W' row is the fallback now, not the rule -- it is what a
+worktree gets when its repository is not on screen as a workspace to
+nest it under."
+  (let* ((node (herdr-tree--worktrees-node
+                "w1" (herdr-tree-test--repository-cache "w1") 20))
+         (rows (nth 3 node)))
+    (should (equal '(herdr-worktree herdr-worktree)
+                   (mapcar (lambda (row) (nth 0 row)) rows)))
+    (should (string-match-p "open as w2" (nth 2 (car rows))))))
+
 ;;; Status summary
 
 (defun herdr-tree-test--status-state (&rest specs)
