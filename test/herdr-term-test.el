@@ -75,6 +75,33 @@ notwithstanding — it is the one thing someone chose to call this pane."
     (should (equal "*herdr: emacs-herdr*"
                    (herdr-term-agent-buffer-name state pane)))))
 
+(ert-deftest herdr-term-agent-buffer-name-uses-the-pane-label ()
+  "A pane carrying a `label' — what `pane.rename' writes, and what a
+plugin pane is seated with — is named by it rather than by KIND@WORKSPACE.
+This is how the Lantern chat reads as `*herdr: Lantern*'."
+  (let* ((state (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w16")
+                                   (label . "lantern"))))
+                   (panes . (((pane_id . "w16:p2") (agent . "claude")
+                              (label . "Lantern")
+                              (workspace_id . "w16")))))))
+         (pane (herdr-state-pane state "w16:p2")))
+    (should (equal "*herdr: Lantern*"
+                   (herdr-term-agent-buffer-name state pane)))))
+
+(ert-deftest herdr-term-agent-buffer-name-prefers-the-agent-name-over-the-label ()
+  "`agent.rename' outranks `pane.rename'.  Below it rather than above so
+nobody who renames agents today sees their buffers change."
+  (let* ((state (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w16") (label . "lantern"))))
+                   (panes . (((pane_id . "w16:p2") (agent . "claude")
+                              (label . "Lantern") (workspace_id . "w16"))))
+                   (agents . (((pane_id . "w16:p2") (agent . "claude")
+                               (name . "lantern-chat")))))))
+         (pane (herdr-state-pane state "w16:p2")))
+    (should (equal "*herdr: lantern-chat*"
+                   (herdr-term-agent-buffer-name state pane)))))
+
 (ert-deftest herdr-term-agent-buffer-name-falls-back-to-kind-at-workspace ()
   "An unnamed agent reads as KIND@WORKSPACE, not an opaque pane id."
   (let* ((state (herdr-state-from-snapshot

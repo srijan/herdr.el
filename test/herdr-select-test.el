@@ -41,6 +41,17 @@
       ;; the same agent tellable apart.
       (should (string-match-p "/tmp" annotation)))))
 
+(ert-deftest herdr-select-annotation-carries-the-pane-label ()
+  "A renamed pane, or a plugin pane seated with its manifest title, is
+findable by the name it is known by as well as by what it is doing."
+  (herdr-select-test-with-state
+      '(((pane_id . "w16:p2") (agent . "claude") (agent_status . "working")
+         (label . "Lantern") (cwd . "/tmp")
+         (terminal_title_stripped . "fixing tests")))
+    (let ((annotation (herdr-select--annotate-pane "w16:p2")))
+      (should (string-match-p "Lantern" annotation))
+      (should (string-match-p "fixing tests" annotation)))))
+
 (ert-deftest herdr-select-annotates-a-shell-pane ()
   (herdr-select-test-with-state
       '(((pane_id . "w1:p2") (agent . nil) (cwd . "/tmp")))

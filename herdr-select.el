@@ -27,6 +27,7 @@
 (require 'herdr-state)
 (require 'herdr-rpc)
 (require 'herdr-term)
+(require 'herdr-tree)
 
 ;; The embark map below binds commands from `herdr-cmd', which requires
 ;; this file — so they are declared rather than required.  These used to
@@ -62,9 +63,14 @@ deliberately unlike a pane id so it cannot be confused for one.")
     (let ((pane (herdr-state-pane (herdr-state-current) pane-id)))
       (if (not pane)
           ""
+        ;; `herdr-tree-pane-name' rather than the terminal title alone,
+        ;; so a pane somebody renamed — or a plugin pane seated with its
+        ;; manifest title — is findable here by the name it is known by
+        ;; as well as by what it is doing.  Shared with the dispatcher
+        ;; row so the two cannot disagree about what a pane is called.
         (let ((agent (alist-get 'agent pane))
               (status (alist-get 'agent_status pane))
-              (title (alist-get 'terminal_title_stripped pane))
+              (title (herdr-tree-pane-name pane))
               (cwd (alist-get 'cwd pane)))
           (concat "  "
                   (if agent

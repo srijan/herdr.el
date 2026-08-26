@@ -213,6 +213,36 @@ title on its own."
            "+[[:space:]]*")
    "" title))
 
+(defun herdr-tree-pane-name (pane)
+  "Return the name column for PANE: its label, what it is doing, or both.
+
+A pane\\='s `label\\=' is the name somebody chose for it — `pane.rename\\='
+writes one (`herdr-pane-rename\\='), and a plugin pane is seated carrying
+its manifest title as one, which is how the Lantern chat comes through
+as \"Lantern\".  The terminal title is what the thing running in it is
+announcing, which for an agent is the task in hand.
+
+Both, because they answer different questions and a row that dropped
+either lost something real: the label alone cannot say what an agent is
+working on, and the title alone cannot tell two panes running the same
+agent apart.  Joined by a middle dot, the separator herdr already uses
+in its own composite labels (a Lantern tab reads \"home · claude\").
+
+Degrades to whichever exists.  A pane with no label — most of them —
+reads exactly as it did before this column learned about labels, and a
+title that merely repeats the label is not printed twice.
+
+Shared with `herdr-select--annotate-pane\=' and `herdr-notify--maybe\=',
+the way `herdr-tree-status-counts\=' is shared with the modeline, so the
+surfaces that name a pane cannot disagree about what it is called."
+  (let ((label (alist-get 'label pane))
+        (title (herdr-tree--steady-title
+                (or (alist-get 'terminal_title_stripped pane) ""))))
+    (cond
+     ((or (null label) (string-empty-p label)) title)
+     ((or (string-empty-p title) (equal title label)) label)
+     (t (concat label " · " title)))))
+
 (defun herdr-tree--pane-node (state pane width)
   "Return the node for PANE in STATE, its agent column WIDTH wide.
 
@@ -234,10 +264,8 @@ words."
                    (herdr-tree--agent-label state pane)
                    (herdr-tree--faced status face)
                    (herdr-tree--faced id 'shadow)
-                   (herdr-tree--faced
-                    (herdr-tree--steady-title
-                     (or (alist-get 'terminal_title_stripped pane) ""))
-                    'font-lock-doc-face)))
+                   (herdr-tree--faced (herdr-tree-pane-name pane)
+                                      'font-lock-doc-face)))
           nil)))
 
 (defun herdr-tree--panes-in-tab (state tab-id width)

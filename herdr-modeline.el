@@ -165,7 +165,12 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
           (when (and previous (member status herdr-notify-statuses))
             (herdr-notify--send
              (format "herdr: %s is %s" (or (alist-get 'agent pane) id) status)
-             (or (alist-get 'terminal_title_stripped pane) id))))))))
+             ;; `herdr-tree-pane-name', not the bare title: the
+             ;; notification names the agent kind, which does not tell
+             ;; two Claudes apart, and a labelled pane says which one
+             ;; this is before it says what it was doing.
+             (let ((name (herdr-tree-pane-name pane)))
+               (if (string-empty-p name) id name)))))))))
 
 (add-hook 'herdr-state-change-functions #'herdr-notify--maybe)
 
