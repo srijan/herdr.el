@@ -18,7 +18,7 @@
 ;; the layout, plain shell panes work, and it is about sixty lines.
 ;;
 ;; `agent-windows' runs one ghostel buffer per agent, each holding a
-;; `herdr agent attach'.  Emacs owns the layout and herdr's own layout
+;; `herdr terminal attach'.  Emacs owns the layout and herdr's own layout
 ;; tree goes unused, so there is no geometry to synchronise.  Agents
 ;; outlive Emacs because the server is a daemon.
 ;;
@@ -28,8 +28,9 @@
 ;;   reached Emacs as 17 KB under `session' and 24 KB under
 ;;   `agent-windows'; herdr's VT only emits visible-frame diffs, so it
 ;;   rate-limits by construction.
-;; - `agent attach' refuses a pane with no detected agent, which is why
-;;   reconciliation considers agents rather than panes.
+;; - Attachment goes through `herdr terminal attach', which takes any
+;;   pane's raw stream — agent or plain shell — so reconciliation
+;;   considers panes.
 ;; - Attachment is exclusive per pane, so a second attach needs
 ;;   `--takeover'.  We ask first rather than stealing.
 ;; - The client paints nothing into a zero-sized PTY.  ghostel sizes its
@@ -51,8 +52,8 @@
 
 `session' runs the herdr TUI in one ghostel buffer and lets herdr own
 the layout.  `agent-windows' gives every agent its own ghostel buffer
-and lets Emacs own the layout; plain shell panes are then not
-represented, since herdr will not attach to a pane without an agent."
+and lets Emacs own the layout; plain shell panes get buffers on demand,
+the first time you go to one."
   :type '(choice (const :tag "One buffer running the herdr TUI" session)
                  (const :tag "One buffer per agent" agent-windows))
   :group 'herdr)
@@ -119,10 +120,11 @@ agent name rather than above it so nobody who renames agents today sees
 their buffers change.
 
 An unlabelled pane instead reads as KIND@WORKSPACE, built from its agent
-kind and `herdr-term--workspace-label\\=' — this also covers an adopted
-shell (`herdr-state-shell-pane-p\\='), whose kind is already the shell
-placeholder agent name.  A pane with neither a kind nor a workspace
-falls back to a bare \"agent\" rather than an empty `*herdr: @*\\='.
+kind and `herdr-term--workspace-label\\='.  A pane with no detected agent
+falls back to \"shell\", since `herdr terminal attach' needs no agent and
+a plain shell pane is the common case — so it reads as `shell@WORKSPACE\\='
+rather than `agent@WORKSPACE\\='.  A pane with neither a kind nor a
+workspace falls back to a bare \"shell\" rather than an empty `*herdr: @*\\='.
 
 Not unique: two unnamed panes of the same kind in the same workspace
 compute the same name here.  Callers that create a buffer from it are
@@ -132,7 +134,7 @@ responsible for uniquifying — see `herdr-term--attach-1\\='."
          (label (alist-get 'label pane))
          (kind (or (alist-get 'display_agent pane)
                    (alist-get 'agent pane)
-                   "agent"))
+                   "shell"))
          (workspace (herdr-term--workspace-label state pane)))
     (format "*herdr: %s*"
             (or name label
@@ -161,10 +163,16 @@ stripping this would treat such a buffer as permanently stale — see
       (substring name 0 (match-beginning 0))
     name))
 
-(defun herdr-term-attach-args (pane-id takeover)
-  "Return argv tail for attaching to PANE-ID, stealing it when TAKEOVER."
-  (append (list "agent" "attach" pane-id)
-          (when takeover '("--takeover"))))
+(defun herdr-term-attach-args (pane takeover)
+  "Return argv tail for attaching to PANE, stealing it when TAKEOVER.
+PANE is the pane's alist from the cache; `herdr terminal attach' wants
+the raw terminal stream id, which only the pane record knows."
+  (let ((terminal (alist-get 'terminal_id pane)))
+    (unless terminal
+      (user-error "herdr: pane %s has no terminal_id; herdr 0.8.2+ required"
+                  (alist-get 'pane_id pane)))
+    (append (list "terminal" "attach" terminal)
+            (when takeover '("--takeover")))))
 
 (defun herdr-term-session-args ()
   "Return argv tail for the session client, which takes no arguments."
@@ -175,20 +183,19 @@ stripping this would treat such a buffer as permanently stale — see
 
 BUFFERS is an alist of (PANE-ID . BUFFER).  TO-CREATE holds pane alists
 that herdr will attach to but that have no buffer; TO-REAP holds buffers
-whose pane is gone or is no longer attachable.  Pure: no processes are
-touched.
+whose pane is gone.  Pure: no processes are touched.
 
-Attachability, not agenthood, is the criterion — a shell adopted through
-`herdr-adopt-shell' gets a buffer too."
-  (let* ((agents (herdr-state-attachable state))
-         (agent-ids (mapcar (lambda (pane) (alist-get 'pane_id pane)) agents))
+Every pane can hold a buffer; TO-REAP is buffers whose pane is gone from
+STATE."
+  (let* ((panes (herdr-state-attachable state))
+         (pane-ids (mapcar (lambda (pane) (alist-get 'pane_id pane)) panes))
          (have-ids (mapcar #'car buffers)))
     (cons
      (seq-remove (lambda (pane)
                    (member (alist-get 'pane_id pane) have-ids))
-                 agents)
+                 panes)
      (mapcar #'cdr
-             (seq-remove (lambda (cell) (member (car cell) agent-ids))
+             (seq-remove (lambda (cell) (member (car cell) pane-ids))
                          buffers)))))
 
 ;;; Server lifecycle
@@ -275,11 +282,10 @@ Returns the buffer when it showed one."
       buffer)))
 
 (defun herdr-term--attach-if-possible (pane-id)
-  "Attach to PANE-ID now, if this backend attaches and herdr will allow it."
+  "Attach to PANE-ID now, if this backend attaches and the cache knows it."
   (when (eq herdr-terminal-backend 'agent-windows)
     (let ((state (herdr-state-current)))
-      (when-let* ((pane (herdr-state-pane state pane-id))
-                  ((alist-get 'agent pane)))
+      (when-let* ((pane (herdr-state-pane state pane-id)))
         (herdr-term--attach state pane)))))
 
 (defun herdr-term-select-focused ()
@@ -341,13 +347,13 @@ terminal."
     (herdr-term--show buffer)
     (condition-case err
         (ghostel-exec buffer herdr-executable
-                      (herdr-term-attach-args pane-id nil))
+                      (herdr-term-attach-args pane nil))
       (error
        (if (and (y-or-n-p
                  (format "Attaching to %s failed (%s).  Take it over? "
                          pane-id (error-message-string err))))
            (ghostel-exec buffer herdr-executable
-                         (herdr-term-attach-args pane-id t))
+                         (herdr-term-attach-args pane t))
          (kill-buffer buffer)
          (setq buffer nil))))
     (when buffer
