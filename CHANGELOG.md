@@ -26,7 +26,9 @@ This entry covers the whole divergence from
   when a directory goes away. Use `project-forget-zombie-projects` to drop them from project.el
   itself.
 - **Worktree detail.** Each worktree row shows its branch and its directory. The branch column
-  sizes itself to the widest branch in the session.
+  sizes itself to the widest branch in the session. A worktree you have open as a workspace of
+  its own is drawn there in full -- its panes, its label, its status -- instead of as a dimmed
+  row pointing at a second copy of it at the top level. The top level is one row per repository.
 - **`herdr-menu`.** The command runs the same start sequence as `herdr` but ends on the compact
   menu. Use it from inside a terminal buffer, where a full-window dashboard is the wrong result.
 - **A test suite.** 478 hermetic tests across 16 files, and a live suite that includes a schema
