@@ -75,19 +75,6 @@ send.
 - Drive the TUI from the keyboard, with its `ctrl+b` prefix.
 - Set `herdr-terminal-backend` to `agent-windows`. That backend needs no TUI.
 
-## A plain shell pane has no buffer
-
-**Symptom.** Under the `agent-windows` backend, a shell pane appears in the dashboard but has no
-Emacs buffer.
-
-**Cause.** The command `herdr agent attach` refuses a pane that has no agent.
-
-**Correction.** Run `M-x herdr-adopt-shell` on the pane. Adoption reports an agent named `shell`,
-which is the only condition that `agent attach` tests. Use `M-x herdr-release-shell` to undo it.
-
-A pane that an agent creates is never adopted for you. That rule stops an agent from taking an
-Emacs window for a build.
-
 ## The TUI has too little width
 
 **Symptom.** The sidebar of the TUI is cut off, or the layout looks wrong.

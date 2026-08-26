@@ -66,19 +66,16 @@ For the cause, see [Protocol notes](protocol.md#the-server-replays-its-full-even
 
 ## Step 4: Read the dashboard
 
-The dashboard shows the session as a tree. The tree has three levels: workspace, tab and pane.
+The dashboard shows the session as a tree. The tree has two levels: workspace and pane.
 
 ```
 herdr.el (2)                          ~/workspace/srijan/herdr.el/
   · claude    working   wS:p1         Fix the reconcile order
-    shell*    idle      wS:p2
+    shell     idle      wS:p2
 
 Inactive (14)
   fleet-infra (0)                     ~/workspace/srijan/fleet-infra/
 ```
-
-A workspace with one tab does not show the tab level. An unnamed tab carries a number only, and
-the number adds nothing.
 
 A closed section shows the worst status inside it. A closed section therefore never hides a
 blocked agent.
@@ -93,7 +90,7 @@ on one row to create the workspace.
 | Go to the pane at point | `RET` |
 | Open or close a section | `TAB` |
 | Create a workspace | `w` |
-| Create a pane | `n` |
+| Create a terminal | `n` |
 | Start an agent | `a` |
 | Send a prompt to the agent at point | `p` |
 | Read the output of the pane at point | `r` |

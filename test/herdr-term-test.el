@@ -193,7 +193,7 @@ to make that impossible."
   "The session backend runs bare herdr, which attaches the whole session."
   (should (equal nil (herdr-term-session-args))))
 
-;;; Adopted shells and directory tracking
+;;; Directory tracking
 
 (ert-deftest herdr-term-reconcile-creates-a-buffer-for-an-adopted-shell ()
   "An adopted shell is attachable, so it must get a buffer."

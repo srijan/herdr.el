@@ -17,7 +17,7 @@
 ;; Two event connections, for a measured reason.  Connection A carries
 ;; the global subscriptions, which need no pane id and are never rebuilt.
 ;; Connection B carries per-pane `pane.agent_status_changed'
-;; subscriptions for the attachable panes and is rebuilt whenever that
+;; subscriptions for the agent panes and is rebuilt whenever that
 ;; set changes.
 ;;
 ;; Connection B is the status channel, and it is prompt by
@@ -646,7 +646,7 @@ navigated to.  `pane.list\\=' is authoritative and settles it either
 way.
 
 Realigning connection B afterwards, not before: reconciling is what
-makes the pane set final, and B subscribes the attachable slice of it."
+makes the pane set final, and B subscribes the agent slice of it."
   (setq herdr-state--settle-timer nil)
   (when herdr-state--running
     ;; The replayed pane events have already queued a debounced rebuild
@@ -830,7 +830,7 @@ then."
   "Rebuild connection B, debounced, when the watched pane set drifted.
 
 A set comparison rather than a dispatch on event kind, because B now
-subscribes the attachable panes only, and what changes that set is not
+subscribes the agent panes only, and what changes that set is not
 just pane lifecycle: `pane_agent_detected\\=' gives a pane an agent or
 takes one away, and a reconcile can relabel a pane wholesale.  When
 this dispatched on kind, `pane_agent_detected\\=' was deliberately
