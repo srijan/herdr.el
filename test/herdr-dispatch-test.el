@@ -2095,11 +2095,10 @@ these rows are children of it, not siblings of the workspaces above."
         (herdr-dispatch-rename)
         (should (equal '(workspace "new" "w1") called))))))
 
-(ert-deftest herdr-dispatch-rename-prefers-the-pane-over-its-tab-and-workspace ()
-  "A pane nested under both a tab and a workspace must still rename the
-pane: only `w2:p1\\=' has all three ancestors to distinguish a `cond\\=' that
-checks the tab or the workspace first from one that checks the pane
-first."
+(ert-deftest herdr-dispatch-rename-prefers-the-pane-over-its-workspace ()
+  "A pane nested under a workspace must still rename the pane: `w2:p1\\='
+has both ancestors, which distinguishes a `cond\\=' that checks the
+workspace first from one that checks the pane first."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (search-forward "w2:p1")
     (should (equal '((herdr-pane-rename "new" "w2:p1"))
@@ -2130,7 +2129,7 @@ from, a different object under a name the user never aimed at."
 
 ;;; Close
 
-(ert-deftest herdr-dispatch-close-prefers-the-pane-over-its-tab-and-workspace ()
+(ert-deftest herdr-dispatch-close-prefers-the-pane-over-its-workspace ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (search-forward "w2:p1")
     (should (equal '((herdr-pane-close "w2:p1"))

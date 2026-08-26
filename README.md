@@ -30,8 +30,8 @@ news, not as a branch to merge.
 
 ## The dashboard
 
-`M-x herdr` (or `C-c H`) opens `*herdr-agents*`: the whole session as a foldable workspace, tab
-and pane tree, and the place every command is reachable from.
+`M-x herdr` (or `C-c H`) opens `*herdr-agents*`: the whole session as a foldable workspace and
+pane tree, and the place every command is reachable from.
 
 ```
 M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
@@ -51,7 +51,7 @@ M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
 | `RET` | go to the thing at point |
 | `TAB` | fold |
 | `c` | create menu, with its parent taken from point |
-| `w` / `t` / `n` / `a` / `%` | create workspace / tab / pane / agent / worktree directly |
+| `w` / `n` / `a` / `%` | create workspace / terminal / agent / worktree directly |
 | `p` | prompt the agent at point |
 | `r` | read the pane at point into a buffer |
 | `f` | focus the thing at point server-side, without moving Emacs |
@@ -61,9 +61,8 @@ M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
 | `q` | quit the window |
 | `?` | open `herdr-transient` |
 
-A workspace with a single tab omits the tab level, since an unnamed tab is labelled by number and
-adds nothing. A collapsed section still shows the worst status inside it, so folding never hides a
-blocked agent.
+A collapsed section still shows the worst status inside it, so folding never hides a blocked
+agent.
 
 ### Inactive projects
 
@@ -203,9 +202,10 @@ availability there means "has no agent at all". Use it when you want a long-runn
 a build, to show up as something herdr itself is watching, across an Emacs restart, since the
 report is server-side state.
 
-Adopted shells are not treated as agents. They stay out of the modeline count, the agent picker
-and notifications, since a shell has no lifecycle. They show as `shell*` with a `~` glyph in the
-dashboard.
+Adopted shells are treated like any other agent-reporting pane, since herdr does not distinguish
+an agent named `shell` from any other kind. They count in the modeline, appear in the agent
+picker and can raise notifications. They show as a plain `shell` row in the dashboard, with the
+same status glyph as any other pane.
 
 Adoption does not suppress herdr's own agent detection. Reporting and detection operate
 independently, and detection wins: start Claude inside a pane adopted as `shell` and herdr
