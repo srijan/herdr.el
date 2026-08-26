@@ -2365,6 +2365,64 @@ message points at TAB, which is the heading's one real action."
              (cadr (should-error (herdr-dispatch--refuse-heading "x")
                                  :type 'user-error))))))
 
+(defconst herdr-dispatch-test--nested-nodes
+  '((herdr-workspace "w1" "herdr.el  /tmp/herdr.el  1 pane"
+     ((herdr-pane "w1:p1" "> claude working w1:p1" nil)
+      (herdr-worktrees "w1" "worktrees 1"
+       ((herdr-workspace "w2" "project-el  /tmp/herdr.el-feat  1 pane"
+         ((herdr-pane "w2:p1" "- shell idle w2:p1" nil))))))))
+  "The shape `herdr-tree-build' emits for a worktree open as a workspace.
+`w2' is drawn inside `w1''s worktrees section rather than beside it, so
+`w2' and its pane both have a `herdr-worktrees' section as an ancestor.")
+
+(ert-deftest herdr-dispatch-close-closes-a-pane-inside-a-nested-workspace ()
+  "The heading arms used to walk up, and a pane two levels inside a
+worktrees section found that heading before its own arm was reached: `k'
+on an agent running in a worktree answered \"a group of worktrees cannot
+be closed\" and touched nothing.  Point is on the pane, so the pane is
+what closes."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nested-nodes
+    (search-forward "w2:p1")
+    (should (equal '((herdr-pane-close "w2:p1"))
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-close herdr-workspace-close
+                                         herdr-worktree-remove)
+                     (herdr-dispatch-close))))))
+
+(ert-deftest herdr-dispatch-close-closes-a-nested-workspace-itself ()
+  "The row is a workspace wherever it is drawn, and closing it must not
+reach the repository it is nested under."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nested-nodes
+    (search-forward "project-el")
+    (should (equal '((herdr-workspace-close "w2"))
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-close herdr-workspace-close
+                                         herdr-worktree-remove)
+                     (herdr-dispatch-close))))))
+
+(ert-deftest herdr-dispatch-focus-follows-a-pane-inside-a-nested-workspace ()
+  "Every verb shared the walking-up heading arms, so every verb refused
+the same rows; `f' is the one whose refusal was silent about what it had
+aimed at."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nested-nodes
+    (search-forward "w2:p1")
+    (should (equal '((herdr-rpc-call "pane.focus" ((pane_id . "w2:p1"))))
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-rpc-call herdr-pane-focus herdr-workspace-focus)
+                     (herdr-dispatch-focus))))))
+
+(ert-deftest herdr-dispatch-still-refuses-the-heading-above-a-nested-workspace ()
+  "Aiming the refusal at the section under point rather than at an
+ancestor must not stop it firing when point really is on the heading."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nested-nodes
+    (search-forward "worktrees 1")
+    (should (equal nil
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-pane-close herdr-workspace-close
+                                         herdr-worktree-remove herdr-rpc-call)
+                     (should-error (herdr-dispatch-close)
+                                   :type 'user-error))))))
+
 (ert-deftest herdr-dispatch-binds-the-mutating-verbs ()
   (should (eq #'herdr-dispatch-rename
               (lookup-key herdr-dispatch-mode-map "R")))
