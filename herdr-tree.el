@@ -232,8 +232,8 @@ Degrades to whichever exists.  A pane with no label — most of them —
 reads exactly as it did before this column learned about labels, and a
 title that merely repeats the label is not printed twice.
 
-Shared with `herdr-select--annotate-pane\=' and `herdr-notify--maybe\=',
-the way `herdr-tree-status-counts\=' is shared with the modeline, so the
+Shared with `herdr-select--annotate-pane\\=' and `herdr-notify--maybe\\=',
+the way `herdr-tree-status-counts\\=' is shared with the modeline, so the
 surfaces that name a pane cannot disagree about what it is called."
   (let ((label (alist-get 'label pane))
         (title (herdr-tree--steady-title
@@ -366,6 +366,74 @@ into another repository produces a reply whose main checkout names some
 other workspace, or none — which this predicate would let through."
   (let ((open (alist-get 'open_workspace_id worktree)))
     (and open (equal open workspace-id))))
+
+(defun herdr-tree--as-directory (path)
+  "Return PATH as an absolute directory name, or nil when PATH is nil.
+
+The two kinds of path this file compares do not arrive in the same
+shape.  `project-known-project-roots\\=' hands back roots abbreviated and
+slash-terminated (`~/workspace/repo/\\='); a `worktree.list\\=' reply names
+a worktree by its full path with no trailing slash
+\(`/Users/me/workspace/repo\\=').  Comparing those as strings answers no
+every time, which is exactly the bug that let one repository appear
+once per worktree.  This is the normalization
+`herdr-state-workspace-for-directory\\=' already applies to its own
+argument, spelled once here so every comparison in this file agrees."
+  (and path (file-name-as-directory (expand-file-name path))))
+
+(defun herdr-tree--main-checkout (root worktrees)
+  "Return the path of the main checkout of ROOT's repository, or nil.
+
+Read out of ROOT's own cached `worktree.list\\=' reply: the one entry
+`herdr-tree-linked-worktree-p\\=' says is not a linked worktree is the
+repository's main checkout, whatever ROOT itself happens to be.  For an
+ordinary project that is ROOT; for a directory that is itself a linked
+worktree it is the checkout the worktree hangs off, which is the fact
+`herdr-tree--secondary-worktree-p\\=' needs and which nothing else in the
+reply states.
+
+Nil when ROOT has not been fetched yet, and equally when the reply
+holds no main checkout at all — the caller treats both as \\='not known
+to be a worktree of anything\\=', which keeps the row rather than
+hiding it."
+  (when-let* ((entry (assoc root worktrees)))
+    (seq-some (lambda (worktree)
+                (and (not (herdr-tree-linked-worktree-p worktree))
+                     (alist-get 'path worktree)))
+              (cdr entry))))
+
+(defun herdr-tree--secondary-worktree-p (state root known-project-roots worktrees)
+  "Return non-nil when ROOT is a linked worktree already shown elsewhere.
+
+Opening a worktree as a project in Emacs puts it in
+`project-known-project-roots\\=' alongside the repository it came from,
+and both are repositories as far as `worktree.list\\=' is concerned.  Left
+alone, each one drew its own `Inactive\\=' row carrying the same
+`worktrees (N)\\=' section as the other: fifteen worktrees listed sixteen
+times, with the fifteen rows that produced it sitting between the copies.
+The primary checkout is the row worth keeping — its worktrees section
+already names ROOT, one line further in — so ROOT's own row goes.
+
+Three things must hold, and the third is what makes this safe.  ROOT
+must have a main checkout that is not ROOT, which is what makes it a
+worktree rather than a repository in its own right; and that checkout
+must actually be on screen, either as an open workspace or as another
+known root about to be drawn.  A worktree whose repository is neither
+keeps its row: hiding it would remove the only mention of it in the
+tree, which is worse than showing it twice.
+
+STATE answers the open-workspace half through
+`herdr-state-workspace-for-directory\\=', the same question
+`herdr-tree--known-project-nodes\\=' already asks of every root."
+  (let ((main (herdr-tree--as-directory
+               (herdr-tree--main-checkout root worktrees))))
+    (and main
+         (not (equal main (herdr-tree--as-directory root)))
+         (or (herdr-state-workspace-for-directory state main)
+             (seq-some (lambda (other)
+                         (equal main (herdr-tree--as-directory other)))
+                       known-project-roots))
+         t)))
 
 (defconst herdr-tree-worktree-column-min 20
   "Minimum width of a worktree row's branch column.
@@ -517,14 +585,27 @@ a known-project row already shows for free, since
   "Return ROOT's worktrees node from WORKTREES, or nil when it has none.
 WIDTH is the worktree branch column width; see `herdr-tree--worktree-node\\='.
 
-Unlike `herdr-tree--worktrees-node\\=', only `herdr-tree-linked-worktree-p\\='
-filters here.  There is no open workspace id for
-`herdr-tree-own-workspace-p\\=' to compare against — ROOT has none, being
-unopened — but none is needed: that predicate exists only to catch a
-linked worktree that happens to BE the container's own open workspace,
-and a container with no open workspace at all cannot have that problem."
+Two things are dropped, as in `herdr-tree--worktrees-node\\=', but the
+second question is asked by path rather than by workspace id.
+`herdr-tree-linked-worktree-p\\=' drops the repository's own main
+checkout.  What remains is then compared against ROOT itself, because a
+directory that is a linked worktree of some other repository lists
+itself among its own worktrees — flagged linked, since that is what it
+is — and drawing it there put ROOT one level underneath its own
+heading, described as one of its own children.
+
+`herdr-tree-own-workspace-p\\=' is what asks the same question for an
+open workspace, and it cannot be reused here: it compares
+`open_workspace_id\\=', and ROOT, being unopened, has no workspace id to
+compare against.  Its path is the identity ROOT does have."
   (when-let* ((entry (assoc root worktrees))
-              (found (seq-filter #'herdr-tree-linked-worktree-p (cdr entry))))
+              (found (seq-filter
+                      (lambda (worktree)
+                        (and (herdr-tree-linked-worktree-p worktree)
+                             (not (equal (herdr-tree--as-directory
+                                          (alist-get 'path worktree))
+                                         (herdr-tree--as-directory root)))))
+                      (cdr entry))))
     (list 'herdr-worktrees root
           (format "worktrees (%s)" (length found))
           (mapcar (lambda (w) (herdr-tree--worktree-node w width)) found))))
@@ -567,13 +648,21 @@ here so this stays a pure function of its arguments, the same reason
 them itself.  WORKTREES and WORKTREE-WIDTH are passed straight through to
 `herdr-tree--known-project-node\\='.
 
-Excludes any root `herdr-state-workspace-for-directory\\=' already finds
-open: a project you have open needs no second, dimmer entry for the
-same directory at the bottom of its own tree."
+Two kinds of root are excluded.  One is any root
+`herdr-state-workspace-for-directory\\=' already finds open: a project
+you have open needs no second, dimmer entry for the same directory at
+the bottom of its own tree.  The other is any root
+`herdr-tree--secondary-worktree-p\\=' recognises as a linked worktree of
+a repository already on screen — a worktree you once opened as a
+project in Emacs, which project.el then remembers as a project in its
+own right and which would otherwise redraw its whole repository's
+worktree list beside the repository's own copy of it."
   (mapcar (lambda (root)
             (herdr-tree--known-project-node root worktrees worktree-width))
           (seq-remove (lambda (root)
-                        (herdr-state-workspace-for-directory state root))
+                        (or (herdr-state-workspace-for-directory state root)
+                            (herdr-tree--secondary-worktree-p
+                             state root known-project-roots worktrees)))
                       known-project-roots)))
 
 (defun herdr-tree--known-projects-node (state known-project-roots worktrees

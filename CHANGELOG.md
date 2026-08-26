@@ -19,7 +19,9 @@ This entry covers the whole divergence from
   `herdr-dispatch.el` renders the tree with `magit-section`.
 - **An `Inactive` section.** The dashboard lists each `project.el` project that has no open
   workspace. Press `RET` on a row to create the workspace. The rows are dimmed and carry their
-  own git worktrees.
+  own git worktrees. A worktree you have also opened as a project in Emacs gets no row of its
+  own: it is listed under the repository it belongs to, once, instead of drawing a second copy
+  of that repository's whole worktree list.
 - **Worktree detail.** Each worktree row shows its branch and its directory. The branch column
   sizes itself to the widest branch in the session.
 - **`herdr-menu`.** The command runs the same start sequence as `herdr` but ends on the compact
