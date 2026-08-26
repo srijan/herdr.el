@@ -113,9 +113,11 @@ therefore dropped without an error.
 
 ## Panes and agents
 
-**`agent attach` streams one pane at full screen.** It works next to a session client. It is
-exclusive for each pane. It refuses a pane that has no agent, and returns `agent_not_found`.
-That refusal is the reason that adoption exists.
+**`terminal attach` streams one pane at full screen.** It works next to a session client. It is
+exclusive for each pane. ~~An older verb, `agent attach`, refused a pane that has no agent, and
+returned `agent_not_found`. That refusal was the reason that adoption existed.~~ Since herdr
+0.8.2, `terminal attach` takes any pane, agent or plain shell alike. There is no longer a class
+of pane it refuses.
 
 **The attach client needs a window.** The client dies if you delete its window. The client
 survives if you only hide the window, so a buried terminal keeps its scrollback. A PTY of zero
@@ -126,7 +128,10 @@ adopted pane keeps its label.~~ That was true of an older herdr. Reporting and d
 operate independently, and detection wins. Measured: herdr relabelled a pane reported as `shell`
 to `claude` about 3 seconds after Claude started in it.
 
-**`pane.report_agent` makes a plain shell pane attachable.** That is the mechanism of adoption.
+~~**`pane.report_agent` makes a plain shell pane attachable.** That is the mechanism of
+adoption.~~ Every pane is attachable since herdr 0.8.2, independent of `pane.report_agent`.
+Reporting only gives a pane an entry in herdr's own agent list — the sidebar, and the events
+`pane.agent_status_changed` subscribes to.
 
 **Focus is shared.** The session has one focused pane, not one for each client. When you move
 the focus in Emacs, the focus moves in every attached TUI.

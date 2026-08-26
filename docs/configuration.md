@@ -61,14 +61,16 @@ traffic. The debounce stops a busy agent from causing many redraws each second.
 
 | Option | Default | Function |
 |---|---|---|
-| `herdr-adopt-created-shells` | `t` | Whether Emacs adopts the panes that Emacs creates. |
+| `herdr-adopt-created-shells` | `t` | Obsolete no-op, kept so an old config does not error. |
 | `herdr-shell-agent-name` | `"shell"` | The agent name that `herdr-adopt-shell` reports. |
 | `herdr-agent-kinds` | 22 names | The agent kinds that the pickers offer. |
 | `herdr-notify-statuses` | `nil` | The agent statuses that raise a desktop notification. |
 
-Adoption makes a plain shell pane attachable. Under the `agent-windows` backend, an adopted
-pane gets a buffer. herdr.el adopts only the panes that herdr.el creates. herdr.el never adopts
-a pane that an agent creates.
+Since herdr 0.8.2, every pane is attachable, so `herdr-adopt-created-shells` does nothing;
+`herdr terminal attach` no longer refuses a plain shell pane. `M-x herdr-adopt-shell` still has a
+use: it reports `herdr-shell-agent-name` on a pane so herdr itself watches it, which puts the pane
+in the modeline count, the agent picker and notifications like any other agent-reporting pane.
+`M-x herdr-release-shell` undoes the report.
 
 To get desktop notifications, set the statuses that you want:
 

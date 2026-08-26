@@ -53,14 +53,6 @@
                  (herdr-modeline--segment
                   (herdr-modeline-test--state '("w1:p1" "claude" "blocked"))))))
 
-(ert-deftest herdr-modeline-segment-ignores-adopted-shells ()
-  "An adopted shell has a buffer but is not an agent; it must not count."
-  (should (equal "herdr:1⏸"
-                 (herdr-modeline--segment
-                  (herdr-modeline-test--state
-                   '("w1:p1" "claude" "blocked")
-                   '("w1:p2" "shell" "blocked"))))))
-
 ;;; Mode line wiring
 
 (ert-deftest herdr-modeline-global-mode-string-leads-with-an-empty-string ()
