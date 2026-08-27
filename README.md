@@ -48,7 +48,7 @@ M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
 
 | Key | Action |
 | --- | --- |
-| `RET` | go to the thing at point |
+| `RET` | go to the thing at point — a worktree that is not open yet is opened as a workspace |
 | `TAB` | fold |
 | `c` | create menu, with its parent taken from point |
 | `w` / `n` / `a` / `%` | create workspace / terminal / agent / worktree directly |
@@ -210,8 +210,13 @@ keyboard-first and needs no TUI at all.
 
 ### agent-windows
 
-One ghostel buffer per agent, `*herdr: claude w1:p1*`, each running `herdr terminal attach`. Emacs
-owns the layout, herdr's own layout tree goes unused, and there is no geometry to keep in sync.
+One ghostel buffer per agent, each running `herdr terminal attach`. Emacs owns the layout,
+herdr's own layout tree goes unused, and there is no geometry to keep in sync.
+
+A buffer is named for whatever the pane is best known by, in order: a name set through
+`agent.rename`, then the pane's own label — which is how a plugin pane arrives already named —
+and otherwise `KIND@WORKSPACE`, so an unnamed Claude in the `web` workspace reads as
+`*herdr: claude@web*` and a plain shell as `*herdr: shell@web*`.
 
 Attaching is lazy and nothing splits. `M-x herdr` takes no windows and opens no buffers. A pane is
 attached the first time you go to it, in the current window. Splitting stays yours: `C-x 2`,

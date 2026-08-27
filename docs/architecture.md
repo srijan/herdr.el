@@ -94,7 +94,10 @@ returns a nested list of nodes. Each node has this shape:
 (TYPE VALUE LINE CHILDREN)
 ```
 
-- `TYPE` is a symbol such as `herdr-pane` or `herdr-known-projects`.
+- `TYPE` is one of `herdr-workspace`, `herdr-panes` (a workspace's `main` group),
+  `herdr-pane`, `herdr-worktree`, `herdr-known-project` or `herdr-known-projects` (the
+  `Inactive` container). The renderer's `pcase` has no fallback clause, so a type with no branch
+  is dropped silently along with everything under it.
 - `VALUE` is the identifier that a command acts on. It must never be `nil` for a real row.
 - `LINE` is the propertized string to insert.
 - `CHILDREN` is a list of more nodes, or `nil`.
