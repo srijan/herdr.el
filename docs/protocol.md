@@ -139,8 +139,11 @@ state being wrong, so a report applied after the fact is never revisited. That i
 what is certain is that the second case does not correct itself and cannot be made to. Releasing
 the report leaves the pane with no agent at all — watched for 25 seconds — and `agent.explain`
 then refuses it with `agent_not_found`, since that method runs only against panes herdr already
-counts as agents. A pane started fresh gets its agent set correctly with no report involved, so
-killing the pane is the cure.
+counts as agents. Killing the pane is the cure.
+
+This matters less than it reads. Nothing in herdr.el reports an agent automatically since
+adoption was retired, so the first case is the one that happens: open a pane, start an agent in
+it, get the right label.
 
 Every pane also carries `agent_session`, which named `claude` correctly on both stale panes.
 Nothing in herdr.el reads it.

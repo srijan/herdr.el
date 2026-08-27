@@ -257,33 +257,26 @@ an agent named `shell` from any other kind. They count in the modeline, appear i
 picker and can raise notifications. They show as a plain `shell` row in the dashboard, with the
 same status glyph as any other pane.
 
-A relabel rides on the agent starting, not on the label being wrong. Start Claude in a pane
-already reported as `shell` and herdr relabels it `claude` a few seconds later. Report `shell` on
-a pane where Claude is *already* running and the label stays `shell` indefinitely — measured on
-two panes, hours apart, with `agent.explain` answering `claude` for both while the pane record
-went on carrying the report.
+Detection handles the ordinary path on its own. Open a terminal pane from herdr, start Claude in
+it, and herdr labels the pane `claude` a few seconds later. Nothing needs reporting, and
+`herdr-promote-shell` and the poll behind it are gone because they existed to force a relabel
+herdr already does — 936 `agent.explain` calls in one session, three quarters of all the traffic
+herdr.el sent.
 
-Releasing the report does not hand the pane to detection either. A released pane was watched for
-25 seconds and stayed at no agent at all, with `agent.explain` then refusing it outright —
-`agent_not_found`, because that method only runs against panes herdr already counts as agents.
-The report was the only reason detection ran on it.
+The one case that does not correct itself is a report applied to a pane where an agent was
+*already* running. That label stays put indefinitely: measured on two panes, hours apart, with
+`agent.explain` answering `claude` for both while the pane record went on carrying a reported
+`shell`. Releasing the report does not hand the pane to detection either — a released pane sat at
+no agent at all for 25 seconds, and `agent.explain` then refused it with `agent_not_found`, since
+that method runs only against panes herdr already counts as agents. Kill the pane and start the
+agent again; that works.
 
-What herdr does get right on its own is a pane it started: a fresh pane running Claude arrives
-with its agent already set, no report involved. The practical rule is therefore to leave panes
-alone rather than to adopt and then wait for a relabel that does not come. If a pane is stuck
-with a stale label, killing it and starting the agent again is the cure that works.
+Since nothing adopts automatically any more, reaching that state takes a deliberate
+`herdr-adopt-shell` on a pane already running something — or a pane left over from a version that
+did adopt. It is recorded here because the fix is not obvious, not because it is common.
 
-This corrects an earlier claim here that detection wins over a report. It does not restore
-`herdr-promote-shell` or the poll behind it, which are gone for a separate and still-good reason:
-`agent.explain` ran on every adopted shell on every directory poll, 936 calls in one session and
-three quarters of all the RPC traffic herdr.el made. A hand-triggered relabel is worth having; a
-poll that costs three quarters of the traffic to guess when one is needed is not.
-
-Every pane also carries an `agent_session` field, which named `claude` correctly on both stale
-panes above. Nothing in herdr.el reads it yet.
-
-`M-x herdr-release-shell` reverses adoption completely, dropping the reported agent and the
-sidebar row it produced.
+`M-x herdr-release-shell` reverses adoption, dropping the reported agent and the sidebar row it
+produced.
 
 ## What we measured
 
