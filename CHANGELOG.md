@@ -26,7 +26,27 @@ This entry covers the whole divergence from
   when a directory goes away. Use `project-forget-zombie-projects` to drop them from project.el
   itself.
 - **Worktree detail.** Each worktree row shows its branch and its directory. The branch column
-  sizes itself to the widest branch in the session.
+  sizes itself to the widest branch in the session. A worktree you have open as a workspace of
+  its own is drawn there in full -- its panes, its label, its status -- instead of as a dimmed
+  row pointing at a second copy of it at the top level. The top level is one row per repository.
+  A worktree hangs off its workspace directly rather than under a `worktrees (N)` heading. Every
+  workspace holds its own panes in a `main (N)` group beside them, so the two kinds of row are
+  never mistaken for each other, and the count on the workspace row is its checkouts -- its own
+  plus one per worktree -- with the pane count on the group that holds the panes:
+
+  ```
+  herdr.el (2)
+    main (2)
+      claude
+      shell
+    project-el (1)
+      claude
+  ```
+
+  An inactive project row gets the same treatment: a `main` row for the repository's own
+  checkout, its worktrees beside it, and its own count. The row folds, so a repository of
+  sixteen checkouts collapses to one line. Press `a` on any of those rows to start an agent in
+  that directory -- opening it as a workspace first if nothing is open there yet.
 - **`herdr-menu`.** The command runs the same start sequence as `herdr` but ends on the compact
   menu. Use it from inside a terminal buffer, where a full-window dashboard is the wrong result.
 - **A test suite.** 478 hermetic tests across 16 files, and a live suite that includes a schema
