@@ -123,10 +123,30 @@ of pane it refuses.
 survives if you only hide the window, so a buried terminal keeps its scrollback. A PTY of zero
 size draws nothing.
 
-**Detection outranks a reported agent.** ~~`pane.report_agent` takes lifecycle authority, so an
-adopted pane keeps its label.~~ That was true of an older herdr. Reporting and detection now
-operate independently, and detection wins. Measured: herdr relabelled a pane reported as `shell`
-to `claude` about 3 seconds after Claude started in it.
+**Detection relabels on a transition, not on demand.** ~~`pane.report_agent` takes lifecycle
+authority, so an adopted pane keeps its label.~~ ~~Reporting and detection operate
+independently, and detection wins.~~ Two measurements, both reproduced, and neither generalises
+to the other:
+
+- Start Claude in a pane already reported as `shell`, and herdr relabels it `claude` about 3
+  seconds later.
+- Report `shell` on a pane where Claude is *already* running, and the label stays `shell`
+  indefinitely — `agent.explain` answers `claude`, with a matched rule and a live session id,
+  while the pane record goes on carrying the report. Two panes, hours apart.
+
+The reading that fits both is that a relabel rides on the agent starting rather than on the
+state being wrong, so a report applied after the fact is never revisited. That is a hypothesis;
+what is certain is that the second case does not correct itself and cannot be made to. Releasing
+the report leaves the pane with no agent at all — watched for 25 seconds — and `agent.explain`
+then refuses it with `agent_not_found`, since that method runs only against panes herdr already
+counts as agents. Killing the pane is the cure.
+
+This matters less than it reads. Nothing in herdr.el reports an agent automatically since
+adoption was retired, so the first case is the one that happens: open a pane, start an agent in
+it, get the right label.
+
+Every pane also carries `agent_session`, which named `claude` correctly on both stale panes.
+Nothing in herdr.el reads it.
 
 ~~**`pane.report_agent` makes a plain shell pane attachable.** That is the mechanism of
 adoption.~~ Every pane is attachable since herdr 0.8.2, independent of `pane.report_agent`.

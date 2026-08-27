@@ -83,10 +83,12 @@ This entry covers the whole divergence from
 - **The `pane.updated` subscription.** The event fires about 7.5 times each second and carries a
   full pane record, but it stops exactly when an agent becomes idle. Connection B now carries
   the statuses, and `herdr-state-reconcile-panes` carries the rest.
-- **`herdr-promote-shell`, and the poll behind it.** The command rested on a belief that a
-  reported agent outranks detection. That belief was false. The poll called `agent.explain` on
-  every adopted shell at every directory poll: 936 calls in one session, which was three
-  quarters of all the traffic that herdr.el sent, to force a relabel that herdr already did.
+- **`herdr-promote-shell`, and the poll behind it.** herdr relabels a pane on its own when an
+  agent starts in it, so both existed to force a relabel that already happens. The poll called
+  `agent.explain` on every adopted shell at every directory poll: 936 calls in one session, three
+  quarters of all the traffic that herdr.el sent. The one case that does not relabel itself is a
+  report applied to a pane where an agent was already running -- see "Adopting a shell" in the
+  README. Kill the pane and start the agent again.
 
 ### Fixed
 

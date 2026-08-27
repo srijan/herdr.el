@@ -66,22 +66,34 @@ For the cause, see [Protocol notes](protocol.md#the-server-replays-its-full-even
 
 ## Step 4: Read the dashboard
 
-The dashboard shows the session as a tree. The tree has two levels: workspace and pane.
+The dashboard shows the session as a tree. The top level is one row per repository. Each
+workspace holds its own panes in a `main` group, and hangs its worktrees off itself beside that
+group.
 
 ```
-herdr.el (2)                          ~/workspace/srijan/herdr.el/
-  · claude    working   wS:p1         Fix the reconcile order
-    shell     idle      wS:p2
+herdr.el (2)                          ~/src/herdr.el/
+  main (2)
+    · claude    working   wS:p1       Fix the reconcile order
+      shell     idle      wS:p2
+  feat-dispatch (1)                   ~/src/herdr.el-worktrees/feat-dispatch/
+    main (1)
+      · claude  idle      w19:p1      Nest worktrees under their repository
 
 Inactive (14)
-  fleet-infra (0)                     ~/workspace/srijan/fleet-infra/
+  example-api (1)                     ~/src/example-api/
+    main                              ~/src/example-api
 ```
+
+Read the counts this way: a repository row counts its checkouts, its own plus one per worktree,
+and the `main` group counts the panes it holds. Here `herdr.el` has two checkouts — itself and
+the worktree `feat-dispatch`, which is open as a workspace and so is drawn in full rather than as a
+one-line pointer.
 
 A closed section shows the worst status inside it. A closed section therefore never hides a
 blocked agent.
 
 The `Inactive` section lists the `project.el` projects that have no open workspace. Press `RET`
-on one row to create the workspace.
+on one row to create the workspace, or `a` on any checkout under it to start an agent there.
 
 ## Step 5: Do the first tasks
 
