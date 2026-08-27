@@ -220,27 +220,21 @@ again: a second event stream would double every event the cache folds."
               ((symbol-function 'herdr--check-protocol) #'ignore)
               ((symbol-function 'herdr-state-running-p) (lambda () t))
               ((symbol-function 'herdr-state-start) (lambda () (push t starts))))
-      (let ((herdr-terminal-backend 'session))
-        (herdr-start))
+      (herdr-start)
       (should-not starts)
-      (should (= 1 (length ensures))))))
+      (should (= 2 (length ensures))))))
 
 (ert-deftest herdr-start-starts-the-stream-when-there-is-none ()
-  "And under `agent-windows' reconciles a second time, because which
-buffers to attach cannot be decided until the cache has been primed."
+  "Twice: which buffers to attach cannot be decided until the cache has
+been primed."
   (let (starts ensures)
     (cl-letf (((symbol-function 'herdr-term-ensure)
                (lambda () (push t ensures)))
               ((symbol-function 'herdr--check-protocol) #'ignore)
               ((symbol-function 'herdr-state-running-p) (lambda () nil))
               ((symbol-function 'herdr-state-start) (lambda () (push t starts))))
-      (let ((herdr-terminal-backend 'session))
-        (herdr-start))
+      (herdr-start)
       (should (= 1 (length starts)))
-      (should (= 1 (length ensures)))
-      (setq starts nil ensures nil)
-      (let ((herdr-terminal-backend 'agent-windows))
-        (herdr-start))
       (should (= 2 (length ensures))))))
 
 (ert-deftest herdr-stop-tears-down-both-halves ()

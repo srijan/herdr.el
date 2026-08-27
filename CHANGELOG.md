@@ -58,6 +58,10 @@ This entry covers the whole divergence from
   yourself, the way `project-prefix-map` is bound. The letters are the dashboard's letters, so
   there is one set to learn rather than two. There is no help key: `C-h` after the prefix lists
   the bindings already.
+- **`herdr-dispatch-create-terminal`**, renamed from `herdr-dispatch-create-pane`. It creates a
+  tab in the usual case but a whole workspace on a row whose directory has none open, so neither
+  `pane` nor `tab` named it. What it always produces is a terminal, which is what the docs and
+  the key table already called it, and what `herdr-new-terminal` is called.
 - **`herdr-dispatch-display-action`.** The dashboard takes the frame rather than splitting a
   window. A pane row has four columns and the last two carry the news -- the pane id, and what
   the agent reports it is working on -- so half a frame cuts off the part worth reading. Taking
@@ -65,7 +69,7 @@ This entry covers the whole divergence from
   option: set it to nil for the old splitting behaviour.
 - **`herdr-new-terminal`.** Opens a terminal, asking where first: an open workspace, or a
   `project.el` project with no workspace open, which is created and then opened in.
-- **A test suite.** 485 hermetic tests across 15 files, and a live suite that includes a schema
+- **A test suite.** 460 hermetic tests across 15 files, and a live suite that includes a schema
   drift test.
 - **Dependency resolution for the build.** `test/herdr-deps.el` finds `magit-section` and
   `transient` in the directories of `elpaca`, `package.el` and `straight.el`. A missing
@@ -110,6 +114,23 @@ This entry covers the whole divergence from
 - **The `pane.updated` subscription.** The event fires about 7.5 times each second and carries a
   full pane record, but it stops exactly when an agent becomes idle. Connection B now carries
   the statuses, and `herdr-state-reconcile-panes` carries the rest.
+- **The `session` terminal backend.** It ran the herdr TUI in one ghostel buffer and let herdr
+  own the layout. `ghostel-project`, or any shell, runs the herdr CLI just as well, and keeping
+  it meant every function in `herdr-term.el` branching on which backend was in force.
+  `herdr-terminal-backend` is gone with it; drop it from your configuration. Panes get one
+  buffer each, which is what `agent-windows` always did.
+- **The tab cache.** The `tabs` and `focused-tab-id` slots, `herdr-state-tabs`,
+  `herdr-state-reconcile-tabs`, its `tab.list` round trip on every poll, the five `tab.*` event
+  subscriptions and their merge and move handling. Nothing outside `herdr-state.el` ever read a
+  tab record: the dashboard flattened tabs away and the tab commands are gone, so this was 43
+  lines maintained for no reader. Creating a tab still works -- `tab.create` answers with its
+  root pane, which is all the caller wants -- and a closing tab reaches you as `pane.closed`.
+- **The dashboard's `f`.** It focused server-side and deliberately did not move Emacs, which
+  means something only when a second client is watching: the herdr TUI in a real terminal,
+  repainting to the newly focused pane. Every pane is its own Emacs buffer here, and `RET` makes
+  the same call and takes you there.
+- **`herdr-state-attachable`.** An identity function over `herdr-state-panes` with one caller.
+  It said something while attaching was conditional; since herdr 0.8.2 it does not.
 - **`transient` from `Package-Requires`.** The dashboard's `c` create menu was the last
   transient prefix in the package. It offered the same three verbs as `w`, `n` and `%` directly,
   plus three arguments: `--directory` and `--label` only skipped a prompt, and `--label` skipped

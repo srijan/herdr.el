@@ -8,16 +8,16 @@ herdr.el has eleven source files. Each file has one duty.
 
 | File | Lines | Duty |
 |---|---|---|
-| `herdr.el` | 151 | The entry points, and the protocol check. |
+| `herdr.el` | 123 | The entry points, and the protocol check. |
 | `herdr-rpc.el` | 260 | The transport for the socket API. |
-| `herdr-state.el` | 1192 | The cache of the session, and the two event streams. |
-| `herdr-term.el` | 598 | The two terminal backends, and directory tracking. |
-| `herdr-cmd.el` | 372 | The 11 curated commands. |
+| `herdr-state.el` | 1086 | The cache of the session, and the two event streams. |
+| `herdr-term.el` | 526 | The terminal buffers, and directory tracking. |
+| `herdr-cmd.el` | 342 | The 11 curated commands. |
 | `herdr-call.el` | 96 | The generic caller for all 91 methods. |
 | `herdr-schema.el` | 245 | The reader for the JSON Schema of the server. |
-| `herdr-select.el` | 281 | The `completing-read` pickers. |
-| `herdr-tree.el` | 897 | The dashboard tree, as data only. |
-| `herdr-dispatch.el` | 1370 | The dashboard renderer, and its verbs. |
+| `herdr-select.el` | 264 | The `completing-read` pickers. |
+| `herdr-tree.el` | 877 | The dashboard tree, as data only. |
+| `herdr-dispatch.el` | 1260 | The dashboard renderer, and its verbs. |
 | `herdr-modeline.el` | 191 | The modeline segment, and the notifications. |
 
 ## The data flow

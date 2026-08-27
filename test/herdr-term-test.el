@@ -189,10 +189,6 @@ to make that impossible."
   (should-error (herdr-term-attach-args '((pane_id . "w1:p1")) nil)
                 :type 'user-error))
 
-(ert-deftest herdr-term-session-args-are-empty ()
-  "The session backend runs bare herdr, which attaches the whole session."
-  (should (equal nil (herdr-term-session-args))))
-
 ;;; Directory tracking
 
 (ert-deftest herdr-term-reconcile-creates-a-buffer-for-an-adopted-shell ()
@@ -221,23 +217,6 @@ to make that impossible."
 
 ;;; Directory sync differs per backend
 
-(ert-deftest herdr-term-sync-directories-follows-the-focused-pane-under-session ()
-  "One buffer serves the whole session, so it tracks whatever is focused."
-  (let* ((herdr-terminal-backend 'session)
-         (herdr-term-track-directory t)
-         (buffer (get-buffer-create herdr-term-session-buffer-name))
-         (herdr-state--current
-          (herdr-state-from-snapshot
-           '((focused_pane_id . "w1:p2")
-             (panes . (((pane_id . "w1:p1") (cwd . "/"))
-                       ((pane_id . "w1:p2") (cwd . "/tmp"))))))))
-    (unwind-protect
-        (progn
-          (with-current-buffer buffer (setq default-directory "/"))
-          (herdr-term--sync-directories)
-          (should (equal "/tmp/" (buffer-local-value 'default-directory buffer))))
-      (kill-buffer buffer))))
-
 (ert-deftest herdr-term-sync-directories-is-per-buffer-under-agent-windows ()
   (let* ((herdr-terminal-backend 'agent-windows)
          (herdr-term-track-directory t)
@@ -256,27 +235,17 @@ to make that impossible."
       (kill-buffer one) (kill-buffer two))))
 
 (ert-deftest herdr-term-sync-directories-respects-the-off-switch ()
-  (let* ((herdr-terminal-backend 'session)
-         (herdr-term-track-directory nil)
-         (buffer (get-buffer-create herdr-term-session-buffer-name))
+  (let* ((herdr-term-track-directory nil)
+         (buffer (get-buffer-create "*herdr-off-switch*"))
+         (herdr-term--agent-buffers (list (cons "w1:p1" buffer)))
          (herdr-state--current
           (herdr-state-from-snapshot
-           '((focused_pane_id . "w1:p1")
-             (panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))))))
+           '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))))))
     (unwind-protect
         (progn
           (with-current-buffer buffer (setq default-directory "/"))
           (herdr-term--sync-directories)
           (should (equal "/" (buffer-local-value 'default-directory buffer))))
-      (kill-buffer buffer))))
-
-(ert-deftest herdr-term-select-pane-under-session-uses-the-one-buffer ()
-  "Under `session' every pane lives in the same buffer, so any pane id
-resolves to it — that is what makes Go to work there too."
-  (let* ((herdr-terminal-backend 'session)
-         (buffer (get-buffer-create herdr-term-session-buffer-name)))
-    (unwind-protect
-        (should (eq buffer (herdr-term-buffer-for-pane "w9:p9")))
       (kill-buffer buffer))))
 
 ;;; Buffers must follow their pane's identity
@@ -355,28 +324,6 @@ behind an unchanging buffer list."
 
 ;;; Starting herdr must not rearrange windows
 
-(ert-deftest herdr-term-display-does-nothing-under-agent-windows ()
-  "There is no primary buffer to show, and popping an arbitrary agent
-would mean `M-x herdr' takes a window before being asked to."
-  (let* ((herdr-terminal-backend 'agent-windows)
-         (buffer (generate-new-buffer " *an-agent*"))
-         (herdr-term--agent-buffers (list (cons "w1:p1" buffer))))
-    (unwind-protect
-        (save-window-excursion
-          (let ((before (current-window-configuration)))
-            (should-not (herdr-term-display))
-            (should (compare-window-configurations
-                     before (current-window-configuration)))))
-      (kill-buffer buffer))))
-
-(ert-deftest herdr-term-display-shows-the-tui-under-session ()
-  (let* ((herdr-terminal-backend 'session)
-         (buffer (get-buffer-create herdr-term-session-buffer-name)))
-    (unwind-protect
-        (save-window-excursion
-          (should (herdr-term-display)))
-      (kill-buffer buffer))))
-
 (ert-deftest herdr-term-select-pane-does-not-split-the-frame ()
   "Going to a pane reuses the current window; splitting is the user's
 business, not a side effect of navigation."
@@ -409,21 +356,6 @@ business, not a side effect of navigation."
           (should (equal '(my-action) (cdr seen))))
       (kill-buffer buffer))))
 
-(ert-deftest herdr-term-display-and-select-use-the-same-action ()
-  "The same buffer must not appear one way from `M-x herdr' and another
-way from Go to."
-  (let* ((herdr-terminal-backend 'session)
-         (buffer (get-buffer-create herdr-term-session-buffer-name))
-         (actions nil)
-         (herdr-display-action '(recorded)))
-    (unwind-protect
-        (cl-letf (((symbol-function 'pop-to-buffer)
-                   (lambda (_buf action &rest _) (push action actions) _buf)))
-          (herdr-term-display)
-          (herdr-term-select-pane "w1:p1")
-          (should (equal '((recorded) (recorded)) actions)))
-      (kill-buffer buffer))))
-
 (ert-deftest herdr-display-action-defaults-to-reusing-the-window ()
   "The default must not delete the user's other windows."
   (should (equal '((display-buffer-reuse-window display-buffer-same-window))
@@ -454,8 +386,7 @@ startup there stuck with an unusable PTY."
 
 (ert-deftest herdr-term-bootstrap-server-quits-the-window-even-on-failure ()
   "A bootstrap that never comes up must not leave its window lingering."
-  (let ((herdr-terminal-backend 'agent-windows)
-        (herdr-server-start-timeout 0.01)
+  (let ((herdr-server-start-timeout 0.01)
         quit)
     (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
               ((symbol-function 'ghostel-exec) #'ignore)
@@ -466,9 +397,9 @@ startup there stuck with an unusable PTY."
       (unwind-protect
           (progn
             (should-error (herdr-term--bootstrap-server))
-            (should (eq (get-buffer herdr-term-session-buffer-name) quit)))
-        (when (get-buffer herdr-term-session-buffer-name)
-          (kill-buffer herdr-term-session-buffer-name))))))
+            (should (eq (get-buffer herdr-term-bootstrap-buffer-name) quit)))
+        (when (get-buffer herdr-term-bootstrap-buffer-name)
+          (kill-buffer herdr-term-bootstrap-buffer-name))))))
 
 ;;; Timer teardown must cancel, not merely forget
 
@@ -530,34 +461,6 @@ not be handed to `cancel-timer', which signals on one."
 
 ;;; Teardown must actually tear down
 
-(ert-deftest herdr-term-teardown-under-session-kills-the-tui-buffer ()
-  "Leaving the buffer behind leaves a terminal attached to a stream that
-has stopped, and `herdr-start' then adopts it as though it were live.
-The hook and the timer go with it, since a teardown that leaves either
-one on keeps working on buffers that are gone."
-  (let* ((herdr-terminal-backend 'session)
-         (herdr-state-change-functions (list #'herdr-term--on-state-change))
-         ;; A live timer, not nil: with both slots empty the teardown's
-         ;; call to `herdr-term--stop-directory-timer' has nothing to do
-         ;; and could be dropped altogether without this noticing.
-         (poll (run-at-time 3600 nil #'ignore))
-         (herdr-term--directory-timer poll)
-         (herdr-term--directory-debounce-timer nil)
-         (buffer (get-buffer-create herdr-term-session-buffer-name))
-         cancelled)
-    (unwind-protect
-        (progn
-          (cl-letf (((symbol-function 'cancel-timer)
-                     (lambda (timer) (push timer cancelled))))
-            (herdr-term-teardown))
-          (should (equal (list poll) cancelled))
-          (should-not herdr-term--directory-timer)
-          (should-not (buffer-live-p buffer))
-          (should-not (memq #'herdr-term--on-state-change
-                            herdr-state-change-functions)))
-      (cancel-timer poll)
-      (when (buffer-live-p buffer) (kill-buffer buffer)))))
-
 (ert-deftest herdr-term-teardown-under-agent-windows-kills-every-buffer ()
   "One buffer per agent, and the table has to be emptied with them —
 a stale entry names a dead buffer that reconciliation would count as
@@ -595,22 +498,17 @@ thawed.  So the poll's RPCs run under `herdr-rpc-background-timeout'."
       (herdr-term--poll-directories)
       (should (equal 2.0 seen)))))
 
-(ert-deftest herdr-term-poll-also-reconciles-workspaces-and-tabs ()
-  "Workspaces and tabs had no periodic repair at all before this: a
-missed `workspace.closed' or `tab.closed' left a ghost in the cache
-until the next full resync, which only fires on reconnect — and a
-session that never disconnects never reconnects.  This is the one
-periodic tick, so it is where both get called from."
+(ert-deftest herdr-term-poll-also-reconciles-workspaces ()
+  "A workspace has no periodic repair but this: a missed
+`workspace.closed' leaves a ghost until the next full resync, which only
+fires on reconnect."
   (let ((herdr-state--running t)
-        workspaces-called tabs-called)
+        workspaces-called)
     (cl-letf (((symbol-function 'herdr-state-reconcile-panes) (lambda () nil))
               ((symbol-function 'herdr-state-reconcile-workspaces)
-               (lambda () (setq workspaces-called t) nil))
-              ((symbol-function 'herdr-state-reconcile-tabs)
-               (lambda () (setq tabs-called t) nil)))
+               (lambda () (setq workspaces-called t) nil)))
       (herdr-term--poll-directories)
-      (should workspaces-called)
-      (should tabs-called))))
+      (should workspaces-called))))
 
 (ert-deftest herdr-term-poll-does-not-nest-inside-its-own-wait ()
   "`accept-process-output' runs due timers, and the poll's worst case

@@ -25,23 +25,17 @@ what herdr.el sends.
 
 | Option | Default | Function |
 |---|---|---|
-| `herdr-terminal-backend` | `session` | How Emacs hosts the herdr terminals. |
 | `herdr-display-action` | `((display-buffer-reuse-window display-buffer-same-window))` | Where a herdr buffer appears. |
 | `herdr-term-track-directory` | `t` | Whether a buffer follows the working directory of its pane. |
 | `herdr-term-directory-interval` | `5.0` | The number of seconds between directory polls. `nil` stops the polls. |
 | `herdr-term-directory-debounce` | `0.4` | The number of seconds to group the directory refreshes. |
 
-`herdr-terminal-backend` takes one of two values:
+herdr.el gives each pane its own buffer. Emacs controls the layout. Your panes stay alive when
+you close Emacs, because the herdr server is a daemon.
 
-- `session` gives you one buffer that runs the herdr TUI. herdr controls the layout.
-- `agent-windows` gives you one buffer for each agent. Emacs controls the layout. Your agents
-  stay alive when you close Emacs.
-
-Every path that shows a herdr buffer uses `herdr-display-action`. The same buffer therefore
-cannot appear in one place from one command and in another place from a different command.
-
-The herdr TUI needs width for its sidebar. The sidebar is 26 columns. Under the `session`
-backend, you can prefer `'(display-buffer-full-frame)`. That value deletes your other windows.
+Every path that shows a terminal uses `herdr-display-action`. The same buffer therefore cannot
+appear in one place from one command and in another place from a different command. The dashboard
+has its own option; see [The dashboard](#the-dashboard).
 
 herdr does not send an event when the working directory changes. Directory tracking must
 therefore poll. The poll runs only while herdr terminal buffers exist.

@@ -67,9 +67,9 @@ some commands may misbehave"
   (herdr--check-protocol)
   (unless (herdr-state-running-p)
     (herdr-state-start))
-  ;; agent-windows needs the cache before it can decide what to attach.
-  (when (eq herdr-terminal-backend 'agent-windows)
-    (herdr-term-ensure)))
+  ;; Twice: the second pass has the cache, which is what decides what to
+  ;; attach.
+  (herdr-term-ensure))
 
 ;;;###autoload
 (defun herdr-stop ()
@@ -98,7 +98,6 @@ The one entry point that runs the start sequence first, which is why
 `s\\=' in `herdr-command-map\\=' is bound here and not to `herdr-agents\\='."
   (interactive)
   (herdr-start)
-  (herdr-term-display)
   (herdr-agents))
 
 (defvar herdr-command-map

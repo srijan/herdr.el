@@ -317,16 +317,11 @@ reconcile alone cannot account for a fresh label."
              (seq-find (lambda (item) (equal id (alist-get id-key item)))
                        (funcall accessor herdr-state--current))))
 
-(ert-deftest herdr-state-reconnect-resyncs-tabs-and-workspaces-too ()
+(ert-deftest herdr-state-reconnect-resyncs-workspaces-too ()
   "A reconnect must replace the whole cache, not just the panes.
-
-Events missed during a disconnect cannot be replayed, and they are not
-only pane events: a workspace renamed or a tab closed while the socket
-was down is announced once and never again.  Reconciling repairs panes
-alone — it is one `pane.list\\=' — so a reconnect that only reconciled
-left the workspace and tab halves of the cache wrong for the rest of the
-session, which is the never-converging cache this whole branch exists to
-remove."
+Reconciling repairs panes alone — it is one `pane.list\\=' — so a
+reconnect that only reconciled left the workspace half wrong for the
+rest of the session."
   (let (methods)
     (herdr-test-with-server
         (herdr-state-live-test--reconnect-server
@@ -351,9 +346,7 @@ remove."
               (should (member "session.snapshot" methods))
               (should (equal "fresh" (herdr-state-live-test--label
                                       #'herdr-state-workspaces
-                                      'workspace_id "w1")))
-              (should (equal "fresh" (herdr-state-live-test--label
-                                      #'herdr-state-tabs 'tab_id "w1:t1"))))
+                                      'workspace_id "w1"))))
           (herdr-state--close herdr-state--global-process)
           (herdr-state--close herdr-state--pane-process)
           (when herdr-state--settle-timer
@@ -666,49 +659,6 @@ nothing when nothing has changed."
     (should (equal '("w1")
                    (mapcar (lambda (w) (alist-get 'workspace_id w))
                            (herdr-state-workspaces herdr-state--current))))))
-
-(ert-deftest herdr-state-reconcile-tabs-drops-ghosts ()
-  "A tab whose workspace already closed is orphaned the same way a pane
-is when its owner disappears without a `pane.closed' — this sweep
-catches it without `workspace_closed' needing to cascade."
-  (herdr-test-with-server
-      (herdr-state-live-test--tab-list-server
-       [((tab_id . "w1:t1") (workspace_id . "w1") (label . "kept"))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((tabs . (((tab_id . "w1:t1") (workspace_id . "w1") (label . "kept"))
-                       ((tab_id . "w9:t1") (workspace_id . "w9") (label . "orphan"))))))))
-      (should (herdr-state-reconcile-tabs))
-      (should (equal '("w1:t1")
-                     (mapcar (lambda (tab) (alist-get 'tab_id tab))
-                             (herdr-state-tabs herdr-state--current)))))))
-
-(ert-deftest herdr-state-reconcile-tabs-adds-and-updates ()
-  (herdr-test-with-server
-      (herdr-state-live-test--tab-list-server
-       [((tab_id . "w1:t1") (workspace_id . "w1") (label . "renamed"))
-        ((tab_id . "w1:t2") (workspace_id . "w1") (label . "new"))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((tabs . (((tab_id . "w1:t1") (workspace_id . "w1")
-                        (label . "old"))))))))
-      (should (herdr-state-reconcile-tabs))
-      (should (= 2 (length (herdr-state-tabs herdr-state--current))))
-      (should (equal "renamed"
-                     (alist-get 'label
-                                (seq-find (lambda (tab) (equal "w1:t1"
-                                                               (alist-get 'tab_id tab)))
-                                          (herdr-state-tabs herdr-state--current))))))))
-
-(ert-deftest herdr-state-reconcile-tabs-reports-no-change-when-in-sync ()
-  (herdr-test-with-server
-      (herdr-state-live-test--tab-list-server
-       [((tab_id . "w1:t1") (workspace_id . "w1") (label . "kept"))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((tabs . (((tab_id . "w1:t1") (workspace_id . "w1")
-                        (label . "kept"))))))))
-      (should-not (herdr-state-reconcile-tabs)))))
 
 (provide 'herdr-state-live-test)
 ;;; herdr-state-live-test.el ends here

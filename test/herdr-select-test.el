@@ -131,17 +131,6 @@ down to `herdr-rpc-background-timeout'."
       ;; The binding must not leak past the call.
       (should (equal 10.0 herdr-rpc-timeout)))))
 
-(ert-deftest herdr-select-consult-source-lists-everything-under-session ()
-  "Under `session' every pane shares the one buffer, so all qualify."
-  (let* ((herdr-terminal-backend 'session)
-         (buffer (get-buffer-create herdr-term-session-buffer-name)))
-    (unwind-protect
-        (let ((herdr-state--current
-               (herdr-state-from-snapshot
-                '((panes . (((pane_id . "w1:p1")) ((pane_id . "w1:p2"))))))))
-          (should (equal '("w1:p1" "w1:p2") (herdr-select-panes-with-buffers))))
-      (kill-buffer buffer))))
-
 (ert-deftest herdr-select-consult-visit-switches-and-focuses ()
   "Selecting must both move Emacs and move herdr's focus."
   (let ((herdr-terminal-backend 'agent-windows)
@@ -201,20 +190,6 @@ follow Emacs."
         (with-current-buffer orphan
           (should (equal "w1:pA" (herdr-select-target-pane))))
       (kill-buffer orphan))))
-
-(ert-deftest herdr-select-target-under-session-uses-herdr-focus ()
-  "One buffer serves every pane there, so it cannot disambiguate."
-  (let* ((herdr-terminal-backend 'session)
-         (buffer (get-buffer-create herdr-term-session-buffer-name))
-         (herdr-state--current
-          (herdr-state-from-snapshot
-           '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))
-         (current-prefix-arg nil))
-    (unwind-protect
-        (with-current-buffer buffer
-          (should-not (herdr-term-pane-for-buffer))
-          (should (equal "w1:pA" (herdr-select-target-pane))))
-      (kill-buffer buffer))))
 
 ;;; Choosing where a new terminal goes
 

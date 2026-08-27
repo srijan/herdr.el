@@ -106,7 +106,6 @@ tells itself apart from a redraw of an empty session.")
     (define-key map (kbd "RET") #'herdr-dispatch-visit)
     (define-key map "p" #'herdr-dispatch-prompt)
     (define-key map "r" #'herdr-dispatch-read)
-    (define-key map "f" #'herdr-dispatch-focus)
     (define-key map "R" #'herdr-dispatch-rename)
     (define-key map "k" #'herdr-dispatch-close)
     ;; TAB is `magit-section-toggle' itself.  It was a command of ours
@@ -129,7 +128,7 @@ tells itself apart from a redraw of an empty session.")
     ;; address that.  Reach for those first.
     (define-key map (kbd "TAB") #'magit-section-toggle)
     (define-key map "w" #'herdr-dispatch-create-workspace)
-    (define-key map "n" #'herdr-dispatch-create-pane)
+    (define-key map "n" #'herdr-dispatch-create-terminal)
     (define-key map "%" #'herdr-dispatch-create-worktree)
     map)
   "Keymap for `herdr-dispatch-mode'.
@@ -872,36 +871,6 @@ nowhere to go; see `herdr-dispatch--refuse-heading\\='."
   (herdr-pane-read (herdr-dispatch--require 'herdr-pane "a pane")
                    "recent_unwrapped"))
 
-(herdr-dispatch-defverb herdr-dispatch-focus ()
-  "Focus the thing at point server-side, without moving Emacs.
-A worktree is focused as the workspace herdr has opened it as; a worktree
-that is not open as one has nothing to focus and says so, and neither
-does a known project with no workspace open — RET creates one instead
-of merely focusing, so this refuses rather than doing that on the wrong
-key.  Neither has the worktrees heading; see
-`herdr-dispatch--refuse-heading\\='."
-  (cond
-   ((herdr-dispatch--value-at-point 'herdr-worktree)
-    (herdr-rpc-call "workspace.focus"
-                    `((workspace_id . ,(herdr-dispatch--worktree-workspace)))))
-   ((herdr-dispatch--type-at-point 'herdr-panes)
-    (herdr-dispatch--refuse-heading
-     "a workspace's main group cannot be focused"))
-   ((herdr-dispatch--value-at-point 'herdr-known-project)
-    (user-error "herdr: %s has no workspace open yet (RET opens it)"
-                (herdr-dispatch--value-at-point 'herdr-known-project)))
-   ((herdr-dispatch--type-at-point 'herdr-known-projects)
-    (herdr-dispatch--refuse-heading
-     "the inactive-projects group cannot be focused"))
-   ((herdr-dispatch--value-at-point 'herdr-pane)
-    (herdr-rpc-call "pane.focus"
-                    `((pane_id . ,(herdr-dispatch--value-at-point 'herdr-pane)))))
-   ((herdr-dispatch--value-at-point 'herdr-workspace)
-    (herdr-rpc-call "workspace.focus"
-                    `((workspace_id . ,(herdr-dispatch--value-at-point
-                                        'herdr-workspace)))))
-   (t (user-error "herdr: nothing at point"))))
-
 ;;; The mutating verbs
 
 (herdr-dispatch-defverb herdr-dispatch-rename ()
@@ -1003,7 +972,7 @@ server has focused\", which this buffer must never answer silently."
       (user-error "herdr: nothing at point names a workspace to open a terminal in"))
     (herdr-cmd--new-tab-pane workspace)))
 
-(herdr-dispatch-defverb herdr-dispatch-create-pane ()
+(herdr-dispatch-defverb herdr-dispatch-create-terminal ()
   "Open a terminal, taking its place from point.
 A directory row wins; otherwise a fresh tab in the workspace at point.
 A row naming neither is refused rather than sent to the server\\='s

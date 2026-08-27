@@ -43,7 +43,6 @@ Put this form in your init file:
          ("C-c H" . herdr-command-map)
          :map project-prefix-map
          ("h" . herdr-project))
-  :custom (herdr-terminal-backend 'session)
   :config (herdr-modeline-mode 1))
 ```
 
@@ -135,5 +134,5 @@ The integration makes the modeline and the dashboard accurate.
 
 - Read [Commands](commands.md) for the full command list.
 - Read [Configuration](configuration.md) to change the defaults.
-- Read the `agent-windows` section of the main [README](../README.md) if you want your agents to
-  stay alive when you close Emacs.
+- Read the terminal-hosting section of the main [README](../README.md). Agents stay alive when you
+  close Emacs, because the herdr server is a daemon.

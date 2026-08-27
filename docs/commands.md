@@ -134,8 +134,10 @@ dashboard or `herdr-command-map` calls it.
 |---|---|
 | `herdr-transient` and its six sub-menus, `herdr-menu` | A third surface over commands the dashboard and the prefix keymap already reach. |
 | The dashboard's `c` create menu | The same three verbs as `w`, `n` and `%`, plus three arguments. Two of them only skipped a prompt. The third is the base ref of a worktree, which is a prompt now. |
-| `herdr-pane-split-right`, `herdr-pane-split-down`, `herdr-pane-zoom`, `herdr-pane-resize`, `herdr-pane-swap` | Layout of the TUI. The `agent-windows` backend gives the layout to Emacs. These commands then move nothing that you see. |
-| `herdr-tab-create`, `herdr-tab-close`, `herdr-tab-focus`, `herdr-tab-rename` | A tab has one visual form only, which is the tab bar of the TUI. The `agent-windows` backend already hid these commands. |
+| `herdr-pane-split-right`, `herdr-pane-split-down`, `herdr-pane-zoom`, `herdr-pane-resize`, `herdr-pane-swap` | Layout of the TUI. Emacs owns the layout. These commands move nothing that you see. |
+| `herdr-tab-create`, `herdr-tab-close`, `herdr-tab-focus`, `herdr-tab-rename` | A tab has one visual form only, which is the tab bar of the TUI. The tab records in the cache went with them: nothing outside `herdr-state.el` read one. |
+| The `session` terminal backend | It ran the herdr TUI in one ghostel buffer. Run the herdr CLI in `ghostel-project` if you want that. |
+| The dashboard key `f` | It focused server-side and did not move Emacs. That means something only to a second client. `RET` makes the same call and moves Emacs. |
 | `herdr-pane-run`, `herdr-pane-send-text`, `herdr-pane-wait-for-output`, `herdr-agent-wait` | Scripting of the session. The herdr CLI and the agent skill both do this already. |
 | `herdr-agent-read`, `herdr-agent-focus` | The same call as the pane command, with a different type of target. |
 | `herdr-agent-explain` | A debugging aid for the detection of agents. |

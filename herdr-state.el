@@ -82,7 +82,6 @@ is \"resync\" and DATA is nil.")
     "workspace.renamed" "workspace.moved" "workspace.reordered"
     "workspace.closed" "workspace.focused"
     "worktree.created" "worktree.opened" "worktree.removed"
-    "tab.created" "tab.closed" "tab.renamed" "tab.moved" "tab.focused"
     "pane.created" "pane.closed" "pane.focused"
     "pane.moved" "pane.exited" "pane.agent_detected"
     "layout.updated")
@@ -107,7 +106,6 @@ first line of defence.")
 (cl-defstruct (herdr-state (:constructor herdr-state--make)
                            (:copier herdr-state-copy))
   (panes nil)
-  (tabs nil)
   (workspaces nil)
   ;; Named `agent-info' rather than `agents': a slot called `agents'
   ;; would generate `herdr-state-agents', clobbering the function of that
@@ -116,7 +114,6 @@ first line of defence.")
   ;; PaneInfo has.
   (agent-info nil)
   (focused-pane-id nil)
-  (focused-tab-id nil)
   (focused-workspace-id nil))
 
 (defun herdr-state-empty ()
@@ -127,11 +124,9 @@ first line of defence.")
   "Build a state from SNAPSHOT, the payload of `session.snapshot'."
   (herdr-state--make
    :panes (alist-get 'panes snapshot)
-   :tabs (alist-get 'tabs snapshot)
    :workspaces (alist-get 'workspaces snapshot)
    :agent-info (alist-get 'agents snapshot)
    :focused-pane-id (alist-get 'focused_pane_id snapshot)
-   :focused-tab-id (alist-get 'focused_tab_id snapshot)
    :focused-workspace-id (alist-get 'focused_workspace_id snapshot)))
 
 (defun herdr-state-pane (state id)
@@ -143,12 +138,6 @@ first line of defence.")
   "Return the workspace in STATE whose id is ID, or nil."
   (seq-find (lambda (workspace) (equal id (alist-get 'workspace_id workspace)))
             (herdr-state-workspaces state)))
-
-(defun herdr-state-attachable (state)
-  "Return the panes in STATE a terminal client can attach to.
-`herdr terminal attach' takes any pane's raw terminal stream, so that
-is every pane; the function survives as the single place that says so."
-  (herdr-state-panes state))
 
 (defun herdr-state-agents (state)
   "Return the panes in STATE with a detected or reported agent."
@@ -480,59 +469,6 @@ events use dots, so both spellings appear here deliberately."
               (alist-get 'before_workspace_id data)))
        next)
 
-      ("tab_created"
-       (let ((tab (alist-get 'tab data)))
-         (if (not tab)
-             state
-           (setf (herdr-state-tabs next)
-                 (herdr-state--upsert (herdr-state-tabs state) 'tab_id
-                                      (alist-get 'tab_id tab) tab))
-           next)))
-
-      ("tab_renamed"
-       ;; `tab_id', `workspace_id' and the new `label'.  No TabInfo, so
-       ;; the old shared branch read nil and dropped every rename.
-       (let ((tabs (herdr-state--merge-item
-                    (herdr-state-tabs state) 'tab_id
-                    (alist-get 'tab_id data)
-                    (list (cons 'label (alist-get 'label data))))))
-         (if (eq tabs (herdr-state-tabs state))
-             state
-           (setf (herdr-state-tabs next) tabs)
-           next)))
-
-      ("tab_moved"
-       ;; `tab_id', `workspace_id', `insert_index' and a `tabs' list of
-       ;; TabInfo, folded in first for freshness.  `insert_index' counts
-       ;; among the tabs of `workspace_id' alone, since that is what
-       ;; `tab.move' means by it, while the cache holds every
-       ;; workspace's tabs in one list.
-       (let ((tabs (herdr-state-tabs state))
-             (workspace-id (alist-get 'workspace_id data)))
-         (dolist (tab (append (alist-get 'tabs data) nil))
-           (setq tabs (herdr-state--upsert tabs 'tab_id
-                                           (alist-get 'tab_id tab) tab)))
-         (setq tabs
-               (herdr-state--move-within
-                tabs 'tab_id (alist-get 'tab_id data)
-                (alist-get 'insert_index data)
-                (lambda (tab)
-                  (equal workspace-id (alist-get 'workspace_id tab)))))
-         (if (eq tabs (herdr-state-tabs state))
-             state
-           (setf (herdr-state-tabs next) tabs)
-           next)))
-
-      ("tab_closed"
-       (setf (herdr-state-tabs next)
-             (herdr-state--remove (herdr-state-tabs state)
-                                  'tab_id (alist-get 'tab_id data)))
-       next)
-
-      ("tab_focused"
-       (setf (herdr-state-focused-tab-id next) (alist-get 'tab_id data))
-       next)
-
       ;; layout_updated and anything herdr adds later: no cache impact.
       (_ state))))
 
@@ -728,7 +664,7 @@ subscribe, so a failed rebuild keeps looking stale and is retried.")
 (defun herdr-state--watched-pane-ids ()
   "Return ids of the panes connection B should subscribe to.
 
-The agent panes, not every pane — `herdr-state-attachable' widened to
+The agent panes, not every pane — attachment widened to
 every pane once `herdr terminal attach' stopped requiring a reported
 agent, but `pane.agent_status_changed' still only has something to say
 about a pane running an agent.  Each per-pane subscription makes the
@@ -1024,8 +960,8 @@ killed by the agent-windows reap listening on the change hook)."
   "Make the cached workspace set match the server.
 
 Panes get this from `herdr-state-reconcile-panes' every poll; workspaces
-and tabs never did, because nothing periodic called `workspace.list' or
-`tab.list' the way the pane poll calls `pane.list'.  A missed
+never did, because nothing periodic called `workspace.list' the way the
+pane poll calls `pane.list'.  A missed
 `workspace.closed' — the same disconnect-window and ring-replay gaps
 `herdr-state-reconcile-panes' defends panes against — then leaves a
 ghost workspace in the cache indefinitely: not just until the next
@@ -1033,10 +969,6 @@ poll, since there is no next poll for it, but until the next full
 resync, which only fires on reconnect.  A session that never
 disconnects never reconnects, so the ghost is permanent — it shows up
 in the dispatcher, the modeline, and every picker for the rest of the
-session.  `herdr-state-reconcile-tabs' is the tab-scoped sibling of
-this function, called alongside it from the same periodic poll; see
-`herdr-term--poll-directories'.
-
 `workspace.list', like `pane.list', takes no required parameters and
 answers with every live workspace, so one call resolves both closures
 and updates in a single pass.  Returns non-nil when anything changed."
@@ -1064,41 +996,6 @@ and updates in a single pass.  Returns non-nil when anything changed."
             (setq herdr-state--current
                   (herdr-state-reduce herdr-state--current "workspace_updated"
                                       `((workspace . ,workspace)))))))
-      (when changed
-        (run-hook-with-args 'herdr-state-change-functions "reconcile" nil))
-      changed)))
-
-(defun herdr-state-reconcile-tabs ()
-  "Make the cached tab set match the server.
-The tab-scoped sibling of `herdr-state-reconcile-workspaces'; see its
-docstring for why this exists.  A tab whose workspace closed is
-orphaned the same way a pane is when its own owner disappears without
-a `pane.closed' — this sweep catches it without `workspace_closed'
-needing to know to cascade into the tabs it owned.
-
-`tab.list' with no `workspace_id' filter, like `pane.list', answers
-with every live tab across every workspace.  Returns non-nil when
-anything changed."
-  (when-let* ((tabs (ignore-errors (alist-get 'tabs (herdr-rpc-call "tab.list")))))
-    (let* ((live-ids (mapcar (lambda (tab) (alist-get 'tab_id tab)) tabs))
-           (stale (seq-remove (lambda (tab) (member (alist-get 'tab_id tab)
-                                                     live-ids))
-                              (herdr-state-tabs herdr-state--current)))
-           (changed nil))
-      (dolist (tab stale)
-        (setq changed t)
-        (setq herdr-state--current
-              (herdr-state-reduce herdr-state--current "tab_closed"
-                                  `((tab_id . ,(alist-get 'tab_id tab))))))
-      (dolist (tab tabs)
-        (let* ((id (alist-get 'tab_id tab))
-               (known (seq-find (lambda (c) (equal id (alist-get 'tab_id c)))
-                                (herdr-state-tabs herdr-state--current))))
-          (unless (equal known tab)
-            (setq changed t)
-            (setq herdr-state--current
-                  (herdr-state-reduce herdr-state--current "tab_created"
-                                      `((tab . ,tab)))))))
       (when changed
         (run-hook-with-args 'herdr-state-change-functions "reconcile" nil))
       changed)))

@@ -681,7 +681,7 @@ The repository\\='s own checkout leads the list, as a `main\\=' row; see
 `herdr-tree--main-checkout-node\\=' for why it is drawn here and not
 under an open workspace.  A repository with no worktrees at all is
 therefore one `main\\=' row rather than nothing: the row is where
-\\[herdr-dispatch-create-pane] is aimed, and a repository does not stop
+\\[herdr-dispatch-create-terminal] is aimed, and a repository does not stop
 having a checkout for having no worktrees.
 
 Nil still means the reply has not landed.  That is absence of knowledge,
