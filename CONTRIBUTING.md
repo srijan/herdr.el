@@ -15,7 +15,7 @@ behaviour of the server that the herdr documentation does not state.
 
 ```bash
 make compile     # byte-compile. A warning stops the build.
-make test        # 460 tests. No herdr server is necessary.
+make test        # No herdr server is necessary.
 make test-live   # more tests. A herdr server is necessary.
 ```
 
@@ -61,6 +61,8 @@ faults:
 
 - A modeline that renders `*invalid*`.
 - A command that splits a window.
+- A `require` that nothing pulls in any more. Every file is loaded by the suite itself, so a
+  function that is only reachable through a deleted file still answers `fboundp`.
 
 Several faults passed a green suite. A person found them by driving a real Emacs under a PTY.
 
@@ -98,8 +100,22 @@ Update the documentation in the same change as the code.
 - A new fact about the server goes in [`docs/protocol.md`](docs/protocol.md).
 - A new symptom goes in [`docs/troubleshooting.md`](docs/troubleshooting.md).
 
-Write the documentation in Simplified Technical English. Keep sentences short. Use the active
-voice. Use one word for one meaning, and keep that word through the document.
+### How to write it
+
+These rules cover every document in this repository, the README included. The README was exempt
+once, and it grew 23 em dashes and a 67-word sentence before anyone noticed.
+
+- Write Simplified Technical English. Short sentences. Active voice.
+- Use one word for one meaning, and keep that word through the document.
+- One idea per sentence. If a sentence needs a dash to hold two ideas together, make it two
+  sentences.
+- No em dashes. Use a full stop, a comma or a colon.
+- No counts. "18 event types", "465 tests" and "1308 lines" all go stale in silence, and the
+  reader can run `wc -l`. Name the thing instead of counting it. A constant that lives in the
+  code, such as `herdr-protocol-version`, is fine.
+- Draw a thing once. If a diagram already appears in another document, link to it.
+- Say what the reader must do or know. Leave out why the decision was made. That belongs in the
+  commit message, where it is searchable and nobody has to re-read it.
 
 When you correct a fact in `docs/protocol.md`, keep the old fact visible with a strikethrough.
 A deleted wrong fact returns, because the next reader derives it again from the same weak
@@ -116,7 +132,7 @@ evidence.
 ## Relationship to upstream
 
 Upstream is [eddof13/herdr.el](https://github.com/eddof13/herdr.el). This repository is a fork
-that has diverged by about 12,900 lines. A rebase onto upstream is no longer realistic.
+that has diverged far enough that a rebase onto upstream is no longer realistic.
 
 Send a change here. If the change also suits upstream, say so, and we can carry it over.
 
@@ -126,7 +142,7 @@ Include these items:
 
 1. Your Emacs version, from `M-x emacs-version`.
 2. Your herdr version, from `herdr --version`.
-3. The value of `herdr-terminal-backend`.
+3. The values of `herdr-display-action` and `herdr-dispatch-display-action`.
 4. The exact message, or a screenshot of the dashboard.
 5. Whether the fault survives a reconcile. Press `g`, then wait five seconds.
 

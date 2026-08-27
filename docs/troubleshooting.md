@@ -47,15 +47,14 @@ command.
 
 **Symptom.** Emacs reports that it cannot find `magit-section` or `ghostel`.
 
-**Cause.** One dependency is missing. `magit-section` is the dependency that people forget,
-because upstream herdr.el does not need it.
+**Cause.** One dependency is missing.
 
 **Correction.** Install `magit-section` 3.3 or a later version. Install `ghostel` from its
 repository.
 
-`transient` is no longer named by herdr.el. You may still need it: `magit-section` requires it,
-and `magit-section` asks for a recent version. Emacs ships a `transient` from version 28.1, which
-is enough unless `magit-section` reports otherwise at load time.
+No file here names `transient`, but `magit-section` requires one and asks for a recent version.
+Emacs ships a `transient` from 28.1, which is enough unless `magit-section` says otherwise at
+load time.
 
 ## Emacs looks for herdr on MELPA
 
@@ -66,28 +65,21 @@ is enough unless `magit-section` reports otherwise at load time.
 
 **Correction.** Add `:ensure nil` to the form. herdr.el is not on MELPA.
 
-## The mouse does not work in the TUI
+## The dashboard took the whole frame
 
-**Symptom.** Under the `session` backend, a click does nothing.
+**Symptom.** `M-x herdr` deletes your other windows. The key `q` does not bring them back.
 
-**Cause.** You run Emacs in a terminal, with `emacs -nw`. A TTY frame has no mouse events to
-send.
+**Cause.** `herdr-dispatch-display-action` defaults to `(display-buffer-full-frame)`. A pane row
+has four columns, and the last two carry the news. Half a frame cuts them off.
 
-**Correction.** Choose one of these three:
+**Correction.** For the splitting behaviour, set the option to nil:
 
-- Use a graphical Emacs.
-- Drive the TUI from the keyboard, with its `ctrl+b` prefix.
-- Set `herdr-terminal-backend` to `agent-windows`. That backend needs no TUI.
+```elisp
+(setq herdr-dispatch-display-action nil)
+```
 
-## The TUI has too little width
-
-**Symptom.** The sidebar of the TUI is cut off, or the layout looks wrong.
-
-**Cause.** The TUI sidebar needs 26 columns. The default display action reuses the current
-window.
-
-**Correction.** Set `herdr-display-action` to `'(display-buffer-full-frame)`. That value deletes
-your other windows. A side window is the other option.
+`q` restores the buffer that this window held before. It cannot restore a window that was
+deleted.
 
 ## Every agent shows the status `idle`
 
@@ -105,35 +97,20 @@ herdr integration status
 
 The first command writes a hook file into the configuration directory of the agent.
 
-## `herdr-project` or `RET` on an inactive project appears to do nothing
-
-Under `herdr-terminal-backend` set to `agent-windows`, both commands work server-side and show
-you nothing. The workspace is focused or created as asked; Emacs simply does not move.
-
-The last step in each is `herdr-term-display`, which shows the backend's *primary* buffer. Under
-`session` that is the herdr TUI, the whole interface. Under `agent-windows` there is no primary
-buffer — every pane is its own — so the function returns nil by design, and neither command says
-anything either way.
-
-Every other "take me there" path uses `herdr-term-select-pane` or `herdr-term-select-focused`,
-which handle both backends. These two do not. Until that is fixed, reach the new workspace from
-the dashboard: `M-x herdr`, then `RET` on one of its panes.
-
-This is a known gap in herdr.el, not a server problem or a misconfiguration.
-
 ## A pane is labelled `shell` but is running an agent
 
-herdr names the agent in a pane on its own, a few seconds after it starts. The one case that
-never corrects itself is a pane that had an agent *reported* on it — by `herdr-adopt-shell`, or by
-an older version of herdr.el that reported one automatically — while something was already
-running in it.
+herdr names the agent in a pane on its own, a few seconds after it starts.
+
+One case never corrects itself: a pane that had an agent *reported* on it while something was
+already running in it. The report comes from a `pane.report_agent` call, or from an older version
+of herdr.el that reported one automatically.
 
 The label then stays put indefinitely. Measured on two panes, hours apart: `agent.explain`
 answered `claude` for both, with a matched detection rule and a live session id, while the pane
 record went on carrying the reported `shell`.
 
 Releasing the report does not hand the pane to detection either. A released pane sat at no agent
-at all for 25 seconds, and `agent.explain` then refused it outright:
+at all for 25 seconds. `agent.explain` then refused it outright:
 
 ```
 herdr error: "agent_not_found", "agent target wA:p1 not found"
@@ -143,8 +120,11 @@ That method runs only against panes herdr already counts as agents, so the repor
 detection ran on the pane at all.
 
 **Kill the pane and start the agent again.** A fresh pane gets its agent named correctly with no
-report involved. `herdr-release-shell` alone leaves the pane with no name rather than the right
+report involved. Releasing the report alone leaves the pane with no name rather than the right
 one.
+
+Nothing in herdr.el reports an agent on its own, so this state comes from the herdr CLI or from a
+`pane.report_agent` you made yourself through `herdr-call`.
 
 ## `make test` fails and names `EXTRA_LOAD_PATH`
 

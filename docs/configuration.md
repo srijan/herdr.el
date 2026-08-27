@@ -3,6 +3,9 @@
 This document lists every user option. Set an option with `M-x customize-group RET herdr RET`,
 or with `setq` in your init file.
 
+herdr.el binds no key. `herdr-command-map` is a prefix keymap that you bind yourself. See
+[Commands](commands.md#the-prefix-keymap).
+
 ## Connection
 
 | Option | Default | Function |
@@ -74,9 +77,8 @@ traffic. The debounce stops a busy agent from causing many redraws each second.
 |---|---|---|
 | `herdr-notify-statuses` | `nil` | The agent statuses that raise a desktop notification. |
 
-Since herdr 0.8.2, every pane is attachable: `herdr terminal attach` no longer refuses a plain
-shell pane. The options and commands for adoption are therefore removed. To name an agent on a
-pane by hand, call `pane.report_agent` through `M-x herdr-call`.
+Every pane is attachable since herdr 0.8.2: `herdr terminal attach` does not refuse a plain shell
+pane. To name an agent on a pane by hand, call `pane.report_agent` through `M-x herdr-call`.
 
 To get desktop notifications, set the statuses that you want:
 

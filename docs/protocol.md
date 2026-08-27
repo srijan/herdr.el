@@ -68,7 +68,7 @@ Subscription::PaneAgentStatusChanged { .. } => {
 This is a fault in herdr, not a design choice. The correction is one line for each arm. It also
 explains why connection B never makes ghost panes and connection A always does.
 
-Measured against a live 0.8.2 server, with the 23 subscriptions that herdr.el uses: 253 events
+Measured against a live 0.8.2 server, with the 18 subscriptions that herdr.el uses: 253 events
 in 5 seconds, and the stream had not stopped. The ring still held events from workspaces that
 closed hours before. The `pane.created` events outlast the `pane.closed` events, so some
 replayed panes get no closing event. Those panes stay until the next `pane.list` reconcile.
@@ -111,6 +111,9 @@ These events carry no nested record. Read the fields directly.
 herdr.el read a `workspace`, `tab` or `pane` object out of these events. The events were
 therefore dropped without an error.
 
+The `tab_*` rows are the server's behaviour. herdr.el subscribes to no `tab.*` event and models
+no tab; the rows stay because this document records the server, not the client.
+
 ## Panes and agents
 
 **`terminal attach` streams one pane at full screen.** It works next to a session client. It is
@@ -131,18 +134,20 @@ to the other:
 - Start Claude in a pane already reported as `shell`, and herdr relabels it `claude` about 3
   seconds later.
 - Report `shell` on a pane where Claude is *already* running, and the label stays `shell`
-  indefinitely — `agent.explain` answers `claude`, with a matched rule and a live session id,
+  indefinitely. `agent.explain` answers `claude`, with a matched rule and a live session id,
   while the pane record goes on carrying the report. Two panes, hours apart.
 
-The reading that fits both is that a relabel rides on the agent starting rather than on the
-state being wrong, so a report applied after the fact is never revisited. That is a hypothesis;
-what is certain is that the second case does not correct itself and cannot be made to. Releasing
-the report leaves the pane with no agent at all — watched for 25 seconds — and `agent.explain`
-then refuses it with `agent_not_found`, since that method runs only against panes herdr already
-counts as agents. Killing the pane is the cure.
+One reading fits both. A relabel rides on the agent starting, not on the state being wrong, so a
+report applied after the fact is never revisited. That is a hypothesis. What is certain is that
+the second case does not correct itself and cannot be made to.
 
-This matters less than it reads. Nothing in herdr.el reports an agent automatically any more, so
-the first case is the one that happens: open a pane, start an agent in it, get the right label. The second is a stale report, and
+Releasing the report does not help. The pane then has no agent at all, watched for 25 seconds,
+and `agent.explain` refuses it with `agent_not_found`. That method runs only against panes herdr
+already counts as agents. Killing the pane is the cure.
+
+This matters less than it reads. Nothing in herdr.el reports an agent on its own, so the first
+case is the one that happens. Open a pane, start an agent in it, get the right label. The second
+case is a stale report, and
 [Troubleshooting](troubleshooting.md#a-pane-is-labelled-shell-but-is-running-an-agent) says what
 to do about it.
 
@@ -151,7 +156,7 @@ Nothing in herdr.el reads it.
 
 ~~**`pane.report_agent` makes a plain shell pane attachable.**~~ Every pane is attachable since
 herdr 0.8.2, independent of `pane.report_agent`.
-Reporting only gives a pane an entry in herdr's own agent list — the sidebar, and the events
+Reporting only gives a pane an entry in herdr's own agent list: the sidebar, and the events
 `pane.agent_status_changed` subscribes to.
 
 **Focus is shared.** The session has one focused pane, not one for each client. When you move
@@ -163,10 +168,8 @@ not from the server.
 
 ## Throughput and terminals
 
-**Throughput is not a concern.** A pane dump of 12.2 MB reached Emacs as 17 KB under the
-`session` backend. The same dump reached Emacs as 24 KB under the `agent-windows` backend.
-Both finished in 0.2 seconds.
-The VT of herdr emits the differences of the visible frame only.
+**Throughput is not a concern.** A pane dump of 12.2 MB reached Emacs as 24 KB, and finished in
+0.2 seconds. The VT of herdr emits the differences of the visible frame only.
 
 **OSC sequences do not pass through.** The VT of herdr consumes OSC 7 and OSC 133. Beware of a
 false positive here: when you send the escapes inline, the shell echoes the command text, and

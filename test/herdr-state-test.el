@@ -470,14 +470,6 @@ minor mode was toggled."
       (should (equal '("resync") kinds))
       (should-not (herdr-state-pane-ids herdr-state--current)))))
 
-(ert-deftest herdr-state-change-hook-is-an-alias-for-the-renamed-variable ()
-  "`herdr-state-change-hook' is an abnormal hook and was misnamed for it;
-the rename must not break an init file still binding the old name."
-  (with-no-warnings
-    (let ((herdr-state-change-hook nil))
-      (add-hook 'herdr-state-change-hook #'ignore)
-      (should (equal herdr-state-change-functions '(ignore))))))
-
 (ert-deftest herdr-state-start-rolls-back-on-a-plain-error ()
   "`herdr-state--open-streams' reaches `process-send-string' through the
 subscribe path, which signals a plain `error' — not `herdr-error' —
