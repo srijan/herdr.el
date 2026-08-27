@@ -29,6 +29,19 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
                  (agent . "shell") (agent_status . "idle")
                  (cwd . "/tmp/herdr.el"))))))))
 
+(defun herdr-tree-test--worktree-rows (children)
+  "Return the worktree nodes among CHILDREN, a workspace node's children.
+A workspace with worktrees holds its own panes in one `main' group and
+hangs its worktrees off the workspace beside it, so the worktrees are
+everything after that group.  A workspace without them holds its panes
+directly and has no worktrees to return."
+  (and (eq 'herdr-panes (nth 0 (car children)))
+       (cdr children)))
+
+(defun herdr-tree-test--main-group (children)
+  "Return the `main' group among CHILDREN, or nil when there is none."
+  (and (eq 'herdr-panes (nth 0 (car children))) (car children)))
+
 (defun herdr-tree-test--types (nodes)
   "Return the nested (TYPE . CHILD-TYPES) shape of NODES."
   (mapcar (lambda (node)
@@ -140,10 +153,10 @@ than duplicated beside it."
                                 (is_linked_worktree . t)
                                 (branch . "feat/x"))))))
          (workspace (car (herdr-tree-build (herdr-tree-test--state) worktrees)))
-         (children (nth 3 workspace))
-         (worktrees-node (car (last children))))
+         (children (nth 3 workspace)))
     (should (string-match-p "herdr\\.el (3)" (nth 2 workspace)))
-    (should (string-match-p "worktrees (1)" (nth 2 worktrees-node)))
+    (should (string-match-p "main (3)"
+                            (nth 2 (herdr-tree-test--main-group children))))
     (should-not (string-match-p "panes" (nth 2 workspace)))))
 
 (ert-deftest herdr-tree-workspace-rollup-omits-idle ()
@@ -495,7 +508,7 @@ their own tab already renders.  Every pane appears exactly once."
              (nth 3 (car (herdr-tree-build (herdr-tree-test--state) nil))))))
 
 (ert-deftest herdr-tree-includes-worktrees-when-fetched ()
-  "A workspace present in WORKTREES gets a worktrees section, last."
+  "A workspace present in WORKTREES gets a worktree node, after its panes."
   (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el-feat")
                                 (is_linked_worktree . t)
                                 (branch . "feat/dispatch")
@@ -503,9 +516,9 @@ their own tab already renders.  Every pane appears exactly once."
                                 (open_workspace_id . nil))))))
          (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
                                                  worktrees))))
-         (section (car (last children))))
-    (should (eq 'herdr-worktrees (car section)))
-    (should (equal 1 (length (nth 3 section))))))
+         (rows (herdr-tree-test--worktree-rows children)))
+    (should (equal 1 (length rows)))
+    (should (eq 'herdr-worktree (nth 0 (car rows))))))
 
 (ert-deftest herdr-tree-draws-no-worktrees-section-for-a-bare-checkout ()
   "The live session, exactly: one entry, and it is the workspace itself.
@@ -538,9 +551,8 @@ destructively."
   "The mixed case, and the one that says the count follows the filter.
 
 A repository with a worktree answers with two entries: itself and the
-worktree.  Only the second is a row here — and the heading must say
-`worktrees (1)', not `(2)', or the section counts a row the user cannot
-see and the number stops meaning anything.
+worktree.  Only the second is a row here: a checkout the user cannot
+act on must not be drawn as one they can.
 
 The entries are ordered checkout-first, which is the order git and the
 server both report, so a filter that only ever dropped the last entry
@@ -554,12 +566,10 @@ would not pass."
                                 (is_linked_worktree . t)
                                 (open_workspace_id . nil))))))
          (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
-                                                 worktrees))))
-         (section (car (last children))))
-    (should (eq 'herdr-worktrees (nth 0 section)))
-    (should (string-match-p "worktrees (1)" (nth 2 section)))
+                                                 worktrees)))))
     (should (equal '("/tmp/herdr.el-feat")
-                   (mapcar (lambda (node) (nth 1 node)) (nth 3 section))))))
+                   (mapcar (lambda (node) (nth 1 node))
+                           (herdr-tree-test--worktree-rows children))))))
 
 (ert-deftest herdr-tree-draws-no-row-for-the-workspace-the-list-belongs-to ()
   "The same destruction, one shape over, and made by this package's own RET.
@@ -584,15 +594,14 @@ twice."
                                 (open_workspace_id . "w1"))))))
          (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
                                                  worktrees)))))
-    (should-not (seq-find (lambda (node) (eq 'herdr-worktrees (nth 0 node)))
-                          children))))
+    (should-not (herdr-tree-test--worktree-rows children))))
 
 (ert-deftest herdr-tree-keeps-a-sibling-worktree-beside-the-self-row ()
   "Dropping the self row must not drop the section with it.
 
-The workspace's own row goes; a genuine sibling worktree stays, and the
-count follows.  A filter that keyed on the section rather than the row
-would pass the test above and lose every real worktree here."
+The workspace's own row goes; a genuine sibling worktree stays.  A
+filter that keyed on the whole set rather than the row would pass the
+test above and lose every real worktree here."
   (let* ((worktrees '(("w1" . (((path . "/tmp/herdr.el-fix")
                                 (branch . "fix")
                                 (is_linked_worktree . t)
@@ -602,12 +611,10 @@ would pass the test above and lose every real worktree here."
                                 (is_linked_worktree . t)
                                 (open_workspace_id . nil))))))
          (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
-                                                 worktrees))))
-         (section (car (last children))))
-    (should (eq 'herdr-worktrees (nth 0 section)))
-    (should (string-match-p "worktrees (1)" (nth 2 section)))
+                                                 worktrees)))))
     (should (equal '("/tmp/herdr.el-spike")
-                   (mapcar (lambda (node) (nth 1 node)) (nth 3 section))))))
+                   (mapcar (lambda (node) (nth 1 node))
+                           (herdr-tree-test--worktree-rows children))))))
 
 (ert-deftest herdr-tree-drops-a-checkout-that-is-not-this-workspace ()
   "The case only `herdr-tree-linked-worktree-p' catches, in the renderer.
@@ -630,8 +637,7 @@ row, because `k' on it would remove whatever workspace it does name."
                                   (open_workspace_id . ,open))))))
            (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
                                                    worktrees)))))
-      (should-not (seq-find (lambda (node) (eq 'herdr-worktrees (nth 0 node)))
-                            children)))))
+      (should-not (herdr-tree-test--worktree-rows children)))))
 
 (ert-deftest herdr-tree-own-workspace-p-asks-only-about-this-listing ()
   "Neither predicate subsumes the other, so both get applied.
@@ -669,7 +675,7 @@ column a workspace row already carries."
                                 (branch . "feat/dispatch"))))))
          (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
                                                  worktrees))))
-         (worktree (car (nth 3 (car (last children))))))
+         (worktree (car (herdr-tree-test--worktree-rows children))))
     (should (string-match-p "/tmp/herdr.el-feat" (nth 2 worktree)))))
 
 (ert-deftest herdr-tree-worktree-row-abbreviates-a-home-relative-path ()
@@ -723,7 +729,7 @@ column is, from the widest name actually present."
                                 (open_workspace_id . "w2"))))))
          (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
                                                  worktrees))))
-         (worktree (car (nth 3 (car (last children))))))
+         (worktree (car (herdr-tree-test--worktree-rows children))))
     (should (equal 'herdr-worktree (nth 0 worktree)))
     (should (string-match-p "open" (nth 2 worktree)))))
 
@@ -786,10 +792,9 @@ the repository it is a worktree of, while that repository's worktrees
 section drew a dimmed pointer at it -- the same worktree twice.  The
 workspace now takes the pointer's place, panes and all."
   (should (equal '((herdr-workspace
-                    (herdr-pane)
-                    (herdr-worktrees
-                     (herdr-workspace (herdr-pane))
-                     (herdr-worktree))))
+                    (herdr-panes (herdr-pane))
+                    (herdr-workspace (herdr-pane))
+                    (herdr-worktree)))
                  (herdr-tree-test--types
                   (herdr-tree-build (herdr-tree-test--worktree-state "w1" "w2")
                                     (herdr-tree-test--repository-cache "w1" "w2"))))))
@@ -800,9 +805,9 @@ are drawn beside it under the same repository.  Repeating them one level
 deeper would file every worktree of the repository under every other one."
   (let* ((tree (herdr-tree-build (herdr-tree-test--worktree-state "w1" "w2")
                                  (herdr-tree-test--repository-cache "w1" "w2")))
-         (worktrees (car (last (nth 3 (car tree)))))
-         (nested (car (nth 3 worktrees))))
-    (should (equal "worktrees (2)" (nth 2 worktrees)))
+         (rows (herdr-tree-test--worktree-rows (nth 3 (car tree))))
+         (nested (car rows)))
+    (should (= 2 (length rows)))
     (should (equal 'herdr-workspace (nth 0 nested)))
     (should (equal "w2" (nth 1 nested)))
     (should (equal '(herdr-pane) (mapcar (lambda (n) (nth 0 n)) (nth 3 nested))))))
@@ -811,8 +816,8 @@ deeper would file every worktree of the repository under every other one."
   "Nothing to nest under means nothing moves, and the workspace keeps the
 worktrees section it draws for its own siblings."
   (should (equal '((herdr-workspace
-                    (herdr-pane)
-                    (herdr-worktrees (herdr-worktree))))
+                    (herdr-panes (herdr-pane))
+                    (herdr-worktree)))
                  (herdr-tree-test--types
                   (herdr-tree-build (herdr-tree-test--worktree-state "w2")
                                     (herdr-tree-test--repository-cache "w2"))))))
@@ -837,13 +842,12 @@ would vanish; it stays at top level instead."
                    (herdr-tree--nesting state (herdr-state-workspaces state)
                                         worktrees)))))
 
-(ert-deftest herdr-tree-worktrees-node-still-points-at-an-unnested-workspace ()
+(ert-deftest herdr-tree-worktree-nodes-still-point-at-an-unnested-workspace ()
   "The `open as W' row is the fallback now, not the rule -- it is what a
 worktree gets when its repository is not on screen as a workspace to
 nest it under."
-  (let* ((node (herdr-tree--worktrees-node
-                "w1" (herdr-tree-test--repository-cache "w1") 20))
-         (rows (nth 3 node)))
+  (let ((rows (herdr-tree--worktree-nodes
+               "w1" (herdr-tree-test--repository-cache "w1") 20)))
     (should (equal '(herdr-worktree herdr-worktree)
                    (mapcar (lambda (row) (nth 0 row)) rows)))
     (should (string-match-p "open as w2" (nth 2 (car rows))))))
@@ -911,11 +915,12 @@ one that is not actually open."
     (should (eq 'shadow (get-text-property 0 'font-lock-face line)))))
 
 (ert-deftest herdr-tree-known-project-node-includes-its-own-worktrees ()
-  "A known project is still a repository, and its worktrees are shown the
-same way an open workspace's are -- only `herdr-tree-linked-worktree-p'
-filters here, since there is no open workspace id for
-`herdr-tree-own-workspace-p' to compare against; the main checkout is
-already excluded by not being a linked worktree at all."
+  "A known project is still a repository, and its worktrees hang off its
+row the same way an open workspace's hang off that workspace.  Only
+`herdr-tree-linked-worktree-p' filters here, since there is no open
+workspace id for `herdr-tree-own-workspace-p' to compare against; the
+main checkout is already excluded by not being a linked worktree at
+all."
   (let* ((worktrees `(("/tmp/other-project/"
                        . (((path . "/tmp/other-project/") (branch . "main")
                            (is_linked_worktree . nil))
@@ -925,8 +930,8 @@ already excluded by not being a linked worktree at all."
                 "/tmp/other-project/" worktrees 20))
          (children (nth 3 node)))
     (should (= 1 (length children)))
-    (should (equal 'herdr-worktrees (nth 0 (car children))))
-    (should (equal "worktrees (1)" (nth 2 (car children))))))
+    (should (equal 'herdr-worktree (nth 0 (car children))))
+    (should (equal "/tmp/other-project-fix/" (nth 1 (car children))))))
 
 (ert-deftest herdr-tree-known-project-node-has-no-worktrees-section-when-uncached ()
   "Absence of knowledge, not absence of worktrees -- the same contract
@@ -934,7 +939,7 @@ already excluded by not being a linked worktree at all."
   (should-not (nth 3 (herdr-tree--known-project-node
                       "/tmp/other-project/" nil 20))))
 
-(ert-deftest herdr-tree-known-project-worktrees-node-omits-the-root-itself ()
+(ert-deftest herdr-tree-known-project-worktree-nodes-omit-the-root-itself ()
   "A directory that is itself a linked worktree of another repository
 appears in its own `worktree.list' reply, flagged linked, because that is
 what it is.  Only `herdr-tree-linked-worktree-p' filtered here, so that
@@ -946,11 +951,10 @@ entry survived and the root rendered as a child of its own heading."
                            (branch . "feature") (is_linked_worktree . t))
                           ((path . "/tmp/repo-worktrees/other")
                            (branch . "other") (is_linked_worktree . t))))))
-         (node (herdr-tree--known-project-worktrees-node
+         (rows (herdr-tree--known-project-worktree-nodes
                 "/tmp/repo-worktrees/feature/" worktrees 20)))
-    (should (equal "worktrees (1)" (nth 2 node)))
     (should (equal '("/tmp/repo-worktrees/other")
-                   (mapcar (lambda (child) (nth 1 child)) (nth 3 node))))))
+                   (mapcar (lambda (row) (nth 1 row)) rows)))))
 
 (ert-deftest herdr-tree-main-checkout-is-the-entry-that-is-not-linked ()
   "The reply names no repository root of its own; the entry that is not a
