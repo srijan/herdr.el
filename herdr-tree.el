@@ -270,11 +270,8 @@ words."
 
 (defun herdr-tree--panes-in-workspace (state workspace-id width)
   "Return nodes for every pane of WORKSPACE-ID in STATE, agent column WIDTH.
-Tabs are server-side layout: under `agent-windows' every pane is its own
-Emacs buffer, so grouping rows by tab explained nothing and cost a level.
-Listing panes directly also closes the lost-pane hole the old orphan
-handling existed for — a pane whose tab the cache does not hold is just
-another pane of its workspace here."
+Tabs are server-side layout.  Every pane is its own Emacs buffer here,
+so grouping rows by tab would explain nothing and cost a level."
   (mapcar (lambda (pane) (herdr-tree--pane-node state pane width))
           (seq-filter (lambda (pane)
                         (equal workspace-id (alist-get 'workspace_id pane)))

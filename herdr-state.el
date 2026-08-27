@@ -878,8 +878,8 @@ The cached ids are captured BEFORE the call: `herdr-rpc-call\\='s wait
 services the event-stream filters, so the cache can gain a pane while
 the reply is in flight — and a reply built before that pane existed
 cannot pronounce it stale.  Judging staleness against the pre-call set
-means a pane that arrived mid-wait is never evicted (nor its buffer
-killed by the agent-windows reap listening on the change hook)."
+means a pane that arrived mid-wait is never evicted, nor its buffer
+killed by the reap listening on the change hook."
   (let ((known-ids (herdr-state-pane-ids herdr-state--current)))
     (when-let* ((panes (condition-case nil
                            (alist-get 'panes (herdr-rpc-call "pane.list"))
@@ -909,11 +909,9 @@ killed by the agent-windows reap listening on the change hook)."
               ;; Replace the record rather than patching cwd alone: an
               ;; agent label can change under us and a cache that only
               ;; ever refreshed directories kept reporting the old one.
-              ;; The common case is an adopted shell that someone then
-              ;; starts Claude in: herdr 0.8.0 relabels it `claude' of
-              ;; its own accord a few seconds later, because reporting an
-              ;; agent does not suppress detection — the two run
-              ;; independently, and detection wins.
+              ;; The common case is a plain shell that someone starts
+              ;; Claude in: herdr relabels it `claude' of its own accord
+              ;; a few seconds later.
               (setq changed t)
               (setq herdr-state--current
                     (herdr-state-reduce herdr-state--current "pane_updated"

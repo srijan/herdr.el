@@ -31,8 +31,8 @@
 (require 'herdr-term)
 (require 'herdr-cmd)
 (require 'herdr-modeline)
-;; Required, not autoloaded: `herdr-call' is the escape hatch every
-;; deleted command relies on, and it used to arrive with `herdr-transient'.
+;; Required, not autoloaded: nothing else pulls in herdr-call.el, and the
+;; test suite cannot tell you so, because it loads every file itself.
 (require 'herdr-call)
 
 (declare-function project-root "project" (project))

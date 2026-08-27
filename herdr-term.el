@@ -15,19 +15,14 @@
 ;; there is no geometry to synchronise.  Panes outlive Emacs because the
 ;; server is a daemon.
 ;;
-;; A second backend ran the herdr TUI in one ghostel buffer and let herdr
-;; own the layout.  It is gone: `ghostel-project' or a plain shell runs
-;; the herdr CLI just as well, and keeping it meant every function here
-;; branching on which one was in force.
-;;
 ;; Measurements that informed this, taken against herdr 0.7.5:
 ;;
 ;; - Throughput is not a concern.  A 12.2 MB pane dump reached Emacs as
 ;;   24 KB; herdr's VT only emits visible-frame diffs, so it rate-limits
 ;;   by construction.
 ;; - Attachment goes through `herdr terminal attach', which takes any
-;;   pane's raw stream — agent or plain shell — so reconciliation
-;;   considers panes.
+;;   pane's raw stream, agent or plain shell alike.  Reconciliation
+;;   therefore considers every pane.
 ;; - Attachment is exclusive per pane, so a second attach needs
 ;;   `--takeover'.  We ask first rather than stealing.
 ;; - The client paints nothing into a zero-sized PTY.  ghostel sizes its
@@ -53,12 +48,10 @@ attaching all route through it, so the same buffer cannot appear two
 different ways depending on which command got you there.
 
 The default reuses the current window.  Rearranging the frame is the
-user\='s business — `C-x 2\=', `C-x 3\=', `display-buffer-alist\=' — not
-something navigating should do on your behalf.
+user\='s business, through `C-x 2\=', `C-x 3\=' and
+`display-buffer-alist\='.  Navigating should not do it on your behalf.
 
-herdr\='s TUI draws a 26-column sidebar beside its panes and so wants
-width, which is advice rather than grounds for bulldozing a layout.  For
-the old behaviour of taking the whole frame:
+To take the whole frame instead:
 
     (setq herdr-display-action \='(display-buffer-full-frame))"
   :type 'sexp
@@ -162,10 +155,7 @@ the raw terminal stream id, which only the pane record knows."
 
 BUFFERS is an alist of (PANE-ID . BUFFER).  TO-CREATE holds pane alists
 that herdr will attach to but that have no buffer; TO-REAP holds buffers
-whose pane is gone.  Pure: no processes are touched.
-
-Every pane can hold a buffer; TO-REAP is buffers whose pane is gone from
-STATE."
+whose pane is gone.  Pure: no processes are touched."
   (let* ((panes (herdr-state-panes state))
          (pane-ids (mapcar (lambda (pane) (alist-get 'pane_id pane)) panes))
          (have-ids (mapcar #'car buffers)))
@@ -230,7 +220,7 @@ can hang on an unusable PTY until the timeout gives up."
 ;;; Buffer bookkeeping
 
 (defvar herdr-term--buffers nil
-  "Alist of (PANE-ID . BUFFER) for the `agent-windows' backend.")
+  "Alist of (PANE-ID . BUFFER), one entry per attached pane.")
 
 (defun herdr-term--live-buffers ()
   "Return `herdr-term--buffers' with dead buffers dropped."
@@ -268,7 +258,7 @@ Asks the server rather than trusting the cache, because focus may have
 moved as a side effect of the command that just ran."
   (when-let* ((pane (ignore-errors
                       (alist-get 'pane_id
-                                 (alist-get 'pane (herdr-rpc-call "pane.current")))))) 
+                                 (alist-get 'pane (herdr-rpc-call "pane.current"))))))
     (herdr-term-select-pane pane)))
 
 (defun herdr-term-buffer-for-pane (pane-id)
@@ -331,9 +321,9 @@ terminal."
 (defun herdr-term--rename-stale-buffers ()
   "Rename buffers whose pane has changed identity since they were created.
 
-A pane adopted as a shell and later promoted to a real agent keeps the
-same buffer — attachment is still valid, so there is nothing to recreate
-— but its name would otherwise still read `shell' forever.
+A pane that starts as a plain shell and gets an agent detected in it
+keeps the same buffer, since the attachment is still valid.  Without
+this its name would read `shell' forever.
 
 Compares against the buffer's name with any uniquifying suffix removed.
 Two unnamed panes of the same kind in one workspace share a wanted name,
@@ -374,8 +364,7 @@ attaches on demand instead."
 
 herdr consumes OSC 7 rather than forwarding it, so ghostel's own
 directory tracking cannot see through it.  herdr does track cwd itself,
-so `default-directory' is driven from that instead — and unlike OSC it
-works under both backends.
+so `default-directory' is driven from that instead.
 
 It has to be polled.  herdr publishes no event when a pane changes
 directory: a `cd' produces only unrelated `layout_updated' traffic, so
@@ -424,11 +413,11 @@ workspace whose `workspace.closed' was missed (a disconnect window, a
 ring-replay gap) stayed a ghost in the dispatcher and every picker for
 the rest of the session.  Directory sync stays scoped to the pane
 reconcile; a workspace changing affects no `default-directory'."
-  ;; Guarded only on the stream being up.  It used to also require a
-  ;; herdr buffer to exist, which silently disabled the whole poll under
-  ;; `agent-windows\=' once attaching became lazy — and with it the pruning
-  ;; of panes the server no longer has.  Pruning matters most exactly when
-  ;; no buffers are open yet, because that is when the pickers are used.
+  ;; Guarded only on the stream being up.  Requiring a herdr buffer to
+  ;; exist would disable the poll entirely until you visit a pane, and
+  ;; with it the pruning of panes the server no longer has.  Pruning
+  ;; matters most when no buffers are open, because that is when the
+  ;; pickers are used.
   ;;
   ;; The background timeout is what keeps this poll survivable: it fires
   ;; every `herdr-term-directory-interval' whether or not the server is
