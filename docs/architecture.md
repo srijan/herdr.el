@@ -46,9 +46,9 @@ herdr.el holds two long-lived connections.
 **Connection A** carries the 18 global event types. The types cover workspaces, panes, worktrees
 and the layout. Connection A never changes after the start.
 
-There is no `tab.*` subscription. herdr.el does not model a tab. A tab has one visual form only,
-which is the tab bar of the TUI, so nothing here draws one. A closing tab still reaches you,
-because each of its panes sends `pane.closed`.
+There is no `tab.*` subscription. herdr.el models no tab: a tab's only visual form is the TUI's
+tab bar, and nothing here draws one. A closing tab still reaches you, because each of its panes
+sends `pane.closed`.
 
 **Connection B** carries one `pane.agent_status_changed` subscription for each agent pane.
 herdr.el rebuilds connection B when the set of agent panes changes.
@@ -57,11 +57,10 @@ Connection B exists because the global stream reports a status change late. The 
 6.18 seconds in one case and 31.79 seconds in another. See
 [Protocol notes](protocol.md).
 
-Connection B watches the agent panes only, not every pane. Attachment widened to every pane in
-herdr 0.8.2, but `pane.agent_status_changed` still has nothing to say about a pane with no agent.
-Each per-pane subscription makes the server send a `pane.get` into its main loop every 100
-milliseconds. A session with twelve plain shells therefore cost about 120 server requests each
-second before this limit existed.
+Connection B watches the agent panes only, not every pane. `pane.agent_status_changed` has
+nothing to say about a pane with no agent, and each per-pane subscription makes the server send a
+`pane.get` into its main loop every 100 milliseconds. Subscribing every pane would cost a session
+with twelve plain shells about 120 server requests each second.
 
 ## Reconciliation
 
@@ -84,8 +83,8 @@ target: herdr.el adds what is missing and removes what is extra.
 The reconcile runs at `herdr-state-settle-delay` after a connect. The reconcile then runs at
 every directory poll, which is every `herdr-term-directory-interval` seconds.
 
-Before this fork, only the pane set was reconciled. Ghost workspaces therefore collected for
-the life of a session.
+Reconcile the workspace set as well as the pane set. Reconciling panes alone lets ghost
+workspaces collect for the life of a session.
 
 ## The pure half and the impure half
 

@@ -118,8 +118,7 @@ evidence.
 ## Relationship to upstream
 
 Upstream is [eddof13/herdr.el](https://github.com/eddof13/herdr.el). This repository is a fork
-that has diverged by about 15,400 lines added and 2,600 removed, over 123 commits. A rebase onto
-upstream is no longer realistic.
+that has diverged far enough that a rebase onto upstream is no longer realistic.
 
 Send a change here. If the change also suits upstream, say so, and we can carry it over.
 

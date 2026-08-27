@@ -47,15 +47,14 @@ command.
 
 **Symptom.** Emacs reports that it cannot find `magit-section` or `ghostel`.
 
-**Cause.** One dependency is missing. `magit-section` is the dependency that people forget,
-because upstream herdr.el does not need it.
+**Cause.** One dependency is missing.
 
 **Correction.** Install `magit-section` 3.3 or a later version. Install `ghostel` from its
 repository.
 
-`transient` is no longer named by herdr.el. You may still need it: `magit-section` requires it,
-and `magit-section` asks for a recent version. Emacs ships a `transient` from version 28.1, which
-is enough unless `magit-section` reports otherwise at load time.
+No file here names `transient`, but `magit-section` requires one and asks for a recent version.
+Emacs ships a `transient` from 28.1, which is enough unless `magit-section` says otherwise at
+load time.
 
 ## Emacs looks for herdr on MELPA
 
@@ -65,24 +64,6 @@ is enough unless `magit-section` reports otherwise at load time.
 `:ensure nil` line.
 
 **Correction.** Add `:ensure nil` to the form. herdr.el is not on MELPA.
-
-## A command that used to exist is gone
-
-**Symptom.** `M-x` cannot find a command you used, such as `herdr-tab-create`,
-`herdr-pane-split-right` or `herdr-agent-start`.
-
-**Cause.** herdr.el keeps a command only if the dashboard or `herdr-command-map` calls it. The
-transient menu and the commands that only it called were deleted. See
-[Commands](commands.md#what-was-removed).
-
-**Correction.** Call the method directly:
-
-```
-M-x herdr-call RET tab.create RET
-```
-
-`herdr-call` reads the parameter names, the types and the enumerated values from the schema of
-the server. Every one of the 91 methods is reachable this way.
 
 ## The dashboard took the whole frame
 
@@ -141,9 +122,8 @@ detection ran on the pane at all.
 report involved. Releasing the report alone leaves the pane with no name rather than the right
 one.
 
-Nothing in herdr.el reports an agent any more, so this state can only come from an older version
-of the package, from the herdr CLI, or from a `pane.report_agent` you made yourself through
-`herdr-call`.
+Nothing in herdr.el reports an agent on its own, so this state comes from the herdr CLI or from a
+`pane.report_agent` you made yourself through `herdr-call`.
 
 ## `make test` fails and names `EXTRA_LOAD_PATH`
 

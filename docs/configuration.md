@@ -77,9 +77,8 @@ traffic. The debounce stops a busy agent from causing many redraws each second.
 |---|---|---|
 | `herdr-notify-statuses` | `nil` | The agent statuses that raise a desktop notification. |
 
-Since herdr 0.8.2, every pane is attachable: `herdr terminal attach` no longer refuses a plain
-shell pane. The options and commands for adoption are therefore removed. To name an agent on a
-pane by hand, call `pane.report_agent` through `M-x herdr-call`.
+Every pane is attachable since herdr 0.8.2: `herdr terminal attach` does not refuse a plain shell
+pane. To name an agent on a pane by hand, call `pane.report_agent` through `M-x herdr-call`.
 
 To get desktop notifications, set the statuses that you want:
 
@@ -88,17 +87,6 @@ To get desktop notifications, set the statuses that you want:
 ```
 
 herdr.el uses the `alert` package when the package is present.
-
-## Options that no longer exist
-
-Delete these from your configuration. Each one now signals a void variable, or is silently
-ignored if you set it with `setq`.
-
-| Removed option | What to do |
-|---|---|
-| `herdr-terminal-backend` | Delete it. There is one arrangement now: one buffer for each pane, which is what the value `agent-windows` did. |
-| `herdr-agent-kinds` | Delete it. The command it fed, `herdr-agent-start`, is gone. Open a terminal with `n` and run the agent in it. |
-| `herdr-adopt-created-shells` | Delete it. Every pane is attachable since herdr 0.8.2. |
 
 ## The event stream
 
