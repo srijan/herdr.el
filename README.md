@@ -331,8 +331,7 @@ Terminal buffers track their pane's working directory (`herdr-term-track-directo
 ## Agent awareness
 
 `herdr-modeline-mode` shows something like `herdr:2⏸1✓`. Idle agents are left out deliberately: a
-count that is always on screen stops being read. The old name `herdr-agents-mode-line-mode` still
-works as an obsolete alias.
+count that is always on screen stops being read.
 
 Desktop notifications are off by default. `(setq herdr-notify-statuses '("blocked" "done"))` opts
 in, and `alert` is used when available.
@@ -374,7 +373,7 @@ offers focus, read, prompt and close.
 ## Development
 
 ```bash
-make test        # 466 tests, hermetic; no herdr required, uses a fake server
+make test        # 465 tests, hermetic; no herdr required, uses a fake server
 make test-live   # needs a running herdr; includes the schema drift test
 make compile     # byte-compile, warnings are errors
 ```

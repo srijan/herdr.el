@@ -59,12 +59,6 @@ read.  Only the states worth acting on appear, via
   (let ((summary (herdr-tree-status-summary state)))
     (if (string-empty-p summary) "" (concat "herdr:" summary))))
 
-;; Ahead of the `defvar', not down with the function alias: a variable
-;; alias declared after its referent does not carry a value already set
-;; under the old name, and the byte compiler rejects it outright.
-(define-obsolete-variable-alias 'herdr-agents-mode-line-string
-  'herdr-modeline-string "0.1.0")
-
 (defvar herdr-modeline-string ""
   "Cached modeline segment, refreshed from the state change hook.")
 (put 'herdr-modeline-string 'risky-local-variable t)
@@ -173,19 +167,6 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
                (if (string-empty-p name) id name)))))))))
 
 (add-hook 'herdr-state-change-functions #'herdr-notify--maybe)
-
-;;; Compatibility
-
-;; `herdr-agents-mode-line-mode' is what an init file turns on, so it
-;; keeps working: the alternative is an init that errors on the first
-;; start after a rebuild.  The autoload form is why this is more than the
-;; alias — the old name was autoloaded, so calling it has to keep pulling
-;; this file in.  Its variable counterpart is up beside the `defvar',
-;; where a variable alias has to be.
-
-;;;###autoload (autoload 'herdr-agents-mode-line-mode "herdr-modeline" nil t)
-(define-obsolete-function-alias 'herdr-agents-mode-line-mode
-  #'herdr-modeline-mode "0.1.0")
 
 (provide 'herdr-modeline)
 ;;; herdr-modeline.el ends here

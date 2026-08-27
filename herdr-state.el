@@ -61,16 +61,6 @@
   :type 'number
   :group 'herdr)
 
-;; Renamed from `herdr-state-change-hook': the manual reserves `-hook'
-;; for a hook whose functions take no arguments, and this one always
-;; ran through `run-hook-with-args' — the docstring below has called it
-;; abnormal since it was written.  Ahead of the `defvar', as with the
-;; mode-line string alias in herdr-modeline.el: a variable alias
-;; declared after its referent does not carry a value already set
-;; under the old name, and the byte compiler rejects it outright.
-(define-obsolete-variable-alias 'herdr-state-change-hook
-  'herdr-state-change-functions "0.1.0")
-
 (defvar herdr-state-change-functions nil
   "Abnormal hook run after the cache changes.
 Each function is called with (EVENT-KIND DATA).  EVENT-KIND is the
@@ -952,9 +942,6 @@ killed by the agent-windows reap listening on the change hook)."
         (when changed
           (run-hook-with-args 'herdr-state-change-functions "reconcile" nil))
         changed))))
-
-(define-obsolete-function-alias 'herdr-state-refresh-directories
-  'herdr-state-reconcile-panes "0.1.0")
 
 (defun herdr-state-reconcile-workspaces ()
   "Make the cached workspace set match the server.
