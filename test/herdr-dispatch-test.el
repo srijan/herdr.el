@@ -663,6 +663,93 @@ pane leaves you on its workspace."
     (should (equal '((herdr-workspace . "w1") (herdr-root))
                    (magit-section-ident (magit-current-section))))))
 
+(ert-deftest herdr-dispatch-refresh-lands-near-a-workspace-that-went-with-its-pane ()
+  "Closing the last pane closes the workspace, so the ancestor walk runs
+out of ancestors and reaches the root — whose start is the header line,
+at the top of the buffer.  For a session of any size that is a jump, and
+the row the user wants is the one that took the dead workspace's place.
+
+So the walk stops short of the root and the saved buffer position is
+used instead, clamped and normalised to the start of its line.  Here
+that is the next workspace."
+  (herdr-dispatch-test-in-dispatcher
+      '((workspaces . (((workspace_id . "w1") (label . "web") (pane_count . 1))
+                       ((workspace_id . "w2") (label . "api") (pane_count . 1))))
+        (panes . (((pane_id . "w1:p1") (agent . "claude") (agent_status . "idle")
+                   (workspace_id . "w1"))
+                  ((pane_id . "w2:p1") (agent . "codex") (agent_status . "idle")
+                   (workspace_id . "w2")))))
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (search-forward "w1:p1")
+    (goto-char (line-beginning-position))
+    (setq herdr-state--current
+          (herdr-state-reduce herdr-state--current "pane_closed"
+                              '((pane_id . "w1:p1"))))
+    (setq herdr-state--current
+          (herdr-state-reduce herdr-state--current "workspace_closed"
+                              '((workspace_id . "w1"))))
+    (herdr-dispatch-refresh)
+    ;; Neither end of the buffer, and on a real row: the one that took
+    ;; the dead workspace's place, which is what closing a row in a list
+    ;; is expected to leave you on.
+    (should-not (= (point) (point-max)))
+    (should-not (= (point) (point-min)))
+    (should (equal '((herdr-pane . "w2:p1") (herdr-workspace . "w2")
+                     (herdr-root))
+                   (magit-section-ident (magit-current-section))))))
+
+(ert-deftest herdr-dispatch-refresh-skips-the-blank-line-between-rows ()
+  "The positional fallback must not land on a separator.
+
+The blank line between two top-level rows belongs to the root section,
+so a fallback that stops there leaves the NEXT redraw with a root ident
+to restore — and the root starts at the header.  Point crept to the top
+of the buffer one redraw after the row it was on died, which is how this
+was found in a live session rather than by the first fix.
+
+The workspace here is the last one, so its saved position lands past the
+end of the shrunken buffer and the clamp puts point on the trailing
+blank line."
+  (herdr-dispatch-test-in-dispatcher
+      '((workspaces . (((workspace_id . "w1") (label . "web") (pane_count . 1))
+                       ((workspace_id . "w2") (label . "api") (pane_count . 1))))
+        (panes . (((pane_id . "w1:p1") (agent . "claude") (agent_status . "idle")
+                   (workspace_id . "w1"))
+                  ((pane_id . "w2:p1") (agent . "codex") (agent_status . "idle")
+                   (workspace_id . "w2")))))
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (search-forward "w2:p1")
+    (goto-char (line-beginning-position))
+    (setq herdr-state--current
+          (herdr-state-reduce herdr-state--current "pane_closed"
+                              '((pane_id . "w2:p1"))))
+    (setq herdr-state--current
+          (herdr-state-reduce herdr-state--current "workspace_closed"
+                              '((workspace_id . "w2"))))
+    (herdr-dispatch-refresh)
+    ;; A real row, not a separator: its ident must be longer than the
+    ;; root's, or the next redraw goes to the header.
+    (should (cdr (magit-section-ident (magit-current-section))))
+    ;; And it survives a second redraw, which is the symptom itself.
+    (herdr-dispatch-test--pane-event "w1:p1" "working" 2)
+    (herdr-dispatch-refresh)
+    (should (cdr (magit-section-ident (magit-current-section))))
+    (should-not (= (point) (point-min)))))
+
+(ert-deftest herdr-dispatch-refresh-keeps-point-on-the-header ()
+  "The root section is a legitimate place to be — the header line is
+inside it — so the walk stopping short of the root must not move point
+that was already there."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (should (equal '((herdr-root)) (magit-section-ident (magit-current-section))))
+    (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
+    (herdr-dispatch-refresh)
+    (should (equal '((herdr-root)) (magit-section-ident (magit-current-section))))))
+
 (ert-deftest herdr-dispatch-refresh-falls-back-in-a-window-too ()
   "The window-point half of the restore has the same nil, and the hook
 usually fires while the dashboard is not the selected window."

@@ -185,6 +185,13 @@ This entry covers the whole divergence from
   ancestor, so closing a pane leaves you on its workspace. Both halves of the restore are
   fixed, the buffer's point and each window's.
 
+  Closing a workspace's *last* pane closes the workspace too, so there is no surviving
+  ancestor but the root — whose start is the header line, at the top of the buffer. The walk
+  stops short of the root and uses the saved buffer position instead, which lands on whatever
+  took the dead row's place. That position skips the blank line between two top-level rows:
+  a separator belongs to the root section, so stopping on one left the *next* redraw with a
+  root ident to restore, and point crept to the top one redraw later.
+
 - **A slow server no longer freezes Emacs.** Every synchronous call on a timer now binds
   `herdr-rpc-timeout` to `herdr-rpc-background-timeout`, which is 2 seconds.
 - **A busy server no longer makes the dashboard flicker.** Redraws now group inside
