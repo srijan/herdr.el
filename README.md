@@ -231,52 +231,37 @@ class of pane it refuses. Before you attach to one, it stays reachable through `
 `pane.send_text`, `pane.wait_for_output` and the menu, and `ghostel-project` covers ordinary
 interactive shells outside herdr entirely.
 
-## Adopting a shell
+## What a pane is
 
 "Pane" here always means a herdr pane: a PTY and shell process owned by the herdr daemon, with an
 id like `w2:p1`. It is not a ghostel buffer and not an Emacs window. The daemon forks the shell;
 Emacs only ever asks it to. That is why a pane outlives Emacs. A ghostel buffer is a view onto a
 pane, created the moment you attach to it — which, since herdr 0.8.2, needs nothing from the pane
-first, so adoption is no longer what gets a shell a buffer.
+first.
 
 herdr panes you create from Emacs (split, new tab, new workspace) are shown immediately: creation
-follows the new pane and attaches to it, the same as going to any other pane. Nothing needs to be
-reported first. `herdr-adopt-created-shells` is an obsolete no-op kept only so a config that still
-sets it does not error.
+follows the new pane and attaches to it, the same as going to any other pane.
 
-`M-x herdr-adopt-shell` reports an agent named `herdr-shell-agent-name` (default `shell`) on any
-pane you point it at. It buys nothing for attaching — every pane is already attachable — but it
-still changes two things: the pane gains a row in herdr's own sidebar, in its agents section,
-labelled `shell`, and `herdr-agent-start` stops treating it as available to take over, since
-availability there means "has no agent at all". Use it when you want a long-running shell, such as
-a build, to show up as something herdr itself is watching, across an Emacs restart, since the
-report is server-side state.
+herdr names the agent in a pane itself. Open a terminal pane, start Claude in it, and the row
+reads `claude` a few seconds later. Nothing needs reporting, and nothing needs adopting.
 
-Adopted shells are treated like any other agent-reporting pane, since herdr does not distinguish
-an agent named `shell` from any other kind. They count in the modeline, appear in the agent
-picker and can raise notifications. They show as a plain `shell` row in the dashboard, with the
-same status glyph as any other pane.
+### Adoption is retired
 
-Detection handles the ordinary path on its own. Open a terminal pane from herdr, start Claude in
-it, and herdr labels the pane `claude` a few seconds later. Nothing needs reporting, and
-`herdr-promote-shell` and the poll behind it are gone because they existed to force a relabel
-herdr already does — 936 `agent.explain` calls in one session, three quarters of all the traffic
-herdr.el sent.
+Adoption was how a plain shell pane used to be made attachable and given a name. Since herdr
+0.8.2 every pane is attachable already, so the concept is gone and its commands are obsolete:
+`herdr-adopt-shell` and `herdr-release-shell` still work, `herdr-adopt-created-shells` is a no-op
+kept so an old config does not error, and `herdr-promote-shell` and the poll behind it are
+deleted — they existed to force a relabel herdr does on its own, at a cost of 936 `agent.explain`
+calls in one session, three quarters of all the traffic herdr.el sent.
 
-The one case that does not correct itself is a report applied to a pane where an agent was
-*already* running. That label stays put indefinitely: measured on two panes, hours apart, with
-`agent.explain` answering `claude` for both while the pane record went on carrying a reported
-`shell`. Releasing the report does not hand the pane to detection either — a released pane sat at
-no agent at all for 25 seconds, and `agent.explain` then refused it with `agent_not_found`, since
-that method runs only against panes herdr already counts as agents. Kill the pane and start the
-agent again; that works.
+`herdr-adopt-shell` still has one use: reporting an agent named `shell` on a long-running pane,
+such as a build, makes herdr itself watch it — a row in herdr's own sidebar, a place in the
+modeline count, and eligibility for notifications — and the report is server-side, so it survives
+an Emacs restart. It also takes the pane out of `herdr-agent-start`'s reach, since availability
+there means "has no agent at all".
 
-Since nothing adopts automatically any more, reaching that state takes a deliberate
-`herdr-adopt-shell` on a pane already running something — or a pane left over from a version that
-did adopt. It is recorded here because the fix is not obvious, not because it is common.
-
-`M-x herdr-release-shell` reverses adoption, dropping the reported agent and the sidebar row it
-produced.
+Reporting an agent on a pane where one is *already* running leaves a label that never corrects
+itself. See [Troubleshooting](docs/troubleshooting.md#a-pane-is-labelled-shell-but-is-running-an-agent).
 
 ## What we measured
 

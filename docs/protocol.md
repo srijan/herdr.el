@@ -143,7 +143,9 @@ counts as agents. Killing the pane is the cure.
 
 This matters less than it reads. Nothing in herdr.el reports an agent automatically since
 adoption was retired, so the first case is the one that happens: open a pane, start an agent in
-it, get the right label.
+it, get the right label. The second is a stale report, and
+[Troubleshooting](troubleshooting.md#a-pane-is-labelled-shell-but-is-running-an-agent) says what
+to do about it.
 
 Every pane also carries `agent_session`, which named `claude` correctly on both stale panes.
 Nothing in herdr.el reads it.

@@ -87,8 +87,8 @@ This entry covers the whole divergence from
   agent starts in it, so both existed to force a relabel that already happens. The poll called
   `agent.explain` on every adopted shell at every directory poll: 936 calls in one session, three
   quarters of all the traffic that herdr.el sent. The one case that does not relabel itself is a
-  report applied to a pane where an agent was already running -- see "Adopting a shell" in the
-  README. Kill the pane and start the agent again.
+  report applied to a pane where an agent was already running -- see the troubleshooting guide.
+  Kill the pane and start the agent again.
 
 ### Fixed
 
