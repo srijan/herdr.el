@@ -54,12 +54,22 @@ This entry covers the whole divergence from
   that directory -- opening it as a workspace first if nothing is open there yet.
 - **`herdr-command-map`.** A prefix keymap holding the verbs the dashboard holds, for use from
   anywhere else: `s` the status buffer, `f` go to a pane, `n` open a terminal, `k` close one,
-  `w` go to a workspace, `p` the project workspace, `%` worktrees, `g` resync, `?` the menu.
-  Bind it yourself, the way `project-prefix-map` is bound. The letters are the dashboard's
-  letters, so there is one set to learn rather than two.
+  `w` go to a workspace, `p` the project workspace, `%` create a worktree, `g` resync. Bind it
+  yourself, the way `project-prefix-map` is bound. The letters are the dashboard's letters, so
+  there is one set to learn rather than two. There is no help key: `C-h` after the prefix lists
+  the bindings already.
+- **`herdr-dispatch-create-terminal`**, renamed from `herdr-dispatch-create-pane`. It creates a
+  tab in the usual case but a whole workspace on a row whose directory has none open, so neither
+  `pane` nor `tab` named it. What it always produces is a terminal, which is what the docs and
+  the key table already called it, and what `herdr-new-terminal` is called.
+- **`herdr-dispatch-display-action`.** The dashboard takes the frame rather than splitting a
+  window. A pane row has four columns and the last two carry the news -- the pane id, and what
+  the agent reports it is working on -- so half a frame cuts off the part worth reading. Taking
+  the frame deletes the other windows and `q` does not bring them back, which is why this is an
+  option: set it to nil for the old splitting behaviour.
 - **`herdr-new-terminal`.** Opens a terminal, asking where first: an open workspace, or a
   `project.el` project with no workspace open, which is created and then opened in.
-- **A test suite.** 504 hermetic tests across 16 files, and a live suite that includes a schema
+- **A test suite.** 460 hermetic tests across 15 files, and a live suite that includes a schema
   drift test.
 - **Dependency resolution for the build.** `test/herdr-deps.el` finds `magit-section` and
   `transient` in the directories of `elpaca`, `package.el` and `straight.el`. A missing
@@ -104,6 +114,49 @@ This entry covers the whole divergence from
 - **The `pane.updated` subscription.** The event fires about 7.5 times each second and carries a
   full pane record, but it stops exactly when an agent becomes idle. Connection B now carries
   the statuses, and `herdr-state-reconcile-panes` carries the rest.
+- **The `session` terminal backend.** It ran the herdr TUI in one ghostel buffer and let herdr
+  own the layout. `ghostel-project`, or any shell, runs the herdr CLI just as well, and keeping
+  it meant every function in `herdr-term.el` branching on which backend was in force.
+  `herdr-terminal-backend` is gone with it; drop it from your configuration. Panes get one
+  buffer each, which is what `agent-windows` always did.
+- **The tab cache.** The `tabs` and `focused-tab-id` slots, `herdr-state-tabs`,
+  `herdr-state-reconcile-tabs`, its `tab.list` round trip on every poll, the five `tab.*` event
+  subscriptions and their merge and move handling. Nothing outside `herdr-state.el` ever read a
+  tab record: the dashboard flattened tabs away and the tab commands are gone, so this was 43
+  lines maintained for no reader. Creating a tab still works -- `tab.create` answers with its
+  root pane, which is all the caller wants -- and a closing tab reaches you as `pane.closed`.
+- **The dashboard's `f`.** It focused server-side and deliberately did not move Emacs, which
+  means something only when a second client is watching: the herdr TUI in a real terminal,
+  repainting to the newly focused pane. Every pane is its own Emacs buffer here, and `RET` makes
+  the same call and takes you there.
+- **`herdr-state-attachable`.** An identity function over `herdr-state-panes` with one caller.
+  It said something while attaching was conditional; since herdr 0.8.2 it does not.
+- **`transient` from `Package-Requires`.** The dashboard's `c` create menu was the last
+  transient prefix in the package. It offered the same three verbs as `w`, `n` and `%` directly,
+  plus three arguments: `--directory` and `--label` only skipped a prompt, and `--label` skipped
+  one that was never asked, since herdr names a workspace after its directory. The third,
+  `--base`, was the one capability -- a worktree off something other than the current HEAD -- and
+  it is the second prompt of `herdr-dispatch-create-worktree` now, where RET is the answer for
+  the ordinary case.
+
+  Declared, not needed: `magit-section` requires `transient` itself, and Emacs has shipped one
+  since 28.1, so it loads in any session that draws the dashboard. What changed is that no file
+  here names it. Nothing changes at install time.
+- **Twenty-eight commands and the transient menu.** A command now exists only if the dashboard or
+  `herdr-command-map` calls it, which leaves eleven. Gone: `herdr-transient` and its six
+  sub-menus; the TUI layout commands `herdr-pane-split-right`/`-down`, `-zoom`, `-resize` and
+  `-swap`, which move nothing under `agent-windows` because Emacs owns the layout there; the four
+  `herdr-tab-*` commands, already hidden under that backend since a tab's only visual form is the
+  TUI's tab bar; the scripting commands `herdr-pane-run`, `-send-text`, `-wait-for-output` and
+  `herdr-agent-wait`, which the herdr CLI and the agent skill both cover; `herdr-agent-read` and
+  `herdr-agent-focus`, the same calls as their pane equivalents with a different target type;
+  `herdr-agent-explain`, `herdr-notification-show`, `herdr-worktree-list` and
+  `herdr-worktree-open`; and the adoption pair `herdr-adopt-shell`/`herdr-release-shell` with
+  `herdr-adopt-created-shells` and `herdr-shell-agent-name`, obsolete since herdr 0.8.2.
+
+  None of it became unreachable. `M-x herdr-call` prompts its way to all 91 methods from the
+  server's own schema, and that is what makes deleting a wrapper safe rather than lossy -- the
+  reason `herdr-call.el` and `herdr-schema.el` stayed while so much around them went.
 - **`agent.start`, and everything that served it.** Gone: the command `herdr-agent-start`, the
   dashboard's `a` key and its `herdr-dispatch-create-agent` verb, the create menu's agent entry
   and `--kind` argument, the option `herdr-agent-kinds`, and the picker
@@ -124,6 +177,26 @@ This entry covers the whole divergence from
   Kill the pane and start the agent again.
 
 ### Fixed
+
+- **Closing a pane no longer throws point to the end of the dashboard.**
+  `herdr-dispatch--position-restore` answered nil when point's section was one the
+  redraw no longer builds, and the caller skipped its `goto-char` — leaving point wherever
+  `erase-buffer` and the inserts had put it. Point now falls back to the nearest surviving
+  ancestor, so closing a pane leaves you on its workspace. Both halves of the restore are
+  fixed, the buffer's point and each window's.
+
+  Closing a workspace's *last* pane closes the workspace too, so there is no surviving
+  ancestor but the root — whose start is the header line, at the top of the buffer. The walk
+  stops short of the root and uses the saved buffer position instead, which lands on whatever
+  took the dead row's place.
+
+  Separators are handled at the other end, when the position is saved. The blank line between
+  two top-level rows belongs to the root section, so restoring it went to the root's start —
+  the header. Parking point between two workspaces and letting any redraw fire therefore sent
+  it to the top, with nothing closing and nothing dying; redraws fire on their own, since the
+  header carries a status summary. A separator now saves the nearest row instead, which has an
+  identity to restore and survives the row above it changing width. The header line itself is
+  the root legitimately and stays where it is.
 
 - **A slow server no longer freezes Emacs.** Every synchronous call on a timer now binds
   `herdr-rpc-timeout` to `herdr-rpc-background-timeout`, which is 2 seconds.

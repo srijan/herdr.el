@@ -74,7 +74,7 @@ findable by the name it is known by as well as by what it is doing."
   "Older marginalia called it `marginalia-annotator-registry'."
   (let ((marginalia-annotator-registry nil))
     (herdr-select--register-marginalia)
-    (should (assq 'herdr-tab marginalia-annotator-registry))))
+    (should (assq 'herdr-workspace marginalia-annotator-registry))))
 
 (ert-deftest herdr-select-registration-is-a-noop-when-the-api-is-unknown ()
   "A third rename must degrade to no annotations, not a void-variable."
@@ -84,7 +84,8 @@ findable by the name it is known by as well as by what it is doing."
   (let ((marginalia-annotators nil))
     (herdr-select--register-marginalia)
     (herdr-select--register-marginalia)
-    (should (= 3 (length marginalia-annotators)))))
+    ;; Two, not three: the tab picker went with the tab commands.
+    (should (= 2 (length marginalia-annotators)))))
 
 ;;; Consult source
 
@@ -129,17 +130,6 @@ down to `herdr-rpc-background-timeout'."
       (should (equal 2.0 seen-timeout))
       ;; The binding must not leak past the call.
       (should (equal 10.0 herdr-rpc-timeout)))))
-
-(ert-deftest herdr-select-consult-source-lists-everything-under-session ()
-  "Under `session' every pane shares the one buffer, so all qualify."
-  (let* ((herdr-terminal-backend 'session)
-         (buffer (get-buffer-create herdr-term-session-buffer-name)))
-    (unwind-protect
-        (let ((herdr-state--current
-               (herdr-state-from-snapshot
-                '((panes . (((pane_id . "w1:p1")) ((pane_id . "w1:p2"))))))))
-          (should (equal '("w1:p1" "w1:p2") (herdr-select-panes-with-buffers))))
-      (kill-buffer buffer))))
 
 (ert-deftest herdr-select-consult-visit-switches-and-focuses ()
   "Selecting must both move Emacs and move herdr's focus."
@@ -201,25 +191,10 @@ follow Emacs."
           (should (equal "w1:pA" (herdr-select-target-pane))))
       (kill-buffer orphan))))
 
-(ert-deftest herdr-select-target-under-session-uses-herdr-focus ()
-  "One buffer serves every pane there, so it cannot disambiguate."
-  (let* ((herdr-terminal-backend 'session)
-         (buffer (get-buffer-create herdr-term-session-buffer-name))
-         (herdr-state--current
-          (herdr-state-from-snapshot
-           '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))
-         (current-prefix-arg nil))
-    (unwind-protect
-        (with-current-buffer buffer
-          (should-not (herdr-term-pane-for-buffer))
-          (should (equal "w1:pA" (herdr-select-target-pane))))
-      (kill-buffer buffer))))
-
 ;;; Choosing where a new terminal goes
 
 (ert-deftest herdr-select-place-offers-open-workspaces-and-unopened-roots ()
-  "The two kinds of candidate the dashboard already draws: an open
-workspace by id, and a project with no workspace open by path."
+  "An open workspace by id, a project with no workspace open by path."
   (let (offered)
     (let ((herdr-state--current
            (herdr-state-from-snapshot
@@ -238,11 +213,8 @@ workspace by id, and a project with no workspace open by path."
         (should (equal '("w1" "/tmp/elsewhere/") offered))))))
 
 (ert-deftest herdr-select-place-works-without-project-el ()
-  "project.el is guarded with `fboundp' here the way it is everywhere
-else in this package, so its absence costs the directory half of the
-list rather than the command.  The function is unbound and restored
-rather than stubbed: `fboundp' is what the guard asks, and a stub that
-answers calls cannot make it answer nil."
+  "Unbound and restored rather than stubbed: `fboundp\\=' is what the guard
+asks, and a stub that answers calls cannot make it answer nil."
   (let ((offered nil)
         (saved (when (fboundp 'project-known-project-roots)
                  (symbol-function 'project-known-project-roots))))
@@ -260,8 +232,7 @@ answers calls cannot make it answer nil."
       (when saved (fset 'project-known-project-roots saved)))))
 
 (ert-deftest herdr-select-place-annotates-an-unopened-root-as-not-open ()
-  "A directory has no workspace annotation to give, and saying so is
-what tells the two kinds of candidate apart in the picker."
+  "What tells the two kinds of candidate apart in the picker."
   (let ((herdr-state--current
          (herdr-state-from-snapshot
           '((workspaces . (((workspace_id . "w1") (label . "ws")
@@ -271,8 +242,8 @@ what tells the two kinds of candidate apart in the picker."
                             (herdr-select--place-annotation "/tmp/elsewhere/")))))
 
 (ert-deftest herdr-select-offers-no-agent-start-picker ()
-  "`agent.start' is gone, and with it the picker that existed only to
-keep the choice away from a pane the server would refuse."
+  "It existed only to keep the choice away from a pane the server would
+refuse."
   (should-not (fboundp 'herdr-select-available-shell))
   (should-not (boundp 'herdr-select-create-new-shell)))
 
@@ -302,17 +273,6 @@ annotates every workspace with the first one's label."
     (should (string-match-p "first" (herdr-select--annotate-workspace "w1")))
     (should (string-match-p "3 panes" (herdr-select--annotate-workspace "w1")))
     (should (equal "" (herdr-select--annotate-workspace "w9")))))
-
-(ert-deftest herdr-select-annotates-a-tab-by-its-own-id ()
-  "The same defect, in the same shape, one function down."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot
-          '((tabs . (((tab_id . "w1:t1") (label . "build") (pane_count . 2))
-                     ((tab_id . "w1:t2") (label . "edit") (pane_count . 5))))))))
-    (should (string-match-p "edit" (herdr-select--annotate-tab "w1:t2")))
-    (should (string-match-p "5 panes" (herdr-select--annotate-tab "w1:t2")))
-    (should (string-match-p "build" (herdr-select--annotate-tab "w1:t1")))
-    (should (equal "" (herdr-select--annotate-tab "w9:t9")))))
 
 (ert-deftest herdr-select-read-refuses-an-empty-candidate-list ()
   "An empty completion prompt looks broken rather than empty, so the

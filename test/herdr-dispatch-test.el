@@ -483,10 +483,8 @@ this a test of a redraw again rather than a test of the skip."
     (goto-char (point-min))
     (search-forward "w1:p2")
     (let ((ident (magit-section-ident (magit-current-section))))
-      ;; No `herdr-panes' level: the fixture workspace has no worktrees,
-      ;; so its panes hang off the workspace row itself.  Asserted rather
-      ;; than derived, because the ident is what point is restored
-      ;; through and a change to the tree's shape changes it.
+      ;; No `herdr-panes' level: the fixture has no worktrees.  The
+      ;; ident is what point is restored through, so pin it.
       (should (equal '((herdr-pane . "w1:p2")
                        (herdr-workspace . "w1") (herdr-root))
                      ident))
@@ -640,6 +638,176 @@ cancel nothing."
                             herdr-state-change-functions)))
       (herdr-dispatch--cancel-refresh)
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest herdr-dispatch-refresh-falls-back-to-the-parent-when-the-row-dies ()
+  "Killing the pane under point threw point to the end of the buffer.
+
+`herdr-dispatch--position-restore' answered nil when the ident named a
+section the redraw no longer builds, and the caller simply skipped its
+`goto-char' — leaving point wherever `erase-buffer' and the inserts had
+left it, which is `point-max'.  Reported from a live session: close a
+terminal from the dashboard and point jumps to the bottom.
+
+The nearest surviving ancestor is where it goes instead, so closing a
+pane leaves you on its workspace."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (search-forward "w1:p2")
+    (goto-char (line-beginning-position))
+    (setq herdr-state--current
+          (herdr-state-reduce herdr-state--current "pane_closed"
+                              '((pane_id . "w1:p2"))))
+    (herdr-dispatch-refresh)
+    (should-not (= (point) (point-max)))
+    (should (equal '((herdr-workspace . "w1") (herdr-root))
+                   (magit-section-ident (magit-current-section))))))
+
+(ert-deftest herdr-dispatch-refresh-lands-near-a-workspace-that-went-with-its-pane ()
+  "Closing the last pane closes the workspace, so the ancestor walk runs
+out of ancestors and reaches the root — whose start is the header line,
+at the top of the buffer.  For a session of any size that is a jump, and
+the row the user wants is the one that took the dead workspace's place.
+
+So the walk stops short of the root and the saved buffer position is
+used instead, clamped and normalised to the start of its line.  Here
+that is the next workspace."
+  (herdr-dispatch-test-in-dispatcher
+      '((workspaces . (((workspace_id . "w1") (label . "web") (pane_count . 1))
+                       ((workspace_id . "w2") (label . "api") (pane_count . 1))))
+        (panes . (((pane_id . "w1:p1") (agent . "claude") (agent_status . "idle")
+                   (workspace_id . "w1"))
+                  ((pane_id . "w2:p1") (agent . "codex") (agent_status . "idle")
+                   (workspace_id . "w2")))))
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (search-forward "w1:p1")
+    (goto-char (line-beginning-position))
+    (setq herdr-state--current
+          (herdr-state-reduce herdr-state--current "pane_closed"
+                              '((pane_id . "w1:p1"))))
+    (setq herdr-state--current
+          (herdr-state-reduce herdr-state--current "workspace_closed"
+                              '((workspace_id . "w1"))))
+    (herdr-dispatch-refresh)
+    ;; Neither end of the buffer, and on a real row: the one that took
+    ;; the dead workspace's place, which is what closing a row in a list
+    ;; is expected to leave you on.
+    (should-not (= (point) (point-max)))
+    (should-not (= (point) (point-min)))
+    (should (equal '((herdr-pane . "w2:p1") (herdr-workspace . "w2")
+                     (herdr-root))
+                   (magit-section-ident (magit-current-section))))))
+
+(ert-deftest herdr-dispatch-refresh-skips-the-blank-line-between-rows ()
+  "The positional fallback must not land on a separator.
+
+The blank line between two top-level rows belongs to the root section,
+so a fallback that stops there leaves the NEXT redraw with a root ident
+to restore — and the root starts at the header.  Point crept to the top
+of the buffer one redraw after the row it was on died, which is how this
+was found in a live session rather than by the first fix.
+
+The workspace here is the last one, so its saved position lands past the
+end of the shrunken buffer and the clamp puts point on the trailing
+blank line."
+  (herdr-dispatch-test-in-dispatcher
+      '((workspaces . (((workspace_id . "w1") (label . "web") (pane_count . 1))
+                       ((workspace_id . "w2") (label . "api") (pane_count . 1))))
+        (panes . (((pane_id . "w1:p1") (agent . "claude") (agent_status . "idle")
+                   (workspace_id . "w1"))
+                  ((pane_id . "w2:p1") (agent . "codex") (agent_status . "idle")
+                   (workspace_id . "w2")))))
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (search-forward "w2:p1")
+    (goto-char (line-beginning-position))
+    (setq herdr-state--current
+          (herdr-state-reduce herdr-state--current "pane_closed"
+                              '((pane_id . "w2:p1"))))
+    (setq herdr-state--current
+          (herdr-state-reduce herdr-state--current "workspace_closed"
+                              '((workspace_id . "w2"))))
+    (herdr-dispatch-refresh)
+    ;; A real row, not a separator: its ident must be longer than the
+    ;; root's, or the next redraw goes to the header.
+    (should (cdr (magit-section-ident (magit-current-section))))
+    ;; And it survives a second redraw, which is the symptom itself.
+    (herdr-dispatch-test--pane-event "w1:p1" "working" 2)
+    (herdr-dispatch-refresh)
+    (should (cdr (magit-section-ident (magit-current-section))))
+    (should-not (= (point) (point-min)))))
+
+(ert-deftest herdr-dispatch-refresh-keeps-point-on-a-blank-line ()
+  "Point on a separator must not be dragged to the top of the buffer.
+
+The blank line between two top-level rows belongs to the root section,
+and the restore went to that section's start — which is the header.  So
+parking point between two workspaces and letting any redraw fire sent it
+to the top, with nothing closing and nothing dying.  Redraws fire on
+their own: the header carries a status summary, so an agent changing
+state is enough.
+
+Predates the closed-pane fix rather than following from it: the original
+restore resolved the root ident the same way."
+  (herdr-dispatch-test-in-dispatcher
+      '((workspaces . (((workspace_id . "w1") (label . "web") (pane_count . 1))
+                       ((workspace_id . "w2") (label . "api") (pane_count . 1))))
+        (panes . (((pane_id . "w1:p1") (agent . "claude") (agent_status . "idle")
+                   (workspace_id . "w1"))
+                  ((pane_id . "w2:p1") (agent . "codex") (agent_status . "idle")
+                   (workspace_id . "w2")))))
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (search-forward "api")
+    (forward-line -1)
+    (goto-char (line-beginning-position))
+    (should-not (herdr-dispatch--row-p))
+    (should-not (= (point) (point-min)))
+    (herdr-dispatch-test--pane-event "w1:p1" "working" 2)
+    (herdr-dispatch-refresh)
+    (should-not (= (point) (point-min)))
+    ;; The nearest row below, not the separator: a blank line has no
+    ;; identity to restore, and the exact character position cannot
+    ;; survive a row above it changing width.
+    (should (equal '((herdr-workspace . "w2") (herdr-root))
+                   (magit-section-ident (magit-current-section))))))
+
+(ert-deftest herdr-dispatch-refresh-keeps-point-on-the-header ()
+  "The root section is a legitimate place to be — the header line is
+inside it — so the walk stopping short of the root must not move point
+that was already there."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (should (equal '((herdr-root)) (magit-section-ident (magit-current-section))))
+    (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
+    (herdr-dispatch-refresh)
+    (should (equal '((herdr-root)) (magit-section-ident (magit-current-section))))))
+
+(ert-deftest herdr-dispatch-refresh-falls-back-in-a-window-too ()
+  "The window-point half of the restore has the same nil, and the hook
+usually fires while the dashboard is not the selected window."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (let ((window (split-window)))
+      (unwind-protect
+          (progn
+            (set-window-buffer window (current-buffer))
+            (goto-char (point-min))
+            (search-forward "w1:p2")
+            (set-window-point window (line-beginning-position))
+            (goto-char (point-min))
+            (setq herdr-state--current
+                  (herdr-state-reduce herdr-state--current "pane_closed"
+                                      '((pane_id . "w1:p2"))))
+            (herdr-dispatch-refresh)
+            (should-not (= (window-point window) (point-max)))
+            (should (equal '((herdr-workspace . "w1") (herdr-root))
+                           (save-excursion
+                             (goto-char (window-point window))
+                             (magit-section-ident (magit-current-section))))))
+        (delete-window window)))))
 
 (ert-deftest herdr-dispatch-refresh-restores-point-in-an-unselected-window ()
   "The cursor reset happens in a window that is not the selected one.
@@ -897,55 +1065,6 @@ them apart."
       (herdr-rpc-call herdr-pane-focus herdr-workspace-focus)
     (herdr-dispatch-focus)))
 
-(ert-deftest herdr-dispatch-focus-stays-in-emacs ()
-  "Focusing calls the server directly rather than the following commands.
-
-`herdr-pane-focus' and friends move Emacs as well; `f' is the verb for
-when you want the terminal to move and Emacs to stay put, so it must not
-be implemented in terms of them.  Two panes from different workspaces are
-checked alongside a workspace, so a resolver that always answers the
-same pane still looks wrong."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (should (equal '((herdr-rpc-call "pane.focus" ((pane_id . "w1:p2"))))
-                   (herdr-dispatch-test--focus-from "w1:p2")))
-    (should (equal '((herdr-rpc-call "pane.focus" ((pane_id . "w2:p1"))))
-                   (herdr-dispatch-test--focus-from "w2:p1")))
-    (should (equal '((herdr-rpc-call "workspace.focus"
-                                     ((workspace_id . "w2"))))
-                   (herdr-dispatch-test--focus-from "api")))))
-
-(ert-deftest herdr-dispatch-focus-on-a-worktree-focuses-its-own-workspace ()
-  "A worktree row has no `cond\\=' branch of its own unless one is written,
-and without it `f\\=' falls through to the workspace enclosing the row —
-silently focusing the repository the worktree list was expanded from
-rather than the worktree under point.  The fixture separates the two:
-the row sits inside `w1\\=' and is open as `w2\\='."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (let ((herdr-dispatch--worktrees
-           '(("w1" . (((path . "/tmp/herdr.el-fix")
-                       (is_linked_worktree . t)
-                       (branch . "fix")
-                       (open_workspace_id . "w2")))))))
-      (should (equal '((herdr-rpc-call "workspace.focus"
-                                       ((workspace_id . "w2"))))
-                     (herdr-dispatch-test--focus-from "open as w2"))))))
-
-(ert-deftest herdr-dispatch-focus-refuses-a-worktree-that-is-not-open ()
-  "There is no workspace to focus, and the enclosing one is the wrong
-answer rather than an approximate one."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (let ((herdr-dispatch--worktrees
-           '(("w1" . (((path . "/tmp/herdr.el-fix")
-                       (is_linked_worktree . t)
-                       (branch . "fix")
-                       (open_workspace_id . nil)))))))
-      (search-forward "open as w2")
-      (should (equal nil
-                     (herdr-dispatch-test-with-recorders
-                         (herdr-rpc-call herdr-workspace-focus)
-                       (should-error (herdr-dispatch-focus)
-                                     :type 'user-error)))))))
-
 (ert-deftest herdr-dispatch-verbs-report-rather-than-raise ()
   "Every verb goes through the protection, not just the ones tested above."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
@@ -965,11 +1084,16 @@ answer rather than an approximate one."
               (lookup-key herdr-dispatch-mode-map "p")))
   (should (eq #'herdr-dispatch-read
               (lookup-key herdr-dispatch-mode-map "r")))
-  (should (eq #'herdr-dispatch-focus
-              (lookup-key herdr-dispatch-mode-map "f")))
   (dolist (verb '(herdr-dispatch-visit herdr-dispatch-prompt
-                                       herdr-dispatch-read herdr-dispatch-focus))
+                                       herdr-dispatch-read))
     (should (commandp verb))))
+
+(ert-deftest herdr-dispatch-binds-no-server-side-focus ()
+  "`f' focused server-side and deliberately did not move Emacs, which
+only means something to a second client watching.  Every pane is its own
+Emacs buffer here, and `RET' makes the same call and takes you there."
+  (should-not (lookup-key herdr-dispatch-mode-map "f"))
+  (should-not (fboundp 'herdr-dispatch-focus)))
 
 ;;; Worktrees
 
@@ -2009,17 +2133,13 @@ round trip each one would otherwise cost -- sees only live roots."
                                        ((cwd . "/tmp/other-project/")
                                         (label . "other-project")
                                         (focus . t)))
-                       ;; Every recorder answers nil, so the whole
-                       ;; fallback chain fires: no created pane id to go
-                       ;; to, then no focused pane, then the backend's
-                       ;; primary buffer.  Against a real server the
-                       ;; first of the three answers.
-                       (herdr-term-select-focused)
-                       (herdr-term-display))
+                       ;; Both recorders answer nil, so the fallback
+                       ;; fires: no created pane id, then no focused
+                       ;; pane.  A real server answers the first.
+                       (herdr-term-select-focused))
                      (herdr-dispatch-test-with-recorders
                          (herdr-rpc-call herdr-term-select-pane
-                                         herdr-term-select-focused
-                                         herdr-term-display)
+                                         herdr-term-select-focused)
                        (herdr-dispatch-visit)))))))
 
 (ert-deftest herdr-dispatch-visit-focuses-rather-than-double-creates ()
@@ -2036,24 +2156,11 @@ the test that would catch losing the check."
       (search-forward "other-project (0)")
       (should (equal '((herdr-rpc-call "workspace.focus"
                                        ((workspace_id . "w9")))
-                       (herdr-term-select-focused)
-                       (herdr-term-display))
+                       (herdr-term-select-focused))
                      (herdr-dispatch-test-with-recorders
                          (herdr-rpc-call herdr-term-select-pane
-                                         herdr-term-select-focused
-                                         herdr-term-display)
+                                         herdr-term-select-focused)
                        (herdr-dispatch-visit)))))))
-
-(ert-deftest herdr-dispatch-focus-refuses-a-known-project-and-points-at-ret ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (search-forward "other-project (0)")
-    (should-error (herdr-dispatch-focus) :type 'user-error)
-    (let ((message
-           (condition-case err
-               (herdr-dispatch-focus)
-             (user-error (error-message-string err)))))
-      (should (string-match-p "other-project" message))
-      (should (string-match-p "RET" message)))))
 
 (ert-deftest herdr-dispatch-rename-refuses-a-known-project ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
@@ -2101,16 +2208,6 @@ the test that would catch losing the check."
                      (should-error (herdr-dispatch-rename)
                                    :type 'user-error))))))
 
-(ert-deftest herdr-dispatch-focus-refuses-the-inactive-heading ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
-    (search-forward "Inactive (2)")
-    (should (equal nil
-                   (herdr-dispatch-test-with-recorders
-                       (herdr-rpc-call herdr-pane-focus herdr-tab-focus
-                                       herdr-workspace-focus)
-                     (should-error (herdr-dispatch-focus)
-                                   :type 'user-error))))))
-
 (ert-deftest herdr-dispatch-visit-refuses-the-inactive-heading ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
     (search-forward "Inactive (2)")
@@ -2134,9 +2231,12 @@ these rows are children of it, not siblings of the workspaces above."
       (should (looking-at-p "\\s-*b (0)"))
       (should (= after-a (1- (point)))))))
 
-(ert-deftest herdr-dispatch-binds-question-mark-to-the-transient ()
-  (should (eq #'herdr-transient
-              (lookup-key herdr-dispatch-mode-map "?"))))
+(ert-deftest herdr-dispatch-binds-no-help-key ()
+  "Not nil but \"not one of ours\": `magit-section-mode\\=' links
+`special-mode-map\\=' into the parent chain once a dispatcher buffer
+exists, and `?\\=' is `describe-mode\\=' there."
+  (should (memq (lookup-key herdr-dispatch-mode-map "?") '(nil describe-mode)))
+  (should-not (fboundp 'herdr-transient)))
 
 ;;; Rename
 
@@ -2363,18 +2463,6 @@ the workspace a name the user had aimed at a group of its panes."
                        (should-error (herdr-dispatch-rename)
                                      :type 'user-error)))))))
 
-(ert-deftest herdr-dispatch-focus-refuses-the-main-heading ()
-  "`f' on `main (N)' must not focus the enclosing workspace, which
-moves the user's terminal to somewhere they did not ask to go."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "main 2")
-    (should (equal nil
-                   (herdr-dispatch-test-with-recorders
-                       (herdr-rpc-call herdr-pane-focus herdr-tab-focus
-                                       herdr-workspace-focus)
-                     (should-error (herdr-dispatch-focus)
-                                   :type 'user-error))))))
-
 (ert-deftest herdr-dispatch-visit-refuses-the-main-heading ()
   "`RET' on `main (N)' must not focus and follow the enclosing
 workspace.
@@ -2432,17 +2520,6 @@ reach the repository it is nested under."
                                          herdr-worktree-remove)
                      (herdr-dispatch-close))))))
 
-(ert-deftest herdr-dispatch-focus-follows-a-pane-inside-a-nested-workspace ()
-  "Every verb shared the walking-up heading arms, so every verb refused
-the same rows; `f' is the one whose refusal was silent about what it had
-aimed at."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nested-nodes
-    (search-forward "w2:p1")
-    (should (equal '((herdr-rpc-call "pane.focus" ((pane_id . "w2:p1"))))
-                   (herdr-dispatch-test-with-recorders
-                       (herdr-rpc-call herdr-pane-focus herdr-workspace-focus)
-                     (herdr-dispatch-focus))))))
-
 (ert-deftest herdr-dispatch-still-refuses-the-heading-above-a-nested-workspace ()
   "Aiming the refusal at the section under point rather than at an
 ancestor must not stop it firing when point really is on the heading."
@@ -2465,7 +2542,7 @@ ancestor must not stop it firing when point really is on the heading."
 
 ;;; Create
 
-(ert-deftest herdr-dispatch-create-pane-creates-a-tab-in-the-workspace-at-point ()
+(ert-deftest herdr-dispatch-create-terminal-creates-a-tab-in-the-workspace-at-point ()
   "tab.create takes a workspace_id rather than a pane to split into."
   (let ((params nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
@@ -2473,7 +2550,7 @@ ancestor must not stop it firing when point really is on the heading."
               ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
       (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
         (search-forward "w1:p2")
-        (herdr-dispatch-create-pane)
+        (herdr-dispatch-create-terminal)
         (should (equal "w1" (alist-get 'workspace_id params)))
         (should (eq t (alist-get 'focus params)))))))
 
@@ -2489,46 +2566,66 @@ consult the pane's own `workspace_id\\=' rather than assume nesting."
       (search-forward "w9:p1")
       (should (equal "w9" (herdr-dispatch--workspace-target))))))
 
-(ert-deftest herdr-dispatch-create-reads-transient-arguments ()
-  (should (equal "main" (herdr-dispatch--arg '("--base=main") "--base")))
-  (should-not (herdr-dispatch--arg '("--base=main") "--label")))
-
 (ert-deftest herdr-dispatch-create-worktree-omits-an-empty-base ()
-  "An empty --base means \"off the current ref\"; `herdr-worktree-create's
-own contract (see herdr-cmd-test.el) is that a blank string must not
-reach the server as one.  `herdr-dispatch-create-worktree' calls
-`herdr-rpc-call\\=' directly rather than through that command, so the
-same contract has to be reasserted here rather than inherited."
+  "A blank base must not reach the server as an empty string.  This verb
+calls `herdr-rpc-call\\=' directly, so the contract is reasserted rather
+than inherited from `herdr-worktree-create\\='."
   (let ((params nil)
-        (transient-current-command 'herdr-dispatch-create))
+        (prompts nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
                (lambda (_method p) (setq params p) nil))
               ((symbol-function 'herdr-state-workspace-directory)
                (lambda (_state _id) "/tmp/herdr.el/"))
-              ((symbol-function 'read-string) (lambda (&rest _) "feature"))
-              ((symbol-function 'transient-args) (lambda (_) '("--base=")))
+              ((symbol-function 'read-string)
+               (lambda (prompt &rest _)
+                 (push prompt prompts)
+                 (if (string-match-p "branch" prompt) "feature" "")))
               ((symbol-function 'herdr-dispatch-refresh) #'ignore))
       (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
         (search-forward "herdr.el")
         (herdr-dispatch-create-worktree)
         (should (equal "feature" (alist-get 'branch params)))
         (should-not (alist-get 'base params))
-        (should (equal "/tmp/herdr.el/" (alist-get 'cwd params)))))))
+        (should (equal "/tmp/herdr.el/" (alist-get 'cwd params)))
+        ;; Branch first, then base: the order the prompts must come in.
+        (should (= 2 (length prompts)))
+        (should (string-match-p "branch" (nth 1 prompts)))
+        (should (string-match-p "Base ref" (nth 0 prompts)))))))
 
-(ert-deftest herdr-dispatch-create-workspace-uses-the-directory-argument-when-set ()
-  "--directory short-circuits both the point-derived default and the prompt."
+(ert-deftest herdr-dispatch-create-worktree-passes-a-base-that-was-given ()
+  "The capability the prompt replaced: a worktree off something other
+than the current HEAD."
+  (let ((params nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (_method p) (setq params p) nil))
+              ((symbol-function 'herdr-state-workspace-directory)
+               (lambda (_state _id) "/tmp/herdr.el/"))
+              ((symbol-function 'read-string)
+               (lambda (prompt &rest _)
+                 (if (string-match-p "branch" prompt) "feature" "v1.4")))
+              ((symbol-function 'herdr-dispatch-refresh) #'ignore))
+      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+        (search-forward "herdr.el")
+        (herdr-dispatch-create-worktree)
+        (should (equal "v1.4" (alist-get 'base params)))))))
+
+(ert-deftest herdr-dispatch-create-workspace-prompts-from-the-row-at-point ()
+  "The default offered is the directory of the workspace at point."
   (let ((called nil)
-        (transient-current-command 'herdr-dispatch-create))
+        (default nil))
     (cl-letf (((symbol-function 'herdr-workspace-create)
-               (lambda (dir label) (setq called (list dir label))))
-              ((symbol-function 'transient-args)
-               (lambda (_) '("--directory=/tmp/proj" "--label=proj")))
+               (lambda (dir &optional label) (setq called (list dir label))))
+              ((symbol-function 'herdr-state-workspace-directory)
+               (lambda (_state _id) "/tmp/herdr.el/"))
               ((symbol-function 'read-directory-name)
-               (lambda (&rest _) (error "should not prompt"))))
+               (lambda (_prompt &optional given &rest _)
+                 (setq default given)
+                 "/tmp/proj")))
       (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
         (search-forward "herdr.el")
         (herdr-dispatch-create-workspace)
-        (should (equal '("/tmp/proj" "proj") called))))))
+        (should (equal "/tmp/herdr.el/" default))
+        (should (equal '("/tmp/proj" nil) called))))))
 
 ;;; Starting an agent from anywhere in the tree
 
@@ -2567,7 +2664,7 @@ with no agent.")
                (agent . "gemini")))))
   "The state `herdr-dispatch-test--start-nodes\\=' was drawn from.
 Real state rather than mocked accessors, for the reason given in
-`herdr-dispatch-create-pane-resolves-a-tab-to-one-of-its-panes\\='.")
+`herdr-dispatch-create-terminal-resolves-a-tab-to-one-of-its-panes\\='.")
 
 (defmacro herdr-dispatch-test-with-start-tree (&rest body)
   "Render the agent-start fixture over its own state and run BODY there."
@@ -2577,10 +2674,8 @@ Real state rather than mocked accessors, for the reason given in
      (herdr-dispatch-test-with-buffer herdr-dispatch-test--start-nodes
        ,@body)))
 
-(ert-deftest herdr-dispatch-create-pane-creates-a-tab-in-the-workspace-of-the-pane ()
-  "A pane row resolves through its own record to its workspace, so `n'
-on any pane opens a terminal beside it rather than wherever the server
-happens to be focused."
+(ert-deftest herdr-dispatch-create-terminal-creates-a-tab-in-the-workspace-of-the-pane ()
+  "A pane row resolves through its own record to its workspace."
   (let ((workspace-id nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
                (lambda (_method params)
@@ -2589,13 +2684,11 @@ happens to be focused."
               ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
       (herdr-dispatch-test-with-start-tree
         (search-forward "w1:p1")
-        (herdr-dispatch-create-pane)
+        (herdr-dispatch-create-terminal)
         (should (equal "w1" workspace-id))))))
 
-(ert-deftest herdr-dispatch-create-pane-follows-the-pane-it-creates ()
-  "The whole conversation, on the wire.  `tab.create' carries `focus',
-and the created pane is followed — a terminal that opens somewhere you
-cannot see reads as a no-op."
+(ert-deftest herdr-dispatch-create-terminal-follows-the-pane-it-creates ()
+  "A terminal that opens somewhere you cannot see reads as a no-op."
   (let ((methods nil)
         (followed nil))
     (cl-letf (((symbol-function 'herdr-cmd--follow-new-pane)
@@ -2612,21 +2705,17 @@ cannot see reads as a no-op."
                     nil)))
         (herdr-dispatch-test-with-start-tree
           (search-forward "w1:p2")
-          (herdr-dispatch-create-pane))))
+          (herdr-dispatch-create-terminal))))
     (should (equal '("tab.create") (reverse methods)))
     (should (equal "w1:p9" followed))))
 
 ;;; `n' on a row that names a directory rather than a workspace
 
-(ert-deftest herdr-dispatch-create-pane-opens-a-known-project-first ()
-  "The defect this closes: `herdr-dispatch--workspace-target' answers nil
-on a row that names a directory, and a nil `workspace_id' makes
-`tab.create' fall back to whatever workspace the SERVER has focused.  So
-`n' on an inactive project quietly opened a terminal in some other
-repository, with nothing on screen saying where it went.
-
-Nothing is open at the directory here, so the workspace is created and
-its root pane — not a second tab in it — is what gets followed."
+(ert-deftest herdr-dispatch-create-terminal-opens-a-known-project-first ()
+  "A nil `workspace_id\\=' makes `tab.create\\=' fall back to whatever the
+server has focused, so `n\\=' here used to open a terminal in some other
+repository.  Nothing is open at this directory, so its root pane is what
+gets followed."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
     (let ((herdr-state--current (herdr-state-empty))
           (calls nil)
@@ -2638,19 +2727,16 @@ its root pane — not a second tab in it — is what gets followed."
                    '((root_pane . ((pane_id . "w7:p1"))))))
                 ((symbol-function 'herdr-cmd--follow-new-pane)
                  (lambda (pane) (setq followed pane))))
-        (herdr-dispatch-create-pane))
+        (herdr-dispatch-create-terminal))
       (should (equal '(("workspace.create" . ((cwd . "/tmp/other-project/")
                                               (label . "other-project")
                                               (focus . t))))
                      (reverse calls)))
       (should (equal "w7:p1" followed)))))
 
-(ert-deftest herdr-dispatch-create-pane-reuses-a-workspace-already-open-there ()
-  "The row is built only for a root with no workspace open, but the
-render can be one poll tick behind by the time `n' lands.  Creating a
-second workspace for a directory that already has one is the bug
-`herdr-state-workspace-for-directory' exists to prevent, so the answer
-is a tab in the workspace that is already there."
+(ert-deftest herdr-dispatch-create-terminal-reuses-a-workspace-already-open-there ()
+  "The row can be a poll tick stale; creating a second workspace for the
+same directory is what `herdr-state-workspace-for-directory\\=' prevents."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
     (let ((herdr-state--current
            (herdr-state-from-snapshot
@@ -2664,16 +2750,15 @@ is a tab in the workspace that is already there."
                    (push (cons method params) calls)
                    '((root_pane . ((pane_id . "w9:p2"))))))
                 ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
-        (herdr-dispatch-create-pane))
+        (herdr-dispatch-create-terminal))
       (should (equal '(("tab.create" . ((workspace_id . "w9")
                                         (cwd . nil)
                                         (focus . t))))
                      (reverse calls))))))
 
-(ert-deftest herdr-dispatch-create-pane-prefers-a-worktree-row-to-its-repository ()
-  "A worktree row inside an open repository has that repository as its
-enclosing workspace.  Walking up would open the terminal in the
-repository the user was pointing past, so the directory row wins."
+(ert-deftest herdr-dispatch-create-terminal-prefers-a-worktree-row-to-its-repository ()
+  "Walking up would open the terminal in the repository the user was
+pointing past."
   (herdr-dispatch-test-with-buffer
       '((herdr-workspace "w1" "herdr.el (2)"
          ((herdr-panes "w1" "main (1)" ((herdr-pane "w1:p1" "claude" nil)))
@@ -2690,22 +2775,15 @@ repository the user was pointing past, so the directory row wins."
                    (push (cons method params) calls)
                    '((root_pane . ((pane_id . "w8:p1"))))))
                 ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
-        (herdr-dispatch-create-pane))
+        (herdr-dispatch-create-terminal))
       (should (equal "workspace.create" (car (car (reverse calls)))))
       (should (equal "/tmp/herdr.el-fix/"
                      (alist-get 'cwd (cdr (car (reverse calls)))))))))
 
-(ert-deftest herdr-dispatch-create-pane-refuses-a-heading-that-names-no-place ()
-  "The last hole of the same shape.  `herdr-dispatch--workspace-target'
-answers nil on a row that resolves to no workspace, and a nil
-`workspace_id' makes `tab.create' fall back to whatever workspace the
-server has focused.  Point on the `Inactive (N)' heading, or on the
-dashboard's own header line, therefore opened a terminal in some other
-repository with nothing on screen saying where it went — the same defect
-the directory rows had, in the two places that name no directory either.
-
-Every other verb already refuses both headings.  This one has to as
-well, or the refusal is a property of which verb you happened to press."
+(ert-deftest herdr-dispatch-create-terminal-refuses-a-heading-that-names-no-place ()
+  "The `Inactive (N)\\=' heading and the header line name no place, and a
+nil `workspace_id\\=' would send the terminal to the focused workspace.
+Every other verb already refuses both."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
     (dolist (target '("Inactive (2)" :header))
       (if (eq target :header)
@@ -2715,10 +2793,10 @@ well, or the refusal is a property of which verb you happened to press."
       (should (equal nil
                      (herdr-dispatch-test-with-recorders
                          (herdr-rpc-call herdr-cmd--follow-new-pane)
-                       (should-error (herdr-dispatch-create-pane)
+                       (should-error (herdr-dispatch-create-terminal)
                                      :type 'user-error)))))))
 
-(ert-deftest herdr-dispatch-create-pane-creates-a-tab-from-a-flattened-workspace-heading ()
+(ert-deftest herdr-dispatch-create-terminal-creates-a-tab-from-a-flattened-workspace-heading ()
   "`herdr-tree\\=' renders a single-tab workspace flattened, dropping the
 tab level, so on such a heading there is no `herdr-tab\\=' section
 underneath — but `tab.create\\=' needs a workspace id, not a pane, and the
@@ -2729,29 +2807,32 @@ heading is that id directly."
               ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
       (herdr-dispatch-test-with-start-tree
         (search-forward "herdr.el")
-        (herdr-dispatch-create-pane)
+        (herdr-dispatch-create-terminal)
         (should (equal "w1" (alist-get 'workspace_id params)))))))
 
 (ert-deftest herdr-dispatch-binds-the-create-verbs ()
-  (should (eq #'herdr-dispatch-create
-              (lookup-key herdr-dispatch-mode-map "c")))
   (should (eq #'herdr-dispatch-create-workspace
               (lookup-key herdr-dispatch-mode-map "w")))
-  (should (eq #'herdr-dispatch-create-pane
+  (should (eq #'herdr-dispatch-create-terminal
               (lookup-key herdr-dispatch-mode-map "n")))
   (should (eq #'herdr-dispatch-create-worktree
               (lookup-key herdr-dispatch-mode-map "%")))
-  (dolist (verb '(herdr-dispatch-create herdr-dispatch-create-workspace
-                                        herdr-dispatch-create-pane
-                                        herdr-dispatch-create-worktree))
+  (dolist (verb '(herdr-dispatch-create-workspace
+                  herdr-dispatch-create-terminal
+                  herdr-dispatch-create-worktree))
     (should (commandp verb))))
 
+(ert-deftest herdr-dispatch-binds-no-create-menu ()
+  "`c\\=' offered the same verbs as `w\\=', `n\\=' and `%\\=' plus three
+arguments, and was the last transient prefix in the package."
+  (should-not (lookup-key herdr-dispatch-mode-map "c"))
+  (should-not (fboundp 'herdr-dispatch-create))
+  (should-not (fboundp 'herdr-dispatch--args))
+  (should-not (fboundp 'herdr-dispatch--arg)))
+
 (ert-deftest herdr-dispatch-offers-no-second-way-to-create-a-place-to-run-in ()
-  "`a' started an agent through `agent.start', asking for a kind and a
-name that herdr\='s own TUI never asks for: there a new tab opens a
-shell, and the agent is whatever you run in it.  Two doors to one place
-is what this buffer no longer has, so both the key and the command are
-gone rather than merely unbound."
+  "`a\\=' called `agent.start\\=', asking for a kind and a name that herdr\\='s
+own TUI never asks for."
   (should-not (lookup-key herdr-dispatch-mode-map "a"))
   (should-not (fboundp 'herdr-dispatch-create-agent))
   (should-not (fboundp 'herdr-agent-start)))

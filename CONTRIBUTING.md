@@ -15,7 +15,7 @@ behaviour of the server that the herdr documentation does not state.
 
 ```bash
 make compile     # byte-compile. A warning stops the build.
-make test        # 504 tests. No herdr server is necessary.
+make test        # 460 tests. No herdr server is necessary.
 make test-live   # more tests. A herdr server is necessary.
 ```
 
@@ -30,12 +30,11 @@ round-trip test leaves the session exactly as it found it.
 ## Dependencies and `EXTRA_LOAD_PATH`
 
 Both targets run `emacs -Q -L .`. That command starts no package system and reads no init file,
-so `magit-section` and `transient` are absent from the load path.
+so `magit-section` is absent from the load path.
 
 Each target therefore loads `test/herdr-deps.el` first. That file searches the package
 directories of `elpaca`, `package.el` and `straight.el`, and puts the dependencies on the load
-path. A missing `magit-section` or `transient` is a hard error, and the error names
-`EXTRA_LOAD_PATH`.
+path. A missing `magit-section` is a hard error, and the error names `EXTRA_LOAD_PATH`.
 
 Nothing skips. `make test` runs the whole suite or stops and tells you why. `make compile`
 compiles every source file, including `herdr-dispatch.el`.
@@ -51,8 +50,9 @@ make test    EXTRA_LOAD_PATH="$DEPS"
 make compile EXTRA_LOAD_PATH="$DEPS"
 ```
 
-`magit-section` and `transient` are the two dependencies. `compat`, `dash`, `llama` and
-`cond-let` are what those two need.
+`magit-section` is the one dependency that herdr names. `compat`, `dash`, `llama`, `cond-let` and
+`transient` are what it needs. Emacs ships a `transient` from version 28.1, so its absence cannot
+stop the build; it is searched for because `magit-section` asks for a recent one.
 
 ## The blind spot of the test suite
 
@@ -61,7 +61,6 @@ faults:
 
 - A modeline that renders `*invalid*`.
 - A command that splits a window.
-- A transient entry that nobody added.
 
 Several faults passed a green suite. A person found them by driving a real Emacs under a PTY.
 

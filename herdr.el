@@ -7,7 +7,7 @@
 ;; Version: 0.1.0
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-;; Package-Requires: ((emacs "28.1") (transient "0.4.0") (magit-section "3.3") (ghostel "0"))
+;; Package-Requires: ((emacs "28.1") (magit-section "3.3") (ghostel "0"))
 
 ;; This file is not part of GNU Emacs.
 
@@ -31,6 +31,9 @@
 (require 'herdr-term)
 (require 'herdr-cmd)
 (require 'herdr-modeline)
+;; Required, not autoloaded: `herdr-call' is the escape hatch every
+;; deleted command relies on, and it used to arrive with `herdr-transient'.
+(require 'herdr-call)
 
 (declare-function project-root "project" (project))
 (declare-function project-current "project" (&optional maybe-prompt directory))
@@ -64,9 +67,9 @@ some commands may misbehave"
   (herdr--check-protocol)
   (unless (herdr-state-running-p)
     (herdr-state-start))
-  ;; agent-windows needs the cache before it can decide what to attach.
-  (when (eq herdr-terminal-backend 'agent-windows)
-    (herdr-term-ensure)))
+  ;; Twice: the second pass has the cache, which is what decides what to
+  ;; attach.
+  (herdr-term-ensure))
 
 ;;;###autoload
 (defun herdr-stop ()
@@ -91,24 +94,11 @@ The herdr server keeps running; agents are unaffected."
 ;;;###autoload
 (defun herdr ()
   "Start herdr if needed and open the dispatcher.
-
-The one entry point that guarantees the start sequence has run:
-`herdr-start\\=' brings up the server, the terminals and the event
-stream, so the dashboard is drawn from a cache with something in it
-rather than from a cold one.  `herdr-agents\\=' on its own does not, and
-neither does `herdr-transient\\=' — which is why `s\\=' in
-`herdr-command-map\\=' is bound here rather than there."
+The one entry point that runs the start sequence first, which is why
+`s\\=' in `herdr-command-map\\=' is bound here and not to `herdr-agents\\='."
   (interactive)
   (herdr-start)
-  (herdr-term-display)
   (herdr-agents))
-
-;; Loaded last: herdr-transient autoloads `herdr-project', which is
-;; defined above, so requiring it here rather than at the top avoids a
-;; circular load while still making the whole command surface available
-;; as soon as this file is loaded.  A lazy require inside `herdr' would
-;; leave `M-x herdr-transient' broken until `M-x herdr' had run once.
-(require 'herdr-transient)
 
 (defvar herdr-command-map
   (let ((map (make-sparse-keymap)))
@@ -118,29 +108,16 @@ neither does `herdr-transient\\=' — which is why `s\\=' in
     (define-key map "k" #'herdr-pane-close)
     (define-key map "w" #'herdr-workspace-focus)
     (define-key map "p" #'herdr-project)
-    (define-key map "%" #'herdr-transient-worktree)
+    (define-key map "%" #'herdr-worktree-create)
     (define-key map "g" #'herdr-state-resync)
-    (define-key map "?" #'herdr-transient)
     map)
-  "Prefix keymap for herdr, meant to be bound to one key of your own.
+  "Prefix keymap for herdr, bound to a key of your own choosing.
 
     (define-key global-map (kbd \"C-c H\") herdr-command-map)
 
-Bound by you rather than by this package, the way `project-prefix-map\\='
-is: a package that seizes a `C-c' binding takes it from the user, and
-which key is spare is the user\\='s question.
-
-The letters are the dashboard\\='s letters.  `n\\=' opens a terminal and
-`k\\=' closes one here, exactly as they do on a row in `*herdr-agents*\\=';
-the difference is only where the target comes from, a picker here and
-point there.  `s\\=' is the status buffer, the one entry point that
-guarantees the start sequence has run — see `herdr\\='.
-
-`?\\=' opens `herdr-transient\\='.  It reaches it directly, with no start
-sequence of its own, which is what `herdr-menu\\=' used to add.  That
-command is gone: `s\\=' guarantees the startup, and a second entry point
-whose whole content was \"the same thing but ending elsewhere\" is the
-kind of duplication this prefix exists to remove.")
+The letters are the dashboard\\='s letters; the target comes from a picker
+here and from point there.  No help key: `C-h\\=' after the prefix lists
+these bindings.")
 
 (provide 'herdr)
 ;;; herdr.el ends here

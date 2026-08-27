@@ -25,23 +25,17 @@ what herdr.el sends.
 
 | Option | Default | Function |
 |---|---|---|
-| `herdr-terminal-backend` | `session` | How Emacs hosts the herdr terminals. |
 | `herdr-display-action` | `((display-buffer-reuse-window display-buffer-same-window))` | Where a herdr buffer appears. |
 | `herdr-term-track-directory` | `t` | Whether a buffer follows the working directory of its pane. |
 | `herdr-term-directory-interval` | `5.0` | The number of seconds between directory polls. `nil` stops the polls. |
 | `herdr-term-directory-debounce` | `0.4` | The number of seconds to group the directory refreshes. |
 
-`herdr-terminal-backend` takes one of two values:
+herdr.el gives each pane its own buffer. Emacs controls the layout. Your panes stay alive when
+you close Emacs, because the herdr server is a daemon.
 
-- `session` gives you one buffer that runs the herdr TUI. herdr controls the layout.
-- `agent-windows` gives you one buffer for each agent. Emacs controls the layout. Your agents
-  stay alive when you close Emacs.
-
-Every path that shows a herdr buffer uses `herdr-display-action`. The same buffer therefore
-cannot appear in one place from one command and in another place from a different command.
-
-The herdr TUI needs width for its sidebar. The sidebar is 26 columns. Under the `session`
-backend, you can prefer `'(display-buffer-full-frame)`. That value deletes your other windows.
+Every path that shows a terminal uses `herdr-display-action`. The same buffer therefore cannot
+appear in one place from one command and in another place from a different command. The dashboard
+has its own option; see [The dashboard](#the-dashboard).
 
 herdr does not send an event when the working directory changes. Directory tracking must
 therefore poll. The poll runs only while herdr terminal buffers exist.
@@ -51,8 +45,25 @@ therefore poll. The poll runs only while herdr terminal buffers exist.
 | Option | Default | Function |
 |---|---|---|
 | `herdr-dispatch-buffer-name` | `"*herdr-agents*"` | The name of the dashboard buffer. |
+| `herdr-dispatch-display-action` | `(display-buffer-full-frame)` | Where the dashboard appears. |
 | `herdr-dispatch-refresh-debounce` | `0.2` | The number of seconds to group the dashboard redraws. |
 | `herdr-dispatch-fold-indicators` | `nil` | The value that `magit-section-visibility-indicators` takes. |
+
+The dashboard takes the frame. A pane row has four columns, and the last two carry the news: the
+pane id, and the work that the agent reports. Half a frame cuts them off.
+
+Taking the frame deletes your other windows. The key `q` does not bring them back. It restores
+the buffer that this window held before.
+
+For a dashboard that splits the window instead, set the option to nil:
+
+```elisp
+(setq herdr-dispatch-display-action nil)
+```
+
+The dashboard and the terminals have separate options on purpose. A terminal is a buffer that you
+move between, and it must not rearrange the frame. The dashboard is a place that you go to, read,
+and leave.
 
 The dashboard redraws from the cache, not from the server. A redraw therefore costs no socket
 traffic. The debounce stops a busy agent from causing many redraws each second.
@@ -61,16 +72,11 @@ traffic. The debounce stops a busy agent from causing many redraws each second.
 
 | Option | Default | Function |
 |---|---|---|
-| `herdr-adopt-created-shells` | `t` | Obsolete no-op, kept so an old config does not error. |
-| `herdr-shell-agent-name` | `"shell"` | The agent name `herdr-adopt-shell` reports. |
 | `herdr-notify-statuses` | `nil` | The agent statuses that raise a desktop notification. |
 
-Since herdr 0.8.2, every pane is attachable, so `herdr-adopt-created-shells` does nothing;
-`herdr terminal attach` no longer refuses a plain shell pane. `M-x herdr-adopt-shell` still has a
-use: it names `herdr-shell-agent-name` as the agent on a pane so herdr itself watches it, which
-puts the pane in the modeline count, the agent picker and notifications like any other pane
-carrying an agent.
-`M-x herdr-release-shell` undoes the report.
+Since herdr 0.8.2, every pane is attachable: `herdr terminal attach` no longer refuses a plain
+shell pane. The options and commands for adoption are therefore removed. To name an agent on a
+pane by hand, call `pane.report_agent` through `M-x herdr-call`.
 
 To get desktop notifications, set the statuses that you want:
 

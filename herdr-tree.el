@@ -570,29 +570,9 @@ two lives in the cache that builds WORKTREES rather than here."
 
 (defun herdr-tree--main-node (workspace-id panes)
   "Return the `main (N)\\=' node holding PANES, the panes of WORKSPACE-ID.
-
-Drawn only for a workspace that has worktrees, where it is the row that
-tells this repository\\='s own panes apart from the checkouts beside
-them.  A workspace with no worktrees has nothing to be told apart from,
-and its panes hang off the workspace row directly.
-
-The group used to be drawn for every workspace, on two arguments.  One
-was that a conditional group makes every pane in the session move a
-level in or out as worktrees come and go — true, and the price paid
-here.  The other was that a workspace without worktrees would have no
-`main\\=' row to aim the create-agent verb at, and that argument went
-with the verb: \\[herdr-dispatch-create-pane] resolves the workspace row
-itself, so nothing needs a group row to stand on.
-
-What is bought is a plugin workspace reading as what it is.  herdr seats
-a plugin pane in a workspace of its own — the Lantern chat arrives as
-one pane labelled `Lantern\\=' — and a `main (1)\\=' group over a single
-pane that is not a checkout of anything described it wrongly and cost a
-line doing it.  The same is true of every ordinary one-agent workspace.
-
-`main\\=' is git's word for the checkout the worktrees hang off, which is
-exactly what these panes are running in.  It names the worktree, not a
-branch: the repository's own branch may be called anything at all."
+Drawn only for a workspace that has worktrees, where it is what tells
+this repository\\='s own panes from the checkouts beside them.  `main\\=' is
+git\\='s word for the checkout the worktrees hang off."
   (list 'herdr-panes workspace-id
         (format "main (%s)" (length panes))
         panes))
@@ -701,7 +681,7 @@ The repository\\='s own checkout leads the list, as a `main\\=' row; see
 `herdr-tree--main-checkout-node\\=' for why it is drawn here and not
 under an open workspace.  A repository with no worktrees at all is
 therefore one `main\\=' row rather than nothing: the row is where
-\\[herdr-dispatch-create-pane] is aimed, and a repository does not stop
+\\[herdr-dispatch-create-terminal] is aimed, and a repository does not stop
 having a checkout for having no worktrees.
 
 Nil still means the reply has not landed.  That is absence of knowledge,

@@ -39,7 +39,6 @@ one of the two is in the cache under that name."
 (ert-deftest herdr-state-from-snapshot-populates-everything ()
   (let ((state (herdr-state-test--seed)))
     (should (= 2 (length (herdr-state-panes state))))
-    (should (= 1 (length (herdr-state-tabs state))))
     (should (= 1 (length (herdr-state-workspaces state))))
     (should (equal "w1:p1" (herdr-state-focused-pane-id state)))))
 
@@ -161,22 +160,27 @@ whichever way herdr fills the field in."
                                   "pane_focused" '((pane_id . "w1:p2")))))
     (should (equal "w1:p2" (herdr-state-focused-pane-id next)))))
 
-(ert-deftest herdr-state-reduce-workspace-and-tab-events ()
+(ert-deftest herdr-state-reduce-workspace-events ()
   (let* ((s (herdr-state-test--seed))
          (s (herdr-state-reduce s "workspace_created"
                                 '((workspace . ((workspace_id . "w2")
                                                 (label . "other"))))))
-         (s (herdr-state-reduce s "tab_created"
-                                '((tab . ((tab_id . "w2:t1") (label . "1")
-                                          (workspace_id . "w2"))))))
-         (s (herdr-state-reduce s "workspace_focused" '((workspace_id . "w2"))))
-         (s (herdr-state-reduce s "tab_focused" '((tab_id . "w2:t1")))))
+         (s (herdr-state-reduce s "workspace_focused" '((workspace_id . "w2")))))
     (should (= 2 (length (herdr-state-workspaces s))))
-    (should (= 2 (length (herdr-state-tabs s))))
     (should (equal "w2" (herdr-state-focused-workspace-id s)))
-    (should (equal "w2:t1" (herdr-state-focused-tab-id s)))
     (let ((s (herdr-state-reduce s "workspace_closed" '((workspace_id . "w2")))))
       (should (= 1 (length (herdr-state-workspaces s)))))))
+
+(ert-deftest herdr-state-ignores-tab-events-entirely ()
+  "Nothing outside this file ever read a tab record, so the cache stopped
+keeping them.  A tab event must therefore leave the state untouched
+rather than signal."
+  (let* ((s (herdr-state-test--seed))
+         (next (herdr-state-reduce s "tab_created"
+                                   '((tab . ((tab_id . "w2:t1")))))))
+    (should (eq s next))
+    (should-not (fboundp 'herdr-state-tabs))
+    (should-not (fboundp 'herdr-state-reconcile-tabs))))
 
 ;;; Renames and moves, whose events carry no nested record
 
@@ -208,28 +212,6 @@ went on showing the old name."
     (should (= 1 (length (herdr-state-workspaces next))))
     (should (equal "web" (alist-get 'label (car (herdr-state-workspaces next)))))))
 
-(ert-deftest herdr-state-reduce-tab-renamed-updates-the-label ()
-  "`tab_id', `workspace_id' and `label'; no TabInfo to be found."
-  (let* ((state (herdr-state-from-snapshot
-                 '((tabs . (((tab_id . "w1:t1") (label . "1")
-                             (workspace_id . "w1") (pane_count . 2)))))))
-         (next (herdr-state-reduce state "tab_renamed"
-                                   '((type . "tab_renamed")
-                                     (tab_id . "w1:t1") (workspace_id . "w1")
-                                     (label . "build")))))
-    (let ((tab (car (herdr-state-tabs next))))
-      (should (equal "build" (alist-get 'label tab)))
-      (should (equal 2 (alist-get 'pane_count tab))))
-    (should (equal "1" (alist-get 'label (car (herdr-state-tabs state)))))))
-
-(ert-deftest herdr-state-reduce-tab-renamed-for-an-unknown-id-is-a-noop ()
-  (let* ((state (herdr-state-test--seed))
-         (next (herdr-state-reduce state "tab_renamed"
-                                   '((tab_id . "w9:t9") (label . "build")))))
-    (should (eq state next))
-    (should (= 1 (length (herdr-state-tabs next))))
-    (should (equal "1" (alist-get 'label (car (herdr-state-tabs next)))))))
-
 (defun herdr-state-test--tab-order (state)
   "Return STATE's tab ids in list order."
   (mapcar (lambda (tab) (alist-get 'tab_id tab)) (herdr-state-tabs state)))
@@ -241,82 +223,6 @@ went on showing the old name."
               ((tab_id . "w2:t1") (workspace_id . "w2") (label . "other"))
               ((tab_id . "w1:t2") (workspace_id . "w1") (label . "two"))
               ((tab_id . "w1:t3") (workspace_id . "w1") (label . "three")))))))
-
-(ert-deftest herdr-state-reduce-tab-moved-places-it-by-insert-index ()
-  "`insert_index' counts among the moved tab's own workspace, so the
-tabs of every other workspace must stay exactly where they were.
-
-A backward move — index 0, from third among w1's tabs — so the answer
-is the same whether herdr counts the index against the list with the
-moved tab still in it or already out of it."
-  (let ((next (herdr-state-reduce
-               (herdr-state-test--tab-seed) "tab_moved"
-               '((type . "tab_moved") (tab_id . "w1:t3")
-                 (workspace_id . "w1") (insert_index . 0)
-                 (tabs . [((tab_id . "w1:t3") (workspace_id . "w1")
-                           (label . "three"))
-                          ((tab_id . "w1:t1") (workspace_id . "w1")
-                           (label . "one"))
-                          ((tab_id . "w1:t2") (workspace_id . "w1")
-                           (label . "two"))])))))
-    (should (equal '("w1:t3" "w2:t1" "w1:t1" "w1:t2")
-                   (herdr-state-test--tab-order next)))))
-
-(ert-deftest herdr-state-reduce-tab-moved-folds-in-the-tabs-it-carries ()
-  "The TabInfo the event ships is fresher than the cache's.
-Backward move again, so this asserts the fold without also asserting
-the reading of `insert_index' that is still unverified."
-  (let* ((next (herdr-state-reduce
-                (herdr-state-test--tab-seed) "tab_moved"
-                '((tab_id . "w1:t2") (workspace_id . "w1")
-                  (insert_index . 0)
-                  (tabs . [((tab_id . "w1:t2") (workspace_id . "w1")
-                            (label . "renamed"))]))))
-         (tab (seq-find (lambda (candidate)
-                          (equal "w1:t2" (alist-get 'tab_id candidate)))
-                        (herdr-state-tabs next))))
-    (should (equal "renamed" (alist-get 'label tab)))
-    (should (equal '("w1:t2" "w2:t1" "w1:t1" "w1:t3")
-                   (herdr-state-test--tab-order next)))))
-
-(ert-deftest herdr-state-reduce-tab-moved-forward-pins-an-unverified-reading ()
-  "UNVERIFIED: this fixes one of two possible readings of `insert_index'.
-
-Only forward moves — to a position after the tab's own — can tell them
-apart.  `herdr-state--move-within' indexes against the group with the
-tab already removed, so w1:t1 to index 2 among (t1 t2 t3) gives
-\(t2 t3 t1).  If herdr instead counts against the group with the tab
-still in it, the answer is (t2 t1 t3).
-
-Nothing has been measured either way: provoking one means calling
-`tab.move' on a live session, which was out of bounds here.  One real
-`tab_moved' watched read-only on the event stream settles it.  Until
-then this test exists to be found and corrected, not to certify the
-behaviour — change it, do not delete it, if the other reading turns out
-to be right."
-  (let ((next (herdr-state-reduce
-               (herdr-state-test--tab-seed) "tab_moved"
-               '((tab_id . "w1:t1") (workspace_id . "w1")
-                 (insert_index . 2) (tabs . [])))))
-    (should (equal '("w1:t2" "w2:t1" "w1:t3" "w1:t1")
-                   (herdr-state-test--tab-order next)))))
-
-(ert-deftest herdr-state-reduce-tab-moved-for-an-unknown-id-is-a-noop ()
-  (let* ((state (herdr-state-test--tab-seed))
-         (next (herdr-state-reduce state "tab_moved"
-                                   '((tab_id . "w9:t9") (workspace_id . "w9")
-                                     (insert_index . 0) (tabs . [])))))
-    (should (eq state next))
-    (should (equal '("w1:t1" "w2:t1" "w1:t2" "w1:t3")
-                   (herdr-state-test--tab-order next)))))
-
-(ert-deftest herdr-state-reduce-tab-moved-is-pure ()
-  (let* ((state (herdr-state-test--tab-seed))
-         (_ (herdr-state-reduce state "tab_moved"
-                                '((tab_id . "w1:t3") (workspace_id . "w1")
-                                  (insert_index . 0) (tabs . [])))))
-    (should (equal '("w1:t1" "w2:t1" "w1:t2" "w1:t3")
-                   (herdr-state-test--tab-order state)))))
 
 (defun herdr-state-test--ws-seed ()
   "State with four workspaces w1..w4 in order, for reorder tests."
@@ -458,16 +364,6 @@ arrays."
                    (herdr-state-focused-pane-id b)))))
 
 ;;; Attachability
-
-(ert-deftest herdr-state-attachable-is-every-pane ()
-  "herdr terminal attach takes any pane, agent or not."
-  (let ((state (herdr-state-from-snapshot
-                `((panes . (((pane_id . "w1:p1") (agent . "claude"))
-                            ((pane_id . "w1:p2") (agent . "shell"))
-                            ((pane_id . "w1:p3") (agent . nil))))))))
-    (should (equal '("w1:p1" "w1:p2" "w1:p3")
-                   (mapcar (lambda (p) (alist-get 'pane_id p))
-                           (herdr-state-attachable state))))))
 
 (ert-deftest herdr-state-agents-is-every-pane-with-an-agent ()
   "An agent is a process herdr recognizes inside a pane — nothing more."

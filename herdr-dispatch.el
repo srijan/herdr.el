@@ -5,7 +5,7 @@
 ;; Author: Eddie Jesinsky
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-;; Package-Requires: ((emacs "28.1") (transient "0.4.0") (magit-section "3.3"))
+;; Package-Requires: ((emacs "28.1") (magit-section "3.3"))
 
 ;;; Commentary:
 
@@ -22,23 +22,22 @@
 
 (require 'subr-x)
 (require 'seq)
-(require 'transient)
 (require 'magit-section)
 (require 'herdr-tree)
 (require 'herdr-state)
 (require 'herdr-rpc)
 (require 'herdr-cmd)
 
-;; `herdr-transient' lives in herdr-transient.el, which autoloads
-;; `herdr-agents' (defined below).  Requiring it here rather than
-;; autoloading would close that into a load cycle, so `?' reaches it the
-;; same way `herdr-agents' reaches back.
-(declare-function herdr-transient "herdr-transient" ())
-(autoload 'herdr-transient "herdr-transient" nil t)
-
 (defcustom herdr-dispatch-buffer-name "*herdr-agents*"
   "Name of the dispatcher buffer."
   :type 'string
+  :group 'herdr)
+
+(defcustom herdr-dispatch-display-action '(display-buffer-full-frame)
+  "How the dispatcher buffer is shown, as a `display-buffer\\=' ACTION.
+Taking the frame deletes your other windows, and \\[quit-window] does not
+bring them back.  Nil splits instead."
+  :type 'sexp
   :group 'herdr)
 
 (defcustom herdr-dispatch-refresh-debounce 0.2
@@ -107,7 +106,6 @@ tells itself apart from a redraw of an empty session.")
     (define-key map (kbd "RET") #'herdr-dispatch-visit)
     (define-key map "p" #'herdr-dispatch-prompt)
     (define-key map "r" #'herdr-dispatch-read)
-    (define-key map "f" #'herdr-dispatch-focus)
     (define-key map "R" #'herdr-dispatch-rename)
     (define-key map "k" #'herdr-dispatch-close)
     ;; TAB is `magit-section-toggle' itself.  It was a command of ours
@@ -129,11 +127,9 @@ tells itself apart from a redraw of an empty session.")
     ;; the unchanged-tree skip in `herdr-dispatch-refresh' are what
     ;; address that.  Reach for those first.
     (define-key map (kbd "TAB") #'magit-section-toggle)
-    (define-key map "c" #'herdr-dispatch-create)
     (define-key map "w" #'herdr-dispatch-create-workspace)
-    (define-key map "n" #'herdr-dispatch-create-pane)
+    (define-key map "n" #'herdr-dispatch-create-terminal)
     (define-key map "%" #'herdr-dispatch-create-worktree)
-    (define-key map "?" #'herdr-transient)
     map)
   "Keymap for `herdr-dispatch-mode'.
 Lowercase letters are the read-only verbs; each acts on whatever the
@@ -875,36 +871,6 @@ nowhere to go; see `herdr-dispatch--refuse-heading\\='."
   (herdr-pane-read (herdr-dispatch--require 'herdr-pane "a pane")
                    "recent_unwrapped"))
 
-(herdr-dispatch-defverb herdr-dispatch-focus ()
-  "Focus the thing at point server-side, without moving Emacs.
-A worktree is focused as the workspace herdr has opened it as; a worktree
-that is not open as one has nothing to focus and says so, and neither
-does a known project with no workspace open — RET creates one instead
-of merely focusing, so this refuses rather than doing that on the wrong
-key.  Neither has the worktrees heading; see
-`herdr-dispatch--refuse-heading\\='."
-  (cond
-   ((herdr-dispatch--value-at-point 'herdr-worktree)
-    (herdr-rpc-call "workspace.focus"
-                    `((workspace_id . ,(herdr-dispatch--worktree-workspace)))))
-   ((herdr-dispatch--type-at-point 'herdr-panes)
-    (herdr-dispatch--refuse-heading
-     "a workspace's main group cannot be focused"))
-   ((herdr-dispatch--value-at-point 'herdr-known-project)
-    (user-error "herdr: %s has no workspace open yet (RET opens it)"
-                (herdr-dispatch--value-at-point 'herdr-known-project)))
-   ((herdr-dispatch--type-at-point 'herdr-known-projects)
-    (herdr-dispatch--refuse-heading
-     "the inactive-projects group cannot be focused"))
-   ((herdr-dispatch--value-at-point 'herdr-pane)
-    (herdr-rpc-call "pane.focus"
-                    `((pane_id . ,(herdr-dispatch--value-at-point 'herdr-pane)))))
-   ((herdr-dispatch--value-at-point 'herdr-workspace)
-    (herdr-rpc-call "workspace.focus"
-                    `((workspace_id . ,(herdr-dispatch--value-at-point
-                                        'herdr-workspace)))))
-   (t (user-error "herdr: nothing at point"))))
-
 ;;; The mutating verbs
 
 (herdr-dispatch-defverb herdr-dispatch-rename ()
@@ -965,59 +931,25 @@ the same reason and with more at stake; see
     (herdr-workspace-close (herdr-dispatch--value-at-point 'herdr-workspace)))
    (t (user-error "herdr: nothing at point to close"))))
 
-;;; The create transient
-
-(defun herdr-dispatch--arg (args flag)
-  "Return the value of FLAG in transient ARGS, or nil."
-  (when-let* ((hit (seq-find (lambda (arg)
-                               (string-prefix-p (concat flag "=") arg))
-                             args)))
-    (substring hit (1+ (length flag)))))
-
-(defun herdr-dispatch--args ()
-  "Return the create transient\\='s arguments, or nil outside it."
-  (when (and (boundp 'transient-current-command)
-             (eq transient-current-command 'herdr-dispatch-create))
-    (transient-args 'herdr-dispatch-create)))
+;;; The create verbs
 
 (herdr-dispatch-defverb herdr-dispatch-create-workspace ()
-  "Create a workspace.
-A workspace has no parent section to inherit from, so the directory
-comes from --directory when set, and otherwise from a prompt defaulting
-to the directory of the workspace at point."
-  (let* ((args (herdr-dispatch--args))
-         (default (or (herdr-dispatch--arg args "--directory")
-                      (when-let* ((id (herdr-dispatch--value-at-point
+  "Create a workspace, prompting for its directory.
+The prompt defaults to the directory of the workspace at point.  The
+label is left to herdr, which names a workspace after its directory."
+  (let* ((default (or (when-let* ((id (herdr-dispatch--value-at-point
                                        'herdr-workspace)))
                         (herdr-state-workspace-directory
                          (herdr-state-current) id))
-                      default-directory))
-         (dir (or (herdr-dispatch--arg args "--directory")
-                  (read-directory-name "Workspace directory: " default))))
-    (herdr-workspace-create dir (herdr-dispatch--arg args "--label"))))
+                      default-directory)))
+    (herdr-workspace-create
+     (read-directory-name "Workspace directory: " default))))
 
 (defun herdr-dispatch--pane-for-directory-at-point ()
   "Return a pane for a new terminal in the directory the row at point names.
-
-A `herdr-worktree\\=' row — a worktree, or the `main\\=' row standing for a
-repository\\='s own checkout — and a `herdr-known-project\\=' row both name
-a directory rather than a workspace.
-\\[herdr-dispatch-create-pane] had no answer for either:
-`herdr-dispatch--workspace-target\\=' resolves a workspace or nothing, and
-nothing means `tab.create\\=' falls back to whatever workspace the SERVER
-has focused.  So `n\\=' on an inactive project quietly opened a terminal
-somewhere else entirely — the one outcome worse than refusing, because
-nothing on screen said where it went.
-
-The directory row wins over any enclosing workspace, and that ordering
-is the point rather than an accident: a worktree row inside an open
-repository has that repository as its enclosing workspace, and a
-terminal opened there would land in the repository the user was pointing
-past.
-
-What the directory then means is `herdr-cmd-pane-in-directory\\='\\='s
-answer, shared with \\[herdr-new-terminal] so the two cannot disagree
-about whether a directory needs a workspace opening first."
+A directory row — a worktree, the `main\\=' row, an inactive project —
+wins over any enclosing workspace, which would be the repository the user
+was pointing past."
   (when-let* ((directory (or (herdr-dispatch--value-at-point 'herdr-worktree)
                              (herdr-dispatch--value-at-point 'herdr-known-project))))
     (herdr-cmd-pane-in-directory directory)))
@@ -1025,13 +957,7 @@ about whether a directory needs a workspace opening first."
 (defun herdr-dispatch--workspace-target ()
   "Return the workspace id point resolves to, or nil.
 A pane row resolves through its own record; a workspace heading is
-itself; anywhere else answers nil.
-
-Nil used to be handed to `tab.create', which reads it as \"whichever
-workspace the server has focused\" — so a verb aimed at a heading acted
-somewhere else entirely.  `herdr-dispatch--workspace-target-pane' is
-where that nil is now refused, and this stays a plain question with a
-plain answer."
+itself.  Nil is refused by `herdr-dispatch--workspace-target-pane\\='."
   (or (herdr-dispatch--value-at-point 'herdr-workspace)
       (when-let* ((pane-id (herdr-dispatch--value-at-point 'herdr-pane))
                   (pane (herdr-state-pane (herdr-state-current) pane-id)))
@@ -1039,39 +965,18 @@ plain answer."
 
 (defun herdr-dispatch--workspace-target-pane ()
   "Return a fresh tab\\='s pane in the workspace at point, or refuse.
-Split from `herdr-dispatch-create-pane\\=' so the refusal sits next to
-the nil it is refusing: `herdr-cmd--new-tab-pane\\=' treats a nil
-workspace as \"whichever the server has focused\", which is the one
-answer this buffer must never give silently."
+`herdr-cmd--new-tab-pane\\=' reads a nil workspace as \"whichever the
+server has focused\", which this buffer must never answer silently."
   (let ((workspace (herdr-dispatch--workspace-target)))
     (unless workspace
       (user-error "herdr: nothing at point names a workspace to open a terminal in"))
     (herdr-cmd--new-tab-pane workspace)))
 
-(herdr-dispatch-defverb herdr-dispatch-create-pane ()
+(herdr-dispatch-defverb herdr-dispatch-create-terminal ()
   "Open a terminal, taking its place from point.
-
-Most specific first.  A row naming a directory rather than
-a workspace — a worktree, the `main\\=' row, an inactive project —
-resolves through `herdr-dispatch--pane-for-directory-at-point\\=', which
-opens that directory as a workspace if nothing is open there yet.
-Anywhere else a fresh tab is created in the workspace at point, so `n\\='
-has an answer everywhere in the buffer.
-
-A row that resolves to neither is refused rather than sent to the
-server\\='s focused workspace.  The `Inactive (N)\\=' heading and the
-dashboard\\='s own header line name no place at all, and a nil
-`workspace_id\\=' makes `tab.create\\=' pick one for you — so the terminal
-opened somewhere the user was not pointing, with nothing on screen
-saying where.  Every other verb already refuses both headings; see
-`herdr-dispatch--refuse-heading\\='.
-
-This is the only create verb for a place to run something.  There was a
-second, `a\\=', which asked for an agent kind and a name and then called
-`agent.start\\=' — a door herdr\\='s own TUI does not have, where a new tab
-opens a shell and the agent is whatever you run in it.  herdr names that
-agent by detection a few seconds later, so the two doors differed in
-what they demanded up front and in nothing else."
+A directory row wins; otherwise a fresh tab in the workspace at point.
+A row naming neither is refused rather than sent to the server\\='s
+focused workspace."
   (when (herdr-dispatch--type-at-point 'herdr-known-projects)
     (herdr-dispatch--refuse-heading
      "the inactive-projects group is not a place to open a terminal"))
@@ -1081,16 +986,13 @@ what they demanded up front and in nothing else."
 
 (herdr-dispatch-defverb herdr-dispatch-create-worktree ()
   "Create a git worktree from the workspace at point.
-
-Calls `herdr-rpc-call\\=' directly rather than through
-`herdr-worktree-create\\=', which derives its `cwd\\=' from the calling
-buffer's `default-directory\\=' — here that would be `*herdr-agents*\\=',
-not the workspace at point, matching the treatment already given to
-`herdr-dispatch-open-worktree\\='."
-  (let* ((args (herdr-dispatch--args))
-         (workspace (herdr-dispatch--require 'herdr-workspace "a workspace"))
+Calls `worktree.create\\=' directly: `herdr-worktree-create\\=' would take
+its `cwd\\=' from `*herdr-agents*\\=' rather than the workspace at point.
+An empty base ref means the current HEAD and is omitted from the call."
+  (let* ((workspace (herdr-dispatch--require 'herdr-workspace "a workspace"))
          (branch (read-string "New worktree branch: "))
-         (base (herdr-dispatch--arg args "--base"))
+         (base (read-string
+                (format-prompt "Base ref" "the current HEAD") nil nil ""))
          (dir (herdr-state-workspace-directory (herdr-state-current) workspace)))
     (herdr-rpc-call "worktree.create"
                     `((branch . ,branch)
@@ -1099,25 +1001,6 @@ not the workspace at point, matching the treatment already given to
                       (focus . t)))
     (herdr-dispatch--forget-worktrees)
     (herdr-dispatch-refresh)))
-
-(defun herdr-dispatch--create-heading ()
-  "Return the create menu heading, naming what point resolves to."
-  (format "Create   [%s]"
-          (or (herdr-dispatch--value-at-point 'herdr-pane)
-              (herdr-dispatch--value-at-point 'herdr-workspace)
-              "nothing at point")))
-
-(transient-define-prefix herdr-dispatch-create ()
-  "Create a herdr object, taking its parent from point."
-  [:description herdr-dispatch--create-heading
-   ["Create"
-    ("w" "workspace" herdr-dispatch-create-workspace)
-    ("n" "terminal"  herdr-dispatch-create-pane)
-    ("%" "worktree"  herdr-dispatch-create-worktree)]
-   ["Arguments"
-    ("-b" "base ref"  "--base=")
-    ("-l" "label"     "--label=")
-    ("-d" "directory" "--directory=")]])
 
 (defun herdr-dispatch--live-project-root-p (root)
   "Return non-nil when ROOT is a directory that still exists.
@@ -1178,38 +1061,86 @@ already keeps idle out of the modeline segment."
             (if (string-empty-p summary) "" (concat "  " summary)))))
 
 (defun herdr-dispatch--position-at (position)
-  "Return (IDENT . COLUMN) naming the section and column at POSITION, or nil.
+  "Return (IDENT COLUMN . POSITION) describing POSITION, or nil.
 Section identity rather than a line number: a pane closing above point
 used to move you to a different agent than the one you were reading.
+The raw position rides along as the last resort; see
+`herdr-dispatch--position-restore\\='.
 
 Columns are counted as if nothing were folded; see
 `herdr-dispatch--position-restore\\=' for why."
   (save-excursion
     (let ((buffer-invisibility-spec nil))
       (goto-char position)
+      ;; A separator between two rows belongs to the root section, whose
+      ;; start is the header — so saving it would climb to the top of the
+      ;; buffer on the next redraw.  The nearest row is saved instead.
+      ;; The header line is the root legitimately and stays as it is.
+      (unless (or (herdr-dispatch--row-p)
+                  (= (line-beginning-position) (point-min)))
+        (goto-char (herdr-dispatch--nearest-row (line-beginning-position))))
       (when-let* ((section (magit-current-section)))
-        (cons (magit-section-ident section) (current-column))))))
+        (list (magit-section-ident section) (current-column) (point))))))
+
+(defun herdr-dispatch--row-p ()
+  "Return non-nil when point is on a line that names something.
+A blank separator line belongs to the root section, whose ident is one
+element long; every real row has its own key consed onto that.  Nil with
+no section at all, which is an empty buffer before the first draw."
+  (when-let* ((section (magit-current-section)))
+    (cdr (magit-section-ident section))))
+
+(defun herdr-dispatch--nearest-row (position)
+  "Return the start of the nearest line to POSITION that names something.
+Forward first, then backward, then POSITION itself."
+  (save-excursion
+    (goto-char position)
+    (or (and (herdr-dispatch--row-p) position)
+        (save-excursion
+          (catch 'found
+            (while (zerop (forward-line 1))
+              (when (eobp) (throw 'found nil))
+              (when (herdr-dispatch--row-p)
+                (throw 'found (line-beginning-position))))))
+        (save-excursion
+          (catch 'found
+            (while (zerop (forward-line -1))
+              (when (herdr-dispatch--row-p)
+                (throw 'found (line-beginning-position))))))
+        position)))
 
 (defun herdr-dispatch--position-restore (position)
-  "Return where POSITION now lands, or nil when its section is gone.
-POSITION is a (IDENT . COLUMN) pair from `herdr-dispatch--position-at'.
-The column is restored within the section\\='s heading line and clamped to
-that line\\='s end, so a redraw keeps the horizontal place as well as the
-vertical one — going to the section start alone jumps you to column 0.
+  "Return where POSITION now lands.
+POSITION is an (IDENT COLUMN POSITION) list from
+`herdr-dispatch--position-at\\='.  The section, else its nearest surviving
+ancestor, else the saved position taken to the nearest row.  The walk
+stops short of the root, whose start is the header line.
 
-Both halves count columns with `buffer-invisibility-spec\\=' unbound,
-because a line inside a folded section has no width at all while the
-fold is in force: `current-column\\=' there answers for the visible line
-the fold collapsed it into, and `move-to-column\\=' walks straight past
-the whole hidden region into the next visible line.  Point would come
-back from a redraw somewhere else entirely — which is the failure this
-whole pair exists to prevent, and which only became reachable once
-`herdr-dispatch--apply-fold\\=' made folds survive a redraw."
-  (when-let* ((section (magit-get-section (car position))))
+Columns are counted with `buffer-invisibility-spec\\=' unbound: a line
+inside a folded section has no width while the fold is in force."
+  (let* ((original (car position))
+         (ident original)
+         (column (nth 1 position))
+         (raw (nth 2 position)))
+    (while (and (cdr ident) (not (magit-get-section ident)))
+      (setq ident (cdr ident)))
     (save-excursion
-      (let ((buffer-invisibility-spec nil))
-        (goto-char (oref section start))
-        (move-to-column (cdr position))
+      (let ((buffer-invisibility-spec nil)
+            (clamp (lambda ()
+                     (goto-char (max (point-min)
+                                     (min (or raw (point-min)) (point-max))))
+                     (line-beginning-position))))
+        (cond
+         ;; A real row the redraw still builds.
+         ((and (cdr ident) (magit-get-section ident))
+          (goto-char (oref (magit-get-section ident) start)))
+         ;; Point was on the header, which is the root legitimately.
+         ((eq ident original)
+          (goto-char (funcall clamp)))
+         ;; Every row above point died, so there is nowhere to walk to.
+         (t
+          (goto-char (herdr-dispatch--nearest-row (funcall clamp)))))
+        (move-to-column column)
         (point)))))
 
 (defun herdr-dispatch-refresh (&optional force)
@@ -1371,7 +1302,7 @@ what opening the dashboard already costs."
       (add-hook 'herdr-state-change-functions #'herdr-dispatch--refresh-hook)
       (add-hook 'herdr-state-change-functions #'herdr-dispatch--invalidate-worktrees))
     (herdr-dispatch-refresh t)
-    (pop-to-buffer buffer)))
+    (pop-to-buffer buffer herdr-dispatch-display-action)))
 
 (provide 'herdr-dispatch)
 ;;; herdr-dispatch.el ends here

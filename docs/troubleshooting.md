@@ -45,13 +45,17 @@ command.
 
 ## Emacs fails at start with `Cannot open load file`
 
-**Symptom.** Emacs reports that it cannot find `magit-section`, `transient` or `ghostel`.
+**Symptom.** Emacs reports that it cannot find `magit-section` or `ghostel`.
 
 **Cause.** One dependency is missing. `magit-section` is the dependency that people forget,
 because upstream herdr.el does not need it.
 
-**Correction.** Install `magit-section` 3.3 or a later version. Install `transient` 0.4 or a
-later version. Install `ghostel` from its repository.
+**Correction.** Install `magit-section` 3.3 or a later version. Install `ghostel` from its
+repository.
+
+`transient` is no longer named by herdr.el. You may still need it: `magit-section` requires it,
+and `magit-section` asks for a recent version. Emacs ships a `transient` from version 28.1, which
+is enough unless `magit-section` reports otherwise at load time.
 
 ## Emacs looks for herdr on MELPA
 
@@ -146,8 +150,8 @@ one.
 
 **Symptom.** The build stops with an error that names `EXTRA_LOAD_PATH`.
 
-**Cause.** The test target found no `magit-section` or no `transient`. The targets run
-`emacs -Q`, which reads no init file.
+**Cause.** The test target found no `magit-section`. The target runs `emacs -Q`, which reads no
+init file.
 
 **Correction.** Point the variable at your package directories:
 

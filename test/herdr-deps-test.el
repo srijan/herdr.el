@@ -21,8 +21,22 @@ a `featurep' check would pass in a session where something else had
 already loaded the library; what has to hold is that this file's search
 made it findable under `emacs -Q'."
   (should (locate-library "magit-section"))
-  (should (locate-library "transient"))
   (should (featurep 'herdr-dispatch)))
+
+(ert-deftest herdr-no-longer-declares-transient ()
+  "Declared, not needed: magit-section requires `transient\\=' itself and
+Emacs ships one since 28.1, so `locate-library\\=' and `featurep\\=' both
+answer yes for reasons unrelated to this package.  The headers are the
+only honest assertion."
+  (dolist (file '("herdr.el" "herdr-dispatch.el"))
+    (with-temp-buffer
+      (insert-file-contents file nil 0 2000)
+      (goto-char (point-min))
+      (should (re-search-forward "^;; Package-Requires:" nil t))
+      (should-not (string-match-p
+                   "transient"
+                   (buffer-substring (line-beginning-position)
+                                     (line-end-position)))))))
 
 (ert-deftest herdr-deps-fails-loudly-when-a-dependency-is-missing ()
   "Not finding a required library must stop the build, not warn.

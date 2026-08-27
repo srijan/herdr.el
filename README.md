@@ -5,7 +5,7 @@ with herdr's terminals hosted **inside** Emacs via [ghostel](https://github.com/
 
 No second terminal application sits in the loop. Commands go over herdr's unix socket. A live
 event stream keeps a cache of the session, and that cache feeds a foldable dashboard, a modeline
-segment, a [transient](https://github.com/magit/transient) menu, and completion pickers.
+segment and completion pickers.
 
 ## This is a fork
 
@@ -19,7 +19,7 @@ that do not exist upstream.
 | Session view | `herdr-agents.el`, a flat list | `herdr-dispatch.el` and `herdr-tree.el`, a foldable magit-section tree |
 | Modeline | inline in the agents buffer | `herdr-modeline.el`, its own file |
 | Extra dependency | none | `magit-section` 3.3 |
-| Tests | one agents test file | 504 offline tests across 16 files, plus a live suite |
+| Tests | one agents test file | 460 offline tests across 15 files, plus a live suite |
 
 The large additions are the dashboard and the pure tree layer behind it, a rewritten
 `herdr-state.el` that reconciles workspaces and tabs rather than only panes, and the test suite.
@@ -34,32 +34,36 @@ news, not as a branch to merge.
 repositories, their checkouts and their panes, and the place every command is reachable from.
 
 ```
-M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
+herdr   3 workspaces  5 panes  2▶1✓
 
- Go to            Menus             Session
-  p pane           P pane…           g resync
-  a agent          A agent…          l agents
-  w workspace      W workspace…      s status
-  t tab *          T tab… *          : any method…
-                   % worktree…
+example-api (1)              ~/src/example-api/
+  · shell       idle      w4:p1   npm run watch
+  ✓ claude      done      w4:p5   Add the pagination endpoint
 
-  * session backend only
+herdr.el (2)                 ~/src/herdr.el/
+  main (1)
+    ▶ claude    working   w7:p1   Fix the reconcile order
+  feat-dispatch (1)          ~/src/herdr.el-worktrees/feat-dispatch/ ▶
+    ▶ claude    working   w9:p1   Nest worktrees under their repository
+
+Inactive (24)
 ```
+
+It takes the frame rather than splitting one. That deletes your other windows, and `q` does not
+bring them back — it restores the buffer this window held. Set `herdr-dispatch-display-action` to
+nil for the old splitting behaviour.
 
 | Key | Action |
 | --- | --- |
 | `RET` | go to the thing at point — a worktree that is not open yet is opened as a workspace |
 | `TAB` | fold |
-| `c` | create menu, with its parent taken from point |
 | `w` / `n` / `%` | create workspace / terminal / worktree directly |
 | `p` | prompt the agent at point |
 | `r` | read the pane at point into a buffer |
-| `f` | focus the thing at point server-side, without moving Emacs |
 | `R` | rename the thing at point |
 | `k` | close or remove the thing at point |
 | `g` | refresh from the cache |
 | `q` | quit the window |
-| `?` | open `herdr-transient` |
 
 Every verb acts on the most specific thing under point. `n` on a row that names a directory
 rather than a workspace — a worktree, a `main` row, an inactive project — opens the terminal in
@@ -155,9 +159,8 @@ anywhere else. Bind it yourself — which key is spare is your question, not thi
 | `k` | pick a shell or agent and close it |
 | `w` | pick a workspace and go to it |
 | `p` | the workspace for the current project, created if absent |
-| `%` | the worktree menu |
+| `%` | create a git worktree |
 | `g` | resync the cache |
-| `?` | open `herdr-transient` |
 
 The letters are the dashboard's letters, so there is one set to learn rather than two. `n` opens a
 terminal and `k` closes one here exactly as they do on a row in `*herdr-agents*`; the difference
@@ -165,25 +168,41 @@ is only where the target comes from, a picker here and point there.
 
 `s` is bound to `herdr` rather than `herdr-agents` because `herdr` is the entry point that
 guarantees the start sequence has run — the server, the terminals and the event stream — so the
-dashboard is drawn from a cache with something in it. `herdr-transient` called directly skips that
-startup, which is what the removed `herdr-menu` used to add; `s` covers it and `?` reaches the
-menu, so the command is gone rather than kept.
+dashboard is drawn from a cache with something in it.
 
-## Targeting and keys
+There is no help key. `C-h` after the prefix lists these bindings and `C-h m` in `*herdr-agents*`
+describes that buffer's; Emacs answers both already.
+
+## Two surfaces, and no third
+
+The dashboard is where you act on something you can see. `herdr-command-map` is where you act on
+something you cannot, by naming it in a picker. That is the whole interface.
+
+There used to be a third, `herdr-transient` — a menu of menus over the same commands, with a
+`herdr-menu` entry point to reach it. Both are gone, along with twenty-eight commands that only a
+menu ever called. What went and why:
+
+| Gone | Why |
+| --- | --- |
+| `herdr-transient` and its six sub-menus, and the dashboard's `c` create menu | surfaces over commands the other two already reach. `c` offered the same three verbs as `w`, `n` and `%` plus three arguments; two only skipped a prompt, and the third — a worktree's base ref — is a prompt now |
+| `herdr-pane-split-right` / `-down`, `-zoom`, `-resize`, `-swap` | TUI layout. Emacs owns the layout, so these move nothing you can see |
+| `herdr-tab-create` / `-close` / `-focus` / `-rename`, and the tab cache behind them | a tab's only visual form is the TUI's tab bar. Nothing outside `herdr-state.el` ever read a tab record |
+| The `session` backend | the herdr TUI in one ghostel buffer. `ghostel-project` runs the herdr CLI just as well |
+| The dashboard's `f` | focused server-side without moving Emacs, which only means something to a second client watching. `RET` makes the same call and takes you there |
+| `herdr-pane-run`, `-send-text`, `-wait-for-output`, `herdr-agent-wait` | scripting the session from Emacs, which the herdr CLI and the agent skill both already do |
+| `herdr-agent-read`, `herdr-agent-focus` | the same call as `herdr-pane-read` and `-focus` with a different target type |
+| `herdr-agent-explain`, `herdr-notification-show`, `herdr-worktree-list`, `herdr-worktree-open` | detection debugging; a niche notification; the dashboard fetches its own worktrees; `RET` on a worktree row already opens it |
+| `herdr-adopt-shell`, `herdr-release-shell` | obsolete since herdr 0.8.2, when every pane became attachable |
+
+None of it is unreachable. `M-x herdr-call` still prompts its way to all 91 methods from the
+server's own schema, which is what makes deleting a wrapper safe rather than lossy.
 
 Commands act on the pane of the buffer you are in, if that is a herdr terminal, and otherwise on
-the pane herdr has focused. `C-u` on any command prompts instead. The header names the pane that
-will be acted on, so it is never a guess.
+the pane herdr has focused. `C-u` on any command prompts instead.
 
-A lowercase noun jumps to that kind of thing; the same letter uppercased opens its menu. Inside a
-menu the verbs stay constant: `c` create, `f` focus, `r` read, `R` rename, `k` close or remove,
-`l` list. `?` and `C-h` belong to transient's own help, so status is `s`. Worktrees are on `%` and
-the raw-method escape hatch on `:`, matching where magit puts those two ideas. Tests assert this,
-not just review.
-
-Tabs are hidden entirely under `agent-windows`. A tab is a grouping inside a workspace whose only
-visual form is the TUI's tab bar, so where nothing renders a tab, nothing tab-shaped is offered.
-`herdr-call` still reaches the methods if you want them. Workspaces are not hidden: they are keyed
+Tabs are not modelled at all. A tab is a grouping inside a workspace whose only visual form is
+the TUI's tab bar, so where nothing renders a tab, nothing tab-shaped is offered — no commands,
+and no tab records in the cache either. `herdr-call` still reaches the methods if you want them. Workspaces are not hidden: they are keyed
 by cwd, persist across restarts, group the dashboard, and back `herdr-project`. Going to one shows
 that workspace's active pane, one buffer, in the current window.
 
@@ -191,11 +210,16 @@ that workspace's active pane, one buffer, in the current window.
 
 - Emacs 28.1+
 - [herdr](https://herdr.dev) 0.8.2 (protocol 20)
-- `ghostel`, `transient`, `magit-section`
+- `ghostel`, `magit-section`
 
 Optional, used when present and never required: `marginalia`, `embark`, `consult`, `alert`.
 
 `magit-section` is the one dependency upstream does not have. The dashboard is built on it.
+
+`transient` is no longer *declared*, which is not the same as no longer needed. The dashboard's
+`c` create menu was the last transient prefix here, so no file names it any more — but
+`magit-section` requires it and Emacs has shipped one since 28.1, so it loads anyway. Nothing
+changes for you at install time.
 
 ## Install
 
@@ -207,8 +231,6 @@ Optional, used when present and never required: `marginalia`, `embark`, `consult
          ("C-c H" . herdr-command-map)
          :map project-prefix-map
          ("h" . herdr-project))
-  :custom (herdr-terminal-backend 'session)
-  ;; (herdr-display-action '(display-buffer-full-frame))  ; TUI takes the frame
   :config (herdr-modeline-mode 1))
 ```
 
@@ -218,31 +240,18 @@ fails at startup.
 `M-x herdr` starts the server if it is not running, brings up the terminals, connects the event
 stream, and opens the dashboard.
 
-## Terminal backends
+## How terminals are hosted
 
-Both work. Set `herdr-terminal-backend`.
-
-### session (default)
-
-One ghostel buffer, `*herdr*`, running the herdr TUI. herdr owns the layout. Plain shell panes
-work normally. About sixty lines of glue and nothing to go wrong.
-
-`herdr-display-action` controls placement, and every path that shows a herdr buffer goes through
-it, so the same buffer cannot appear one way from `M-x herdr` and another from Go to.
-
-It defaults to reusing the current window and leaving your splits alone. herdr's TUI wants width
-for its 26-column sidebar, so under `session` you may prefer `'(display-buffer-full-frame)`,
-which does delete your other windows, or a side window.
-
-The TUI is mouse-first: click panes, drag borders, right-click menus. ghostel forwards those
-clicks, but only under GUI Emacs. A TTY frame (`emacs -nw`) has no mouse events to forward, so
-there drive the TUI by keyboard (its `ctrl+b` prefix) or use `agent-windows`, which is
-keyboard-first and needs no TUI at all.
-
-### agent-windows
-
-One ghostel buffer per agent, each running `herdr terminal attach`. Emacs owns the layout,
+One ghostel buffer per pane, each running `herdr terminal attach`. Emacs owns the layout,
 herdr's own layout tree goes unused, and there is no geometry to keep in sync.
+
+`herdr-display-action` controls placement, and every path that shows a terminal goes through it,
+so the same buffer cannot appear one way from one command and another way from the next. It
+defaults to reusing the current window and leaving your splits alone.
+
+There was a second backend, `session`, that ran the herdr TUI in one ghostel buffer and let herdr
+own the layout. It is gone. `ghostel-project`, or any shell, runs the herdr CLI just as well, and
+keeping it meant every function in `herdr-term.el` branching on which one was in force.
 
 A buffer is named for whatever the pane is best known by, in order: a name set through
 `agent.rename`, then the pane's own label — which is how a plugin pane arrives already named —
@@ -305,7 +314,7 @@ survived as long as they did.
 | Request ids must be strings | An integer `id` gets `invalid_request: invalid type: integer`. Easy to miss, because the error arrives on the same connection a subscription ack would. |
 | `events.subscribe` | The one long-lived call. Acks `subscription_started`, then streams. It also replays the server's whole event ring. See below. |
 | **`pane_updated` is output-coupled** | It does not coalesce (~~3 per-pane events produced only 1 `pane_updated`~~). It fires about 7.5/s carrying a full `PaneInfo`, `agent_status` included, but it is tied to title and output, so it stops firing exactly when an agent goes idle, which is the transition worth knowing about. Lag from the per-pane event reporting idle to the global stream reflecting it: 6.18s and 31.79s. This fork no longer subscribes to it at all. A second connection carrying per-pane `pane.agent_status_changed` covers the statuses, and `herdr-state-reconcile-panes` covers the rest. |
-| Throughput | Not a concern for either backend. A 12.2 MB pane dump reached Emacs as 17 KB (`session`) or 24 KB (`agent-windows`), completing in 0.2s. herdr's VT only emits visible-frame diffs. |
+| Throughput | Not a concern. A 12.2 MB pane dump reached Emacs as 24 KB, completing in 0.2s. herdr's VT only emits visible-frame diffs. |
 | `agent attach` | Streams one pane full-screen, coexists with a session client, exclusive per pane, and refuses a pane with no agent (`agent_not_found`). ~~That refusal is what makes reporting an agent necessary.~~ Since 0.8.2 `herdr terminal attach` takes any pane instead, agent or not; this fork attaches through that, so nothing has to be reported to make a pane attach. |
 | Attach needs a window | The client needs a window when it starts and dies if that window is deleted. Being merely hidden is fine, so a buried terminal keeps running with its scrollback. A zero-sized PTY renders nothing. |
 | **Ghost panes come from replay** | ~~The retained `pane.created` is for whatever pane was made last, so subscribing resurrects it.~~ Replay is not one retained event, it is the whole ring, and the ordering defence below is weaker than it looked. The pane set is reconciled against `pane.list` after connecting and on a poll thereafter. Since this fork, workspaces and tabs are reconciled the same way against `workspace.list` and `tab.list`, which is what stopped ghost workspaces accumulating forever. |
@@ -342,7 +351,7 @@ Full analysis, with the source excerpts and the two wrong readings kept visible:
 
 ## Commands
 
-33 curated commands cover the methods worth a keybinding. `M-x herdr-call` reaches all 91,
+Eleven curated commands cover the methods the two surfaces call. `M-x herdr-call` reaches all 91,
 prompting for each parameter from the server's own schema. Nothing is out of reach and there is no
 generated 91-entry menu.
 
@@ -353,10 +362,8 @@ Worth knowing about:
   the one way to make a place to run something; there is no `agent.start` command beside it.
 - `herdr-worktree-create` takes a branch name to a git worktree with its own herdr workspace,
   using herdr's native worktree support.
-- `herdr-pane-read` and `herdr-agent-read` put terminal output into a real Emacs buffer.
-  `recent_unwrapped` undoes terminal line-wrapping, which is what makes the result greppable.
-- `herdr-agent-wait` and `herdr-pane-wait-for-output` run asynchronously, so Emacs stays
-  responsive. "Tell me when the dev server prints `Listening on`" is one command.
+- `herdr-pane-read` puts terminal output into a real Emacs buffer. `recent_unwrapped` undoes
+  terminal line-wrapping, which is what makes the result greppable.
 - `herdr-project` focuses or creates the herdr workspace for the current `project.el` project.
 
 Terminal buffers track their pane's working directory (`herdr-term-track-directory`), so
@@ -382,8 +389,8 @@ herdr integration install claude     # writes ~/.claude/hooks/herdr-agent-state.
 herdr integration status
 ```
 
-That is what makes the modeline segment, the dashboard and `herdr-agent-wait` genuinely useful
-rather than approximate. Note it writes to the agent's own config.
+That is what makes the modeline segment and the dashboard genuinely useful rather than
+approximate. Note it writes to the agent's own config.
 
 Agents can also drive herdr themselves, via herdr's
 [agent skill](https://herdr.dev/docs/agent-skill/), splitting panes, running commands, waiting on
@@ -392,8 +399,8 @@ the same server and the same event stream. An externally issued `herdr pane spli
 pickers, an external status report moves the modeline, an external close removes the pane.
 
 One consequence of attaching being lazy: a pane an agent creates gets no buffer under
-`agent-windows` on its own, since only a creation Emacs itself initiated follows the new pane and
-attaches to it. An agent splitting a pane to run a build should not seize an Emacs window. It is
+on its own, since only a creation Emacs itself initiated follows the new pane and attaches to
+it. An agent splitting a pane to run a build should not seize an Emacs window. It is
 visible in the picker, and going to it attaches directly — every pane already accepts
 `herdr terminal attach`, so nothing has to be reported first. If the agent starts a helper agent
 there, it appears in the agents list and modeline immediately, same as any other detected agent.
@@ -403,23 +410,23 @@ there, it appears in the agents list and modeline immediately, same as any other
 Pickers are plain `completing-read` over the cache, so they inherit whatever completion stack you
 already use. With `marginalia` the annotation shows agent, status, title and directory, and with
 `orderless` that makes `web claude blocked` a working query. `embark-act` on a pane candidate
-offers focus, read, prompt, close and zoom.
+offers focus, read, prompt and close.
 
 ## Development
 
 ```bash
-make test        # 504 tests, hermetic; no herdr required, uses a fake server
+make test        # 460 tests, hermetic; no herdr required, uses a fake server
 make test-live   # needs a running herdr; includes the schema drift test
 make compile     # byte-compile, warnings are errors
 ```
 
 Both targets run `emacs -Q -L .`, which reads no init file, so `test/herdr-deps.el` searches the
 package directories of `elpaca`, `package.el` and `straight.el` for `magit-section` and
-`transient`. A missing dependency is a hard error naming `EXTRA_LOAD_PATH`. Nothing skips.
+`magit-section`. A missing one is a hard error naming `EXTRA_LOAD_PATH`. Nothing skips.
 
 Both suites run in batch, and that is a real blind spot. A batch Emacs has no frame, so it cannot
-catch a modeline rendering `*invalid*`, a command splitting a window, or a transient entry nobody
-added. Several faults passed a green suite and were only found by driving a real Emacs under a
+catch a modeline rendering `*invalid*`, a command splitting a window, or a `require` that nothing
+pulls in any more. Several faults passed a green suite and were only found by driving a real Emacs under a
 PTY. When your change touches windows, buffers or the modeline, run it in a real frame as well.
 
 `src/api/subscriptions.rs`, `src/api/event_hub.rs` and `src/api/server.rs` in

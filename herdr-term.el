@@ -9,25 +9,22 @@
 
 ;;; Commentary:
 
-;; herdr's terminals are hosted inside Emacs, never outside it.  There
-;; are two ways to do that and this file implements both behind one
-;; interface, because everything else in the package is indifferent to
-;; the choice.
+;; herdr's terminals are hosted inside Emacs, never outside it: one
+;; ghostel buffer per pane, each holding a `herdr terminal attach'.
+;; Emacs owns the layout and herdr's own layout tree goes unused, so
+;; there is no geometry to synchronise.  Panes outlive Emacs because the
+;; server is a daemon.
 ;;
-;; `session' runs the herdr TUI in a single ghostel buffer.  herdr owns
-;; the layout, plain shell panes work, and it is about sixty lines.
-;;
-;; `agent-windows' runs one ghostel buffer per agent, each holding a
-;; `herdr terminal attach'.  Emacs owns the layout and herdr's own layout
-;; tree goes unused, so there is no geometry to synchronise.  Agents
-;; outlive Emacs because the server is a daemon.
+;; A second backend ran the herdr TUI in one ghostel buffer and let herdr
+;; own the layout.  It is gone: `ghostel-project' or a plain shell runs
+;; the herdr CLI just as well, and keeping it meant every function here
+;; branching on which one was in force.
 ;;
 ;; Measurements that informed this, taken against herdr 0.7.5:
 ;;
-;; - Throughput is not a reason to prefer either.  A 12.2 MB pane dump
-;;   reached Emacs as 17 KB under `session' and 24 KB under
-;;   `agent-windows'; herdr's VT only emits visible-frame diffs, so it
-;;   rate-limits by construction.
+;; - Throughput is not a concern.  A 12.2 MB pane dump reached Emacs as
+;;   24 KB; herdr's VT only emits visible-frame diffs, so it rate-limits
+;;   by construction.
 ;; - Attachment goes through `herdr terminal attach', which takes any
 ;;   pane's raw stream — agent or plain shell — so reconciliation
 ;;   considers panes.
@@ -46,17 +43,6 @@
 
 (declare-function ghostel-exec "ghostel" (buffer program &optional args))
 (declare-function ghostel-mode "ghostel" ())
-
-(defcustom herdr-terminal-backend 'session
-  "How herdr's terminals are hosted inside Emacs.
-
-`session' runs the herdr TUI in one ghostel buffer and lets herdr own
-the layout.  `agent-windows' gives every agent its own ghostel buffer
-and lets Emacs own the layout; plain shell panes get buffers on demand,
-the first time you go to one."
-  :type '(choice (const :tag "One buffer running the herdr TUI" session)
-                 (const :tag "One buffer per agent" agent-windows))
-  :group 'herdr)
 
 (defcustom herdr-display-action
   '((display-buffer-reuse-window display-buffer-same-window))
@@ -86,9 +72,6 @@ the old behaviour of taking the whole frame:
   "Seconds to wait for a freshly launched herdr server to answer."
   :type 'number
   :group 'herdr)
-
-(defconst herdr-term-session-buffer-name "*herdr*"
-  "Buffer that hosts the herdr TUI under the `session' backend.")
 
 ;;; Naming and argument construction — pure, so they are testable
 
@@ -174,10 +157,6 @@ the raw terminal stream id, which only the pane record knows."
     (append (list "terminal" "attach" terminal)
             (when takeover '("--takeover")))))
 
-(defun herdr-term-session-args ()
-  "Return argv tail for the session client, which takes no arguments."
-  nil)
-
 (defun herdr-term-reconcile (state buffers)
   "Compare STATE against BUFFERS and return (TO-CREATE . TO-REAP).
 
@@ -187,7 +166,7 @@ whose pane is gone.  Pure: no processes are touched.
 
 Every pane can hold a buffer; TO-REAP is buffers whose pane is gone from
 STATE."
-  (let* ((panes (herdr-state-attachable state))
+  (let* ((panes (herdr-state-panes state))
          (pane-ids (mapcar (lambda (pane) (alist-get 'pane_id pane)) panes))
          (have-ids (mapcar #'car buffers)))
     (cons
@@ -214,25 +193,23 @@ the startup loop alone could block for forty."
         (progn (herdr-rpc-call "ping") t)
       (herdr-error nil))))
 
+(defconst herdr-term-bootstrap-buffer-name "*herdr-bootstrap*"
+  "Buffer for the client that brings the server up; killed once it has.")
+
 (defun herdr-term--bootstrap-server ()
   "Start a herdr client long enough to bring the server up.
 
 herdr has no headless start command, so the server is brought up by
-running a client.  Under `session' that client is the UI and stays.
-Under `agent-windows' it is only a bootstrap: the server is a daemon
-and outlives it, so the buffer is discarded once ping succeeds."
-  (let ((buffer (get-buffer-create herdr-term-session-buffer-name)))
+running a client.  The server is a daemon and outlives it, so the buffer
+is discarded once ping succeeds.
+
+Shown while it runs: ghostel sizes its PTY from a displayed window and
+paints nothing into a zero-sized one, so a bootstrap that is never shown
+can hang on an unusable PTY until the timeout gives up."
+  (let ((buffer (get-buffer-create herdr-term-bootstrap-buffer-name)))
     (with-current-buffer buffer (ghostel-mode))
-    ;; Shown under both backends: ghostel sizes its PTY from a displayed
-    ;; window and paints nothing into a zero-sized one, so skipping this
-    ;; for `agent-windows' — done on the belief that the client only
-    ;; exists to start the daemon and is discarded right after — could
-    ;; leave first startup there stuck with an unusable PTY until the
-    ;; timeout below gave up.  The window closes again once startup is
-    ;; settled, in the `unwind-protect' below, so nothing outlives the
-    ;; bootstrap it was shown for.
     (herdr-term--show buffer)
-    (ghostel-exec buffer herdr-executable (herdr-term-session-args))
+    (ghostel-exec buffer herdr-executable nil)
     (unwind-protect
         ;; One liveness answer per loop pass, and none after the
         ;; deadline.  The old shape re-pinged in the `unless' after the
@@ -247,8 +224,7 @@ and outlives it, so the buffer is discarded once ping succeeds."
           (unless live
             (error "herdr server did not come up within %ss"
                    herdr-server-start-timeout)))
-      (when (eq herdr-terminal-backend 'agent-windows)
-        (quit-windows-on buffer)))
+      (quit-windows-on buffer))
     buffer))
 
 ;;; Buffer bookkeeping
@@ -265,10 +241,9 @@ and outlives it, so the buffer is discarded once ping succeeds."
 (defun herdr-term-select-pane (pane-id)
   "Show PANE-ID, attaching to it first if it is not attached yet.
 
-Focus is server-side state, and under `session' the TUI repaints so the
-change is visible.  Under `agent-windows' nothing repaints: each pane is
-its own Emacs buffer, so focusing a pane has no visible effect unless
-Emacs also selects that buffer.
+Focus is server-side state and nothing in Emacs repaints: each pane is
+its own buffer, so focusing one has no visible effect unless Emacs also
+selects that buffer.
 
 Attaching happens here rather than in reconciliation because the client
 needs a window at startup, so attaching every agent up front would mean
@@ -282,11 +257,10 @@ Returns the buffer when it showed one."
       buffer)))
 
 (defun herdr-term--attach-if-possible (pane-id)
-  "Attach to PANE-ID now, if this backend attaches and the cache knows it."
-  (when (eq herdr-terminal-backend 'agent-windows)
-    (let ((state (herdr-state-current)))
-      (when-let* ((pane (herdr-state-pane state pane-id)))
-        (herdr-term--attach state pane)))))
+  "Attach to PANE-ID now, if the cache knows it."
+  (let ((state (herdr-state-current)))
+    (when-let* ((pane (herdr-state-pane state pane-id)))
+      (herdr-term--attach state pane))))
 
 (defun herdr-term-select-focused ()
   "Select the buffer for whichever pane herdr now considers focused.
@@ -298,23 +272,16 @@ moved as a side effect of the command that just ran."
     (herdr-term-select-pane pane)))
 
 (defun herdr-term-buffer-for-pane (pane-id)
-  "Return the buffer showing PANE-ID, if this backend has one."
-  (pcase herdr-terminal-backend
-    ('session (get-buffer herdr-term-session-buffer-name))
-    ('agent-windows (cdr (assoc pane-id (herdr-term--live-agent-buffers))))))
+  "Return the buffer showing PANE-ID, if one is attached."
+  (cdr (assoc pane-id (herdr-term--live-agent-buffers))))
 
 (defun herdr-term-pane-for-buffer (&optional buffer)
-  "Return the pane id BUFFER is showing, or nil if it is not a herdr terminal.
-
-Only meaningful under `agent-windows\=', where the mapping is one buffer
-per pane.  Under `session\=' every pane shares one buffer, so the current
-buffer says nothing about which pane is meant."
-  (when (eq herdr-terminal-backend 'agent-windows)
-    (let* ((buffer (or buffer (current-buffer)))
-           (id (car (rassq buffer (herdr-term--live-agent-buffers)))))
-      ;; Ignore a buffer whose pane has since gone away.
-      (when (and id (herdr-state-pane (herdr-state-current) id))
-        id))))
+  "Return the pane id BUFFER is showing, or nil if it is not a herdr terminal."
+  (let* ((buffer (or buffer (current-buffer)))
+         (id (car (rassq buffer (herdr-term--live-agent-buffers)))))
+    ;; Ignore a buffer whose pane has since gone away.
+    (when (and id (herdr-state-pane (herdr-state-current) id))
+      id)))
 
 (defun herdr-term--attach (state pane)
   "Create and start a ghostel buffer attached to PANE, named from STATE.
@@ -450,15 +417,13 @@ set, so a signal anywhere in the poll clears it for free.")
 (defun herdr-term--poll-directories ()
   "Refresh pane directories, then point buffers at them.
 
-Also the one place `herdr-state-reconcile-workspaces' and
-`herdr-state-reconcile-tabs' get called from: workspaces and tabs have
-no event that reliably announces their own removal any more than panes
-do, and unlike panes they had no periodic repair at all until this —
-a closed workspace whose `workspace.closed' was missed (a disconnect
-window, a ring-replay gap) stayed a ghost in the dispatcher and every
-picker for the rest of a session that never happened to reconnect.
-Directory sync stays scoped to the pane reconcile specifically; a
-workspace or tab changing affects no buffer's `default-directory'."
+Also the one place `herdr-state-reconcile-workspaces' gets called from:
+a workspace has no event that reliably announces its own removal, and
+unlike panes it had no periodic repair at all until this — a closed
+workspace whose `workspace.closed' was missed (a disconnect window, a
+ring-replay gap) stayed a ghost in the dispatcher and every picker for
+the rest of the session.  Directory sync stays scoped to the pane
+reconcile; a workspace changing affects no `default-directory'."
   ;; Guarded only on the stream being up.  It used to also require a
   ;; herdr buffer to exist, which silently disabled the whole poll under
   ;; `agent-windows\=' once attaching became lazy — and with it the pruning
@@ -477,8 +442,7 @@ workspace or tab changing affects no buffer's `default-directory'."
                                   herdr-rpc-background-timeout)))
       (when (herdr-state-reconcile-panes)
         (herdr-term--sync-directories))
-      (herdr-state-reconcile-workspaces)
-      (herdr-state-reconcile-tabs))))
+      (herdr-state-reconcile-workspaces))))
 
 (defun herdr-term--schedule-directory-poll ()
   "Refresh directories shortly, coalescing bursts of events."
@@ -524,75 +488,39 @@ is changing directories."
   "Point every terminal buffer at its pane's current directory."
   (when herdr-term-track-directory
     (let ((state (herdr-state-current)))
-      (pcase herdr-terminal-backend
-        ('session
-         ;; One buffer for the whole session, so it follows the focused pane.
-         (when-let* ((buffer (get-buffer herdr-term-session-buffer-name))
-                     (id (herdr-state-focused-pane-id state))
-                     (pane (herdr-state-pane state id)))
-           (herdr-term--set-directory buffer pane)))
-        ('agent-windows
-         (dolist (cell (herdr-term--live-agent-buffers))
-           (when-let* ((pane (herdr-state-pane state (car cell))))
-             (herdr-term--set-directory (cdr cell) pane))))))))
+      (dolist (cell (herdr-term--live-agent-buffers))
+        (when-let* ((pane (herdr-state-pane state (car cell))))
+          (herdr-term--set-directory (cdr cell) pane))))))
 
 (defun herdr-term--on-state-change (_kind _data)
   "Resync terminal buffers after a cache change."
-  (when (eq herdr-terminal-backend 'agent-windows)
-    (herdr-term--sync-agent-windows))
+  (herdr-term--sync-agent-windows)
   (herdr-term--sync-directories)
   (herdr-term--schedule-directory-poll))
 
 ;;; Interface
 
 (defun herdr-term-ensure ()
-  "Make sure this backend's terminals exist, starting the server if needed."
+  "Make sure the terminals exist, starting the server if needed."
   (require 'ghostel)
   (let ((bootstrap (unless (herdr-server-live-p)
                      (herdr-term--bootstrap-server))))
-    ;; Both backends want the hook: one for buffer reconciliation and
-    ;; directory tracking, the other for directory tracking alone.
     (add-hook 'herdr-state-change-functions #'herdr-term--on-state-change)
     (prog1
-        (pcase herdr-terminal-backend
-          ('session
-           (or bootstrap
-               (let ((buffer (get-buffer herdr-term-session-buffer-name)))
-                 (if (buffer-live-p buffer)
-                     buffer
-                   (herdr-term--bootstrap-server)))))
-          ('agent-windows
-           ;; The bootstrap client was only there to start the daemon.
-           (when (buffer-live-p bootstrap) (kill-buffer bootstrap))
-           (herdr-term--sync-agent-windows)))
+        (progn
+          ;; The bootstrap client was only there to start the daemon.
+          (when (buffer-live-p bootstrap) (kill-buffer bootstrap))
+          (herdr-term--sync-agent-windows))
       (herdr-term--sync-directories)
       (herdr-term--start-directory-timer))))
 
-(defun herdr-term-display ()
-  "Show this backend's primary buffer, if it has one.
-
-Under `session' that is the herdr TUI, which is the whole interface and
-so is worth showing.  Under `agent-windows' there is no primary buffer —
-picking one arbitrarily and popping it would mean `M-x herdr' rearranges
-your windows before you have asked for anything.  Buffers are reached
-deliberately instead, through the menu, the agents list, or
-`consult-buffer'."
-  (when (eq herdr-terminal-backend 'session)
-    (when-let* ((buffer (get-buffer herdr-term-session-buffer-name)))
-      (herdr-term--show buffer))))
-
 (defun herdr-term-teardown ()
-  "Kill this backend's buffers.  The herdr server is left running."
+  "Kill the terminal buffers.  The herdr server is left running."
   (remove-hook 'herdr-state-change-functions #'herdr-term--on-state-change)
   (herdr-term--stop-directory-timer)
-  (pcase herdr-terminal-backend
-    ('session
-     (when-let* ((buffer (get-buffer herdr-term-session-buffer-name)))
-       (kill-buffer buffer)))
-    ('agent-windows
-     (dolist (cell (herdr-term--live-agent-buffers))
-       (kill-buffer (cdr cell)))
-     (setq herdr-term--agent-buffers nil))))
+  (dolist (cell (herdr-term--live-agent-buffers))
+    (kill-buffer (cdr cell)))
+  (setq herdr-term--agent-buffers nil))
 
 (provide 'herdr-term)
 ;;; herdr-term.el ends here

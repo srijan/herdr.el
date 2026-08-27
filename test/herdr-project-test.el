@@ -113,9 +113,7 @@ workspace, not make one for the subdirectory it happened to be in."
     (should (equal "w1" (alist-get 'workspace_id params)))))
 
 (ert-deftest herdr-opens-the-dashboard-after-running-the-start-sequence ()
-  "`herdr' is the one entry point that guarantees the startup has run,
-which is why `s' in `herdr-command-map' is bound to it rather than to
-`herdr-agents'."
+  "`herdr\\=' runs the start sequence; `herdr-agents\\=' does not."
   (should (commandp 'herdr))
   (let (opened started)
     (cl-letf (((symbol-function 'herdr-start) (lambda () (setq started t)))
@@ -129,9 +127,7 @@ which is why `s' in `herdr-command-map' is bound to it rather than to
 ;;; The prefix keymap
 
 (ert-deftest herdr-command-map-binds-the-verbs-the-dashboard-uses ()
-  "The letters are the dashboard's letters, so one set is learnt rather
-than two.  The difference is only where the target comes from: a picker
-here, point there."
+  "The letters are the dashboard\\='s letters, so there is one set to learn."
   (should (keymapp herdr-command-map))
   (dolist (entry '(("s" . herdr)
                    ("f" . herdr-pane-focus)
@@ -139,18 +135,43 @@ here, point there."
                    ("k" . herdr-pane-close)
                    ("w" . herdr-workspace-focus)
                    ("p" . herdr-project)
-                   ("%" . herdr-transient-worktree)
-                   ("g" . herdr-state-resync)
-                   ("?" . herdr-transient)))
+                   ("%" . herdr-worktree-create)
+                   ("g" . herdr-state-resync)))
     (should (eq (cdr entry) (lookup-key herdr-command-map (car entry))))
     (should (commandp (cdr entry)))))
 
-(ert-deftest herdr-command-map-replaces-herdr-menu ()
-  "`herdr-menu' was `herdr-start' plus `herdr-transient', and its whole
-value was guaranteeing the startup before the menu.  `s' guarantees the
-startup and `?' reaches the menu, so the command is gone rather than
-kept as an alias for a thing the prefix already does."
-  (should-not (fboundp 'herdr-menu)))
+(ert-deftest herdr-dispatch-takes-the-frame-rather-than-splitting-it ()
+  "Asserted on the action passed to `pop-to-buffer\\=', not on the window
+count: batch has one window, where `display-buffer-full-frame\\=' is a
+no-op."
+  (let (action)
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (_buffer &optional given &rest _) (setq action given)))
+              ((symbol-function 'herdr-dispatch-refresh) #'ignore))
+      (herdr-agents)
+      (should (equal '(display-buffer-full-frame) action))
+      (should (equal herdr-dispatch-display-action action)))
+    ;; And it is a knob, so the old splitting behaviour is one setq away.
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (_buffer &optional given &rest _) (setq action given)))
+              ((symbol-function 'herdr-dispatch-refresh) #'ignore))
+      (let ((herdr-dispatch-display-action nil))
+        (herdr-agents)
+        (should-not action)))))
+
+(ert-deftest herdr-requires-the-escape-hatch-rather-than-autoloading-it ()
+  "`herdr-call\\=' used to arrive with `herdr-transient\\=' and answered
+`void-function\\=' once that went.  Asserted on the `require\\=', because
+`fboundp\\=' is true here whichever way the symbol arrived."
+  (should (memq 'herdr-call features))
+  (should (commandp 'herdr-call)))
+
+(ert-deftest herdr-command-map-is-the-only-menu ()
+  "`herdr-menu\\=' and `herdr-transient\\=' were surfaces over commands this
+map and the dashboard already reach."
+  (should-not (fboundp 'herdr-menu))
+  (should-not (fboundp 'herdr-transient))
+  (should-not (lookup-key herdr-command-map "?")))
 
 ;;; Startup, shutdown and the protocol check
 
@@ -199,27 +220,21 @@ again: a second event stream would double every event the cache folds."
               ((symbol-function 'herdr--check-protocol) #'ignore)
               ((symbol-function 'herdr-state-running-p) (lambda () t))
               ((symbol-function 'herdr-state-start) (lambda () (push t starts))))
-      (let ((herdr-terminal-backend 'session))
-        (herdr-start))
+      (herdr-start)
       (should-not starts)
-      (should (= 1 (length ensures))))))
+      (should (= 2 (length ensures))))))
 
 (ert-deftest herdr-start-starts-the-stream-when-there-is-none ()
-  "And under `agent-windows' reconciles a second time, because which
-buffers to attach cannot be decided until the cache has been primed."
+  "Twice: which buffers to attach cannot be decided until the cache has
+been primed."
   (let (starts ensures)
     (cl-letf (((symbol-function 'herdr-term-ensure)
                (lambda () (push t ensures)))
               ((symbol-function 'herdr--check-protocol) #'ignore)
               ((symbol-function 'herdr-state-running-p) (lambda () nil))
               ((symbol-function 'herdr-state-start) (lambda () (push t starts))))
-      (let ((herdr-terminal-backend 'session))
-        (herdr-start))
+      (herdr-start)
       (should (= 1 (length starts)))
-      (should (= 1 (length ensures)))
-      (setq starts nil ensures nil)
-      (let ((herdr-terminal-backend 'agent-windows))
-        (herdr-start))
       (should (= 2 (length ensures))))))
 
 (ert-deftest herdr-stop-tears-down-both-halves ()

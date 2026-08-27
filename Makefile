@@ -2,7 +2,7 @@ EMACS ?= emacs
 EXTRA_LOAD_PATH ?=
 
 ## `test/herdr-deps.el' is loaded before anything else and puts
-## magit-section and transient on the load path, searching the package
+## magit-section on the load path, searching the package
 ## directories elpaca, package.el and straight.el use.  Not finding
 ## them is a hard error naming EXTRA_LOAD_PATH.
 ##

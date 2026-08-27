@@ -8,7 +8,8 @@ You must have these items:
 
 - Emacs 28.1 or a later version.
 - [herdr](https://herdr.dev) 0.8.2. This version speaks protocol 20.
-- The Emacs packages `ghostel`, `transient` and `magit-section`.
+- The Emacs packages `ghostel` and `magit-section`. (`magit-section` requires `transient`, which
+  Emacs ships from version 28.1.)
 
 To find your herdr version, use this command:
 
@@ -27,8 +28,8 @@ herdr.el is not on MELPA. Get the code with `git`:
 git clone https://github.com/srijan/herdr.el ~/src/herdr.el
 ```
 
-Install `ghostel` from [its repository](https://github.com/dakra/ghostel). Install `transient`
-and `magit-section` from MELPA or from GNU ELPA.
+Install `ghostel` from [its repository](https://github.com/dakra/ghostel). Install
+`magit-section` from MELPA or from GNU ELPA.
 
 ## Step 2: Configure Emacs
 
@@ -42,7 +43,6 @@ Put this form in your init file:
          ("C-c H" . herdr-command-map)
          :map project-prefix-map
          ("h" . herdr-project))
-  :custom (herdr-terminal-backend 'session)
   :config (herdr-modeline-mode 1))
 ```
 
@@ -111,7 +111,6 @@ on one row to create the workspace, or `n` on any checkout under it to open a te
 | Rename the item at point | `R` |
 | Close the item at point | `k` |
 | Refresh the dashboard | `g` |
-| Open the menu | `?` |
 
 ## Step 6: Install an agent integration
 
@@ -129,11 +128,11 @@ herdr integration status
 The first command writes a hook file into the configuration directory of the agent. For Claude,
 the file is `~/.claude/hooks/herdr-agent-state.sh`.
 
-The integration makes the modeline, the dashboard and the command `herdr-agent-wait` accurate.
+The integration makes the modeline and the dashboard accurate.
 
 ## Next steps
 
 - Read [Commands](commands.md) for the full command list.
 - Read [Configuration](configuration.md) to change the defaults.
-- Read the `agent-windows` section of the main [README](../README.md) if you want your agents to
-  stay alive when you close Emacs.
+- Read the terminal-hosting section of the main [README](../README.md). Agents stay alive when you
+  close Emacs, because the herdr server is a daemon.

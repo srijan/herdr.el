@@ -38,12 +38,8 @@
 (declare-function herdr-pane-read "herdr-cmd"
                   (&optional pane-id source lines))
 (declare-function herdr-pane-close "herdr-cmd" (&optional pane-id))
-(declare-function herdr-pane-zoom "herdr-cmd" (&optional pane-id))
 (declare-function herdr-agent-prompt "herdr-cmd" (text &optional target))
 
-;; project.el is optional here, the same way it is in `herdr.el' and
-;; `herdr-dispatch.el': `herdr-select-place' guards it with `fboundp'
-;; and offers open workspaces alone when it is absent.
 (declare-function project-known-project-roots "project" ())
 
 (defun herdr-select--status-glyph (status)
@@ -85,17 +81,6 @@
                 (or (alist-get 'pane_count workspace) 0))
       "")))
 
-(defun herdr-select--annotate-tab (tab-id)
-  "Return the annotation string for TAB-ID."
-  (let ((tab (seq-find (lambda (candidate)
-                         (equal tab-id (alist-get 'tab_id candidate)))
-                       (herdr-state-tabs (herdr-state-current)))))
-    (if tab
-        (format "  %-8s %s panes"
-                (or (alist-get 'label tab) "")
-                (or (alist-get 'pane_count tab) 0))
-      "")))
-
 (defun herdr-select--read (prompt candidates category annotator)
   "Read one of CANDIDATES with PROMPT, tagged CATEGORY and using ANNOTATOR."
   (unless candidates
@@ -132,23 +117,9 @@ than one extra round trip, and the cache can drift."
     "  not open yet"))
 
 (defun herdr-select-place (&optional prompt)
-  "Read where to open a terminal: an open workspace, or a directory.
-
-An open workspace is offered by id, and gets a tab.  A directory with no
-workspace open is offered by path, and is opened as a workspace first.
-
-Directories come from `project-known-project-roots\\=', guarded with
-`fboundp\\=' the way the rest of the package guards project.el, and the
-ones already open as a workspace are dropped: they are in the list once
-already, under the id the verbs act on.
-
-A worktree appears here only when project.el knows it as a project in
-its own right.  Worktrees are not asked for: `worktree.list\\=' needs a
-directory inside a repository that is already open, so a picker built
-from it would cost one round trip per open workspace to offer what the
-dashboard offers for free.  \\[herdr-dispatch-create-pane] on the
-worktree row is the way to a worktree the server knows about and
-project.el does not."
+  "Read where to open a terminal: an open workspace id, or a project directory.
+PROMPT overrides the default.  A directory already open as a workspace is
+dropped, being in the list once already under the id the verbs act on."
   (herdr-state-refresh)
   (let* ((state (herdr-state-current))
          (workspaces (mapcar (lambda (workspace)
@@ -169,14 +140,6 @@ project.el does not."
                       (mapcar (lambda (w) (alist-get 'workspace_id w))
                               (herdr-state-workspaces (herdr-state-current)))
                       'herdr-workspace #'herdr-select--annotate-workspace))
-
-(defun herdr-select-tab (&optional prompt)
-  "Read a tab id, defaulting the prompt to PROMPT."
-  (herdr-state-refresh)
-  (herdr-select--read (or prompt "Tab: ")
-                      (mapcar (lambda (tab) (alist-get 'tab_id tab))
-                              (herdr-state-tabs (herdr-state-current)))
-                      'herdr-tab #'herdr-select--annotate-tab))
 
 (defun herdr-select-current-target (&optional buffer)
   "Return the pane a command would act on from BUFFER, or nil.
@@ -215,8 +178,7 @@ you last went to — which could be a different agent entirely."
 
 (defconst herdr-select-annotators
   '((herdr-pane      herdr-select--annotate-pane)
-    (herdr-workspace herdr-select--annotate-workspace)
-    (herdr-tab       herdr-select--annotate-tab))
+    (herdr-workspace herdr-select--annotate-workspace))
   "Annotator per completion category, in `marginalia-annotators' order.")
 
 (defun herdr-select--register-marginalia ()
@@ -238,7 +200,6 @@ you last went to — which could be a different agent entirely."
     (define-key map "r" #'herdr-pane-read)
     (define-key map "p" #'herdr-agent-prompt)
     (define-key map "k" #'herdr-pane-close)
-    (define-key map "z" #'herdr-pane-zoom)
     map)
   "Embark actions offered on a herdr pane candidate.")
 
