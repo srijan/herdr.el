@@ -188,9 +188,15 @@ This entry covers the whole divergence from
   Closing a workspace's *last* pane closes the workspace too, so there is no surviving
   ancestor but the root — whose start is the header line, at the top of the buffer. The walk
   stops short of the root and uses the saved buffer position instead, which lands on whatever
-  took the dead row's place. That position skips the blank line between two top-level rows:
-  a separator belongs to the root section, so stopping on one left the *next* redraw with a
-  root ident to restore, and point crept to the top one redraw later.
+  took the dead row's place.
+
+  Separators are handled at the other end, when the position is saved. The blank line between
+  two top-level rows belongs to the root section, so restoring it went to the root's start —
+  the header. Parking point between two workspaces and letting any redraw fire therefore sent
+  it to the top, with nothing closing and nothing dying; redraws fire on their own, since the
+  header carries a status summary. A separator now saves the nearest row instead, which has an
+  identity to restore and survives the row above it changing width. The header line itself is
+  the root legitimately and stays where it is.
 
 - **A slow server no longer freezes Emacs.** Every synchronous call on a timer now binds
   `herdr-rpc-timeout` to `herdr-rpc-background-timeout`, which is 2 seconds.

@@ -1072,24 +1072,27 @@ Columns are counted as if nothing were folded; see
   (save-excursion
     (let ((buffer-invisibility-spec nil))
       (goto-char position)
+      ;; A separator between two rows belongs to the root section, whose
+      ;; start is the header — so saving it would climb to the top of the
+      ;; buffer on the next redraw.  The nearest row is saved instead.
+      ;; The header line is the root legitimately and stays as it is.
+      (unless (or (herdr-dispatch--row-p)
+                  (= (line-beginning-position) (point-min)))
+        (goto-char (herdr-dispatch--nearest-row (line-beginning-position))))
       (when-let* ((section (magit-current-section)))
-        (list (magit-section-ident section) (current-column) position)))))
+        (list (magit-section-ident section) (current-column) (point))))))
 
 (defun herdr-dispatch--row-p ()
   "Return non-nil when point is on a line that names something.
 A blank separator line belongs to the root section, whose ident is one
-element long; every real row has its own key consed onto that."
-  (cdr (magit-section-ident (or (magit-current-section)
-                                (error "herdr: no section at point")))))
+element long; every real row has its own key consed onto that.  Nil with
+no section at all, which is an empty buffer before the first draw."
+  (when-let* ((section (magit-current-section)))
+    (cdr (magit-section-ident section))))
 
 (defun herdr-dispatch--nearest-row (position)
   "Return the start of the nearest line to POSITION that names something.
-Forward first, then backward, then POSITION itself.
-
-The blank line between two top-level rows belongs to the root section,
-so landing on one leaves the next redraw with a root ident to restore —
-and the root starts at the header, which is the jump to the top this
-fallback exists to avoid."
+Forward first, then backward, then POSITION itself."
   (save-excursion
     (goto-char position)
     (or (and (herdr-dispatch--row-p) position)
@@ -1107,30 +1110,14 @@ fallback exists to avoid."
         position)))
 
 (defun herdr-dispatch--position-restore (position)
-  "Return where POSITION now lands, or nil.
-POSITION is an (IDENT COLUMN . POSITION) list from
-`herdr-dispatch--position-at\\='.
+  "Return where POSITION now lands.
+POSITION is an (IDENT COLUMN POSITION) list from
+`herdr-dispatch--position-at\\='.  The section, else its nearest surviving
+ancestor, else the saved position taken to the nearest row.  The walk
+stops short of the root, whose start is the header line.
 
-Three answers, in order.  The section itself, if the redraw built it.
-Otherwise its nearest surviving ancestor — an ident is a section\\='s own
-key consed onto its parents\\=', so its `cdr\\=' is the parent\\='s ident.
-Otherwise the saved buffer position, clamped and taken to the start of
-its line.
-
-The walk stops short of the root, which is why the third answer exists.
-Closing the last pane of a workspace closes the workspace too, so the
-walk runs out of ancestors, and the root\\='s start is the header line —
-sending point to the top of the buffer over a row that died in the
-middle of it.  The saved position lands on whatever took its place,
-which is what closing a row in a list is expected to do.
-
-Point that was on the header to begin with stays there: its own ident is
-the root\\='s, and the first answer covers it before the walk starts.
-
-Columns are counted with `buffer-invisibility-spec\\=' unbound, because a
-line inside a folded section has no width while the fold is in force:
-`current-column\\=' answers for the visible line the fold collapsed it
-into, and `move-to-column\\=' walks past the whole hidden region."
+Columns are counted with `buffer-invisibility-spec\\=' unbound: a line
+inside a folded section has no width while the fold is in force."
   (let* ((original (car position))
          (ident original)
          (column (nth 1 position))
@@ -1138,16 +1125,21 @@ into, and `move-to-column\\=' walks past the whole hidden region."
     (while (and (cdr ident) (not (magit-get-section ident)))
       (setq ident (cdr ident)))
     (save-excursion
-      (let* ((buffer-invisibility-spec nil)
-             ;; The root is accepted only when it is where point already
-             ;; was.  Walking up to it means every real row above point
-             ;; is gone, and its start is the header line.
-             (section (and (or (eq ident original) (cdr ident))
-                           (magit-get-section ident))))
-        (if section
-            (goto-char (oref section start))
-          (goto-char (max (point-min) (min (or raw (point-min)) (point-max))))
-          (goto-char (herdr-dispatch--nearest-row (line-beginning-position))))
+      (let ((buffer-invisibility-spec nil)
+            (clamp (lambda ()
+                     (goto-char (max (point-min)
+                                     (min (or raw (point-min)) (point-max))))
+                     (line-beginning-position))))
+        (cond
+         ;; A real row the redraw still builds.
+         ((and (cdr ident) (magit-get-section ident))
+          (goto-char (oref (magit-get-section ident) start)))
+         ;; Point was on the header, which is the root legitimately.
+         ((eq ident original)
+          (goto-char (funcall clamp)))
+         ;; Every row above point died, so there is nowhere to walk to.
+         (t
+          (goto-char (herdr-dispatch--nearest-row (funcall clamp)))))
         (move-to-column column)
         (point)))))
 

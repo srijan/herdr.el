@@ -738,6 +738,41 @@ blank line."
     (should (cdr (magit-section-ident (magit-current-section))))
     (should-not (= (point) (point-min)))))
 
+(ert-deftest herdr-dispatch-refresh-keeps-point-on-a-blank-line ()
+  "Point on a separator must not be dragged to the top of the buffer.
+
+The blank line between two top-level rows belongs to the root section,
+and the restore went to that section's start — which is the header.  So
+parking point between two workspaces and letting any redraw fire sent it
+to the top, with nothing closing and nothing dying.  Redraws fire on
+their own: the header carries a status summary, so an agent changing
+state is enough.
+
+Predates the closed-pane fix rather than following from it: the original
+restore resolved the root ident the same way."
+  (herdr-dispatch-test-in-dispatcher
+      '((workspaces . (((workspace_id . "w1") (label . "web") (pane_count . 1))
+                       ((workspace_id . "w2") (label . "api") (pane_count . 1))))
+        (panes . (((pane_id . "w1:p1") (agent . "claude") (agent_status . "idle")
+                   (workspace_id . "w1"))
+                  ((pane_id . "w2:p1") (agent . "codex") (agent_status . "idle")
+                   (workspace_id . "w2")))))
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (search-forward "api")
+    (forward-line -1)
+    (goto-char (line-beginning-position))
+    (should-not (herdr-dispatch--row-p))
+    (should-not (= (point) (point-min)))
+    (herdr-dispatch-test--pane-event "w1:p1" "working" 2)
+    (herdr-dispatch-refresh)
+    (should-not (= (point) (point-min)))
+    ;; The nearest row below, not the separator: a blank line has no
+    ;; identity to restore, and the exact character position cannot
+    ;; survive a row above it changing width.
+    (should (equal '((herdr-workspace . "w2") (herdr-root))
+                   (magit-section-ident (magit-current-section))))))
+
 (ert-deftest herdr-dispatch-refresh-keeps-point-on-the-header ()
   "The root section is a legitimate place to be — the header line is
 inside it — so the walk stopping short of the root must not move point
