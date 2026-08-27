@@ -1074,26 +1074,28 @@ Columns are counted as if nothing were folded; see
         (cons (magit-section-ident section) (current-column))))))
 
 (defun herdr-dispatch--position-restore (position)
-  "Return where POSITION now lands, or nil when its section is gone.
-POSITION is a (IDENT . COLUMN) pair from `herdr-dispatch--position-at'.
-The column is restored within the section\\='s heading line and clamped to
-that line\\='s end, so a redraw keeps the horizontal place as well as the
-vertical one — going to the section start alone jumps you to column 0.
+  "Return where POSITION now lands, or nil.
+POSITION is a (IDENT . COLUMN) pair from `herdr-dispatch--position-at\\='.
 
-Both halves count columns with `buffer-invisibility-spec\\=' unbound,
-because a line inside a folded section has no width at all while the
-fold is in force: `current-column\\=' there answers for the visible line
-the fold collapsed it into, and `move-to-column\\=' walks straight past
-the whole hidden region into the next visible line.  Point would come
-back from a redraw somewhere else entirely — which is the failure this
-whole pair exists to prevent, and which only became reachable once
-`herdr-dispatch--apply-fold\\=' made folds survive a redraw."
-  (when-let* ((section (magit-get-section (car position))))
-    (save-excursion
-      (let ((buffer-invisibility-spec nil))
-        (goto-char (oref section start))
-        (move-to-column (cdr position))
-        (point)))))
+Falls back to the nearest surviving ancestor when the section itself is
+gone.  Without that, closing the pane under point left the caller with
+nothing to go to, and point stayed where `erase-buffer\\=' and the
+inserts had put it — the end of the buffer.  An ident is the section\\='s
+own key consed onto its parents\\=', so its `cdr\\=' is the parent\\='s ident.
+
+Columns are counted with `buffer-invisibility-spec\\=' unbound, because a
+line inside a folded section has no width while the fold is in force:
+`current-column\\=' answers for the visible line the fold collapsed it
+into, and `move-to-column\\=' walks past the whole hidden region."
+  (let ((ident (car position)))
+    (while (and ident (not (magit-get-section ident)))
+      (setq ident (cdr ident)))
+    (when-let* ((section (magit-get-section ident)))
+      (save-excursion
+        (let ((buffer-invisibility-spec nil))
+          (goto-char (oref section start))
+          (move-to-column (cdr position))
+          (point))))))
 
 (defun herdr-dispatch-refresh (&optional force)
   "Redraw the dispatcher from the cache, keeping point and fold state.

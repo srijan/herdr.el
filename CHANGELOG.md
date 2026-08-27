@@ -178,6 +178,13 @@ This entry covers the whole divergence from
 
 ### Fixed
 
+- **Closing a pane no longer throws point to the end of the dashboard.**
+  `herdr-dispatch--position-restore` answered nil when point's section was one the
+  redraw no longer builds, and the caller skipped its `goto-char` — leaving point wherever
+  `erase-buffer` and the inserts had put it. Point now falls back to the nearest surviving
+  ancestor, so closing a pane leaves you on its workspace. Both halves of the restore are
+  fixed, the buffer's point and each window's.
+
 - **A slow server no longer freezes Emacs.** Every synchronous call on a timer now binds
   `herdr-rpc-timeout` to `herdr-rpc-background-timeout`, which is 2 seconds.
 - **A busy server no longer makes the dashboard flicker.** Redraws now group inside

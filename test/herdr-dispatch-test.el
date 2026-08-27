@@ -639,6 +639,54 @@ cancel nothing."
       (herdr-dispatch--cancel-refresh)
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
+(ert-deftest herdr-dispatch-refresh-falls-back-to-the-parent-when-the-row-dies ()
+  "Killing the pane under point threw point to the end of the buffer.
+
+`herdr-dispatch--position-restore' answered nil when the ident named a
+section the redraw no longer builds, and the caller simply skipped its
+`goto-char' — leaving point wherever `erase-buffer' and the inserts had
+left it, which is `point-max'.  Reported from a live session: close a
+terminal from the dashboard and point jumps to the bottom.
+
+The nearest surviving ancestor is where it goes instead, so closing a
+pane leaves you on its workspace."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (goto-char (point-min))
+    (search-forward "w1:p2")
+    (goto-char (line-beginning-position))
+    (setq herdr-state--current
+          (herdr-state-reduce herdr-state--current "pane_closed"
+                              '((pane_id . "w1:p2"))))
+    (herdr-dispatch-refresh)
+    (should-not (= (point) (point-max)))
+    (should (equal '((herdr-workspace . "w1") (herdr-root))
+                   (magit-section-ident (magit-current-section))))))
+
+(ert-deftest herdr-dispatch-refresh-falls-back-in-a-window-too ()
+  "The window-point half of the restore has the same nil, and the hook
+usually fires while the dashboard is not the selected window."
+  (herdr-dispatch-test-with-dispatcher
+    (herdr-dispatch-refresh t)
+    (let ((window (split-window)))
+      (unwind-protect
+          (progn
+            (set-window-buffer window (current-buffer))
+            (goto-char (point-min))
+            (search-forward "w1:p2")
+            (set-window-point window (line-beginning-position))
+            (goto-char (point-min))
+            (setq herdr-state--current
+                  (herdr-state-reduce herdr-state--current "pane_closed"
+                                      '((pane_id . "w1:p2"))))
+            (herdr-dispatch-refresh)
+            (should-not (= (window-point window) (point-max)))
+            (should (equal '((herdr-workspace . "w1") (herdr-root))
+                           (save-excursion
+                             (goto-char (window-point window))
+                             (magit-section-ident (magit-current-section))))))
+        (delete-window window)))))
+
 (ert-deftest herdr-dispatch-refresh-restores-point-in-an-unselected-window ()
   "The cursor reset happens in a window that is not the selected one.
 
