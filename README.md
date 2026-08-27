@@ -30,8 +30,8 @@ news, not as a branch to merge.
 
 ## The dashboard
 
-`M-x herdr` (or `C-c H`) opens `*herdr-agents*`: the whole session as a foldable workspace and
-pane tree, and the place every command is reachable from.
+`M-x herdr` (or `C-c H`) opens `*herdr-agents*`: the whole session as a foldable tree of
+repositories, their checkouts and their panes, and the place every command is reachable from.
 
 ```
 M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
@@ -61,14 +61,64 @@ M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
 | `q` | quit the window |
 | `?` | open `herdr-transient` |
 
+Every verb acts on the most specific thing under point. `a` on a row that names a directory
+rather than a workspace — a worktree, a `main` row, an inactive project — starts the agent in
+that directory, opening it as a workspace first if nothing is open there. A heading is not a
+target: `TAB` folds it, and the other verbs say so rather than acting on what encloses it.
+
 A collapsed section still shows the worst status inside it, so folding never hides a blocked
 agent.
 
+### The shape of the tree
+
+The top level is one row per repository. A workspace holds its own panes in a `main` group and
+hangs its worktrees off itself beside that group, so the two kinds of row are never mistaken for
+each other:
+
+```
+gmc-rearchitecture (1)       ~/workspace/gmc-rearchitecture/
+  main (2)
+    · shell     idle      wA:p1   VLM to Claude schema generation
+    ✓ claude    done      wA:p5   Veda issue 278 demo breakdown
+
+herdr.el (2)                 ~/workspace/srijan/herdr.el/
+  main (1)
+    · claude    idle      wS:pR   Lantern plugin compatibility
+  project-el (1)             ~/workspace/herdr-worktrees/herdr.el/project-el/ ▶
+    main (1)
+      ▶ claude  working   w19:p1  Inactive projects display in herdr
+```
+
+A worktree you have open as a workspace of its own is drawn where it belongs — inside the
+repository it came from, panes and all — rather than as a second top-level row beside it. A
+worktree that is not open is a dimmed one-line row in the same place.
+
+The count on a repository row is its checkouts: its own, plus one per worktree. The pane count
+sits on the `main` group, which is the thing that holds the panes.
+
 ### Inactive projects
 
-Below the live workspaces sits one foldable `Inactive (N)` heading listing every
-`project.el` known project that has no herdr workspace open. Rows are dimmed, show `(0)` for their
-pane count, and carry their own worktrees underneath. `RET` on one creates the workspace.
+Below the live workspaces sits one foldable `Inactive (N)` heading listing every `project.el`
+known project that has no herdr workspace open. Each row is dimmed, folds, and carries the
+repository's checkouts underneath — a `main` row for its own, then one per worktree:
+
+```
+Inactive (24)
+  butler_server (16)         ~/workspace/butler_server/
+    main                     ~/workspace/butler_server
+    7.2.0.1-HF13             ~/workspace/butler_server-worktrees/7.2.0.1-HF13
+    …
+```
+
+`RET` on the project row creates its workspace. `a` on any row under it starts an agent in that
+directory, opening it as a workspace first if nothing is open there yet — so a worktree you have
+not touched in a week is two keystrokes from having an agent in it.
+
+Two kinds of row are left out. A worktree you have also opened as a project in Emacs gets no row
+of its own: project.el remembers it as a project in its own right, and it is already listed under
+the repository it belongs to. A project whose directory has been deleted gets no row either —
+project.el remembers a project until it is told to forget one, and nothing tells it when a
+directory goes away. Use `project-forget-zombie-projects` to drop those from project.el itself.
 
 This comes from `project-known-project-roots`, not from herdr. A herdr workspace closes when its
 last pane closes, so the server has no concept of a project you are not currently working in.
@@ -207,16 +257,30 @@ an agent named `shell` from any other kind. They count in the modeline, appear i
 picker and can raise notifications. They show as a plain `shell` row in the dashboard, with the
 same status glyph as any other pane.
 
-Adoption does not suppress herdr's own agent detection. Reporting and detection operate
-independently, and detection wins: start Claude inside a pane adopted as `shell` and herdr
-relabels it `claude` a few seconds later, of its own accord. Nothing is needed from you, and
-nothing is needed from herdr.el.
+A relabel rides on the agent starting, not on the label being wrong. Start Claude in a pane
+already reported as `shell` and herdr relabels it `claude` a few seconds later. Report `shell` on
+a pane where Claude is *already* running and the label stays `shell` indefinitely — measured on
+two panes, hours apart, with `agent.explain` answering `claude` for both while the pane record
+went on carrying the report.
 
-That is worth stating plainly because the opposite was believed here for a long time, and the code
-carried a poll to compensate for it. `agent.explain` ran on every adopted shell on every directory
-poll, 936 calls in one session and three quarters of all the RPC traffic herdr.el made, to force a
-relabelling herdr was already doing. A `herdr-promote-shell` command triggered it by hand. Both
-are gone.
+Releasing the report does not hand the pane to detection either. A released pane was watched for
+25 seconds and stayed at no agent at all, with `agent.explain` then refusing it outright —
+`agent_not_found`, because that method only runs against panes herdr already counts as agents.
+The report was the only reason detection ran on it.
+
+What herdr does get right on its own is a pane it started: a fresh pane running Claude arrives
+with its agent already set, no report involved. The practical rule is therefore to leave panes
+alone rather than to adopt and then wait for a relabel that does not come. If a pane is stuck
+with a stale label, killing it and starting the agent again is the cure that works.
+
+This corrects an earlier claim here that detection wins over a report. It does not restore
+`herdr-promote-shell` or the poll behind it, which are gone for a separate and still-good reason:
+`agent.explain` ran on every adopted shell on every directory poll, 936 calls in one session and
+three quarters of all the RPC traffic herdr.el made. A hand-triggered relabel is worth having; a
+poll that costs three quarters of the traffic to guess when one is needed is not.
+
+Every pane also carries an `agent_session` field, which named `claude` correctly on both stale
+panes above. Nothing in herdr.el reads it yet.
 
 `M-x herdr-release-shell` reverses adoption completely, dropping the reported agent and the
 sidebar row it produced.
