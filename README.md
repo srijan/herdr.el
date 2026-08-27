@@ -161,9 +161,9 @@ describes that buffer's; Emacs answers both already.
 The dashboard is where you act on something you can see. `herdr-command-map` is where you act on
 something you cannot, by naming it in a picker. That is the whole interface.
 
-Twelve curated commands cover what the two surfaces call. `M-x herdr-call` reaches all 91 server
-methods, prompting for each parameter from the server's own schema, so nothing the server can do
-is out of reach and there is no generated 91-entry menu.
+A short list of curated commands covers what the two surfaces call. `M-x herdr-call` reaches
+every other server method, prompting for each parameter from the server's own schema, so nothing
+the server can do is out of reach and no menu has to be generated.
 
 Commands act on the pane of the buffer you are in, if that is a herdr terminal, and otherwise on
 the pane herdr has focused. `C-u` on any command prompts instead.
@@ -373,7 +373,7 @@ offers focus, read, prompt and close.
 ## Development
 
 ```bash
-make test        # 465 tests, hermetic; no herdr required, uses a fake server
+make test        # hermetic; no herdr required, uses a fake server
 make test-live   # needs a running herdr; includes the schema drift test
 make compile     # byte-compile, warnings are errors
 ```

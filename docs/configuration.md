@@ -1,7 +1,7 @@
 # Configuration
 
-This document lists every user option. There are eighteen. Set an option with
-`M-x customize-group RET herdr RET`, or with `setq` in your init file.
+This document lists every user option. Set an option with `M-x customize-group RET herdr RET`,
+or with `setq` in your init file.
 
 herdr.el binds no key. `herdr-command-map` is a prefix keymap that you bind yourself. See
 [Commands](commands.md#the-prefix-keymap).

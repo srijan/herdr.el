@@ -15,7 +15,7 @@ behaviour of the server that the herdr documentation does not state.
 
 ```bash
 make compile     # byte-compile. A warning stops the build.
-make test        # 465 tests. No herdr server is necessary.
+make test        # No herdr server is necessary.
 make test-live   # more tests. A herdr server is necessary.
 ```
 

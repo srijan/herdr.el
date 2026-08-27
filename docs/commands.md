@@ -1,7 +1,7 @@
 # Commands
 
-herdr.el has 12 curated commands. Each one wraps a server method. The command `herdr-call`
-reaches all 91 methods of the server.
+Each curated command wraps a server method. The command `herdr-call` reaches every method the
+server has.
 
 The list is short on purpose. A command exists here only if the dashboard or `herdr-command-map`
 calls it. Anything else is an `M-x herdr-call` away.
@@ -23,7 +23,7 @@ The dashboard shows the target on the row you act from. The target is therefore 
 | `herdr-stop` | Stop the event stream and remove the Emacs buffers. The server continues. |
 | `herdr-project` | Focus the workspace of the current project, or create it. |
 | `herdr-agents` | Open the dashboard. |
-| `herdr-call` | Call any of the 91 server methods. |
+| `herdr-call` | Call any server method. |
 | `herdr-modeline-mode` | Show the agent counts in the modeline. |
 
 `herdr-stop` does not stop your agents. The herdr server is a daemon, and the agents belong to
@@ -134,7 +134,7 @@ the dashboard names both on the row.
 
 `M-x herdr-call` asks you for a method, then asks you for each parameter. It reads the parameter
 names, the types and the enumerated values from the schema of the server. herdr.el therefore
-needs no generated menu of 91 entries, and no method is out of reach.
+needs no generated menu, and no method is out of reach.
 
 `herdr-call` has no key. It is the surface of last resort, and the reason the curated list can
 stay short.

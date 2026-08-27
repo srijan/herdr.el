@@ -4,21 +4,21 @@ This document tells you how herdr.el is built. Read it before you change the cod
 
 ## The shape of the package
 
-herdr.el has eleven source files. Each file has one duty.
+Each file has one duty.
 
-| File | Lines | Duty |
-|---|---|---|
-| `herdr.el` | 123 | The entry points, and the protocol check. |
-| `herdr-rpc.el` | 260 | The transport for the socket API. |
-| `herdr-state.el` | 1086 | The cache of the session, and the two event streams. |
-| `herdr-term.el` | 526 | The terminal buffers, and directory tracking. |
-| `herdr-cmd.el` | 342 | The 12 curated commands. |
-| `herdr-call.el` | 96 | The generic caller for all 91 methods. |
-| `herdr-schema.el` | 245 | The reader for the JSON Schema of the server. |
-| `herdr-select.el` | 264 | The `completing-read` pickers. |
-| `herdr-tree.el` | 877 | The dashboard tree, as data only. |
-| `herdr-dispatch.el` | 1308 | The dashboard renderer, and its verbs. |
-| `herdr-modeline.el` | 191 | The modeline segment, and the notifications. |
+| File | Duty |
+|---|---|
+| `herdr.el` | The entry points, and the protocol check. |
+| `herdr-rpc.el` | The transport for the socket API. |
+| `herdr-state.el` | The cache of the session, and the two event streams. |
+| `herdr-term.el` | The terminal buffers, and directory tracking. |
+| `herdr-cmd.el` | The curated commands. |
+| `herdr-call.el` | The generic caller for every server method. |
+| `herdr-schema.el` | The reader for the JSON Schema of the server. |
+| `herdr-select.el` | The `completing-read` pickers. |
+| `herdr-tree.el` | The dashboard tree, as data only. |
+| `herdr-dispatch.el` | The dashboard renderer, and its verbs. |
+| `herdr-modeline.el` | The modeline segment, and the notifications. |
 
 ## The data flow
 
@@ -26,7 +26,7 @@ herdr.el has eleven source files. Each file has one duty.
 herdr server
     |
     |  1. session.snapshot          (one time, at start)
-    |  2. events.subscribe          (connection A: 18 global event types)
+    |  2. events.subscribe          (connection A: the global event types)
     |  3. events.subscribe          (connection B: pane.agent_status_changed)
     v
 herdr-state.el   --- the cache ---
@@ -43,7 +43,7 @@ costs no socket traffic.
 
 herdr.el holds two long-lived connections.
 
-**Connection A** carries the 18 global event types. The types cover workspaces, panes, worktrees
+**Connection A** carries the global event types. The types cover workspaces, panes, worktrees
 and the layout. Connection A never changes after the start.
 
 There is no `tab.*` subscription. herdr.el models no tab: a tab's only visual form is the TUI's
@@ -74,8 +74,8 @@ herdr.el therefore compares its cache against the server. Two functions do this:
 
 | Function | Method | Corrects |
 |---|---|---|
-| `herdr-state-reconcile-panes` | `pane.list` | The pane set. |
-| `herdr-state-reconcile-workspaces` | `workspace.list` | The workspace set. |
+| `herdr-state-reconcile-panes` | The pane set. |
+| `herdr-state-reconcile-workspaces` | The workspace set. |
 
 Both methods need no parameters. Each returns the full live set. Each is therefore a symmetric
 target: herdr.el adds what is missing and removes what is extra.
