@@ -19,7 +19,7 @@ that do not exist upstream.
 | Session view | `herdr-agents.el`, a flat list | `herdr-dispatch.el` and `herdr-tree.el`, a foldable magit-section tree |
 | Modeline | inline in the agents buffer | `herdr-modeline.el`, its own file |
 | Extra dependency | none | `magit-section` 3.3 |
-| Tests | one agents test file | 482 offline tests across 15 files, plus a live suite |
+| Tests | one agents test file | 485 offline tests across 15 files, plus a live suite |
 
 The large additions are the dashboard and the pure tree layer behind it, a rewritten
 `herdr-state.el` that reconciles workspaces and tabs rather than only panes, and the test suite.
@@ -57,7 +57,6 @@ nil for the old splitting behaviour.
 | --- | --- |
 | `RET` | go to the thing at point — a worktree that is not open yet is opened as a workspace |
 | `TAB` | fold |
-| `c` | create menu, with its parent taken from point |
 | `w` / `n` / `%` | create workspace / terminal / worktree directly |
 | `p` | prompt the agent at point |
 | `r` | read the pane at point into a buffer |
@@ -186,7 +185,7 @@ menu ever called. What went and why:
 
 | Gone | Why |
 | --- | --- |
-| `herdr-transient` and its six sub-menus | a surface over commands the other two already reach |
+| `herdr-transient` and its six sub-menus, and the dashboard's `c` create menu | surfaces over commands the other two already reach. `c` offered the same three verbs as `w`, `n` and `%` plus three arguments; two only skipped a prompt, and the third — a worktree's base ref — is a prompt now |
 | `herdr-pane-split-right` / `-down`, `-zoom`, `-resize`, `-swap` | TUI layout. Under `agent-windows`, Emacs owns the layout and these move nothing you can see |
 | `herdr-tab-create` / `-close` / `-focus` / `-rename` | already hidden under `agent-windows`; a tab's only visual form is the TUI's tab bar |
 | `herdr-pane-run`, `-send-text`, `-wait-for-output`, `herdr-agent-wait` | scripting the session from Emacs, which the herdr CLI and the agent skill both already do |
@@ -210,11 +209,16 @@ that workspace's active pane, one buffer, in the current window.
 
 - Emacs 28.1+
 - [herdr](https://herdr.dev) 0.8.2 (protocol 20)
-- `ghostel`, `transient`, `magit-section`
+- `ghostel`, `magit-section`
 
 Optional, used when present and never required: `marginalia`, `embark`, `consult`, `alert`.
 
 `magit-section` is the one dependency upstream does not have. The dashboard is built on it.
+
+`transient` is no longer *declared*, which is not the same as no longer needed. The dashboard's
+`c` create menu was the last transient prefix here, so no file names it any more — but
+`magit-section` requires it and Emacs has shipped one since 28.1, so it loads anyway. Nothing
+changes for you at install time.
 
 ## Install
 
@@ -425,18 +429,18 @@ offers focus, read, prompt and close.
 ## Development
 
 ```bash
-make test        # 482 tests, hermetic; no herdr required, uses a fake server
+make test        # 485 tests, hermetic; no herdr required, uses a fake server
 make test-live   # needs a running herdr; includes the schema drift test
 make compile     # byte-compile, warnings are errors
 ```
 
 Both targets run `emacs -Q -L .`, which reads no init file, so `test/herdr-deps.el` searches the
 package directories of `elpaca`, `package.el` and `straight.el` for `magit-section` and
-`transient`. A missing dependency is a hard error naming `EXTRA_LOAD_PATH`. Nothing skips.
+`magit-section`. A missing one is a hard error naming `EXTRA_LOAD_PATH`. Nothing skips.
 
 Both suites run in batch, and that is a real blind spot. A batch Emacs has no frame, so it cannot
-catch a modeline rendering `*invalid*`, a command splitting a window, or a transient entry nobody
-added. Several faults passed a green suite and were only found by driving a real Emacs under a
+catch a modeline rendering `*invalid*`, a command splitting a window, or a `require` that nothing
+pulls in any more. Several faults passed a green suite and were only found by driving a real Emacs under a
 PTY. When your change touches windows, buffers or the modeline, run it in a real frame as well.
 
 `src/api/subscriptions.rs`, `src/api/event_hub.rs` and `src/api/server.rs` in

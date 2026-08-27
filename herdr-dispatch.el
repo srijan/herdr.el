@@ -5,7 +5,7 @@
 ;; Author: Eddie Jesinsky
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-;; Package-Requires: ((emacs "28.1") (transient "0.4.0") (magit-section "3.3"))
+;; Package-Requires: ((emacs "28.1") (magit-section "3.3"))
 
 ;;; Commentary:
 
@@ -22,7 +22,6 @@
 
 (require 'subr-x)
 (require 'seq)
-(require 'transient)
 (require 'magit-section)
 (require 'herdr-tree)
 (require 'herdr-state)
@@ -148,7 +147,6 @@ tells itself apart from a redraw of an empty session.")
     ;; the unchanged-tree skip in `herdr-dispatch-refresh' are what
     ;; address that.  Reach for those first.
     (define-key map (kbd "TAB") #'magit-section-toggle)
-    (define-key map "c" #'herdr-dispatch-create)
     (define-key map "w" #'herdr-dispatch-create-workspace)
     (define-key map "n" #'herdr-dispatch-create-pane)
     (define-key map "%" #'herdr-dispatch-create-worktree)
@@ -983,36 +981,26 @@ the same reason and with more at stake; see
     (herdr-workspace-close (herdr-dispatch--value-at-point 'herdr-workspace)))
    (t (user-error "herdr: nothing at point to close"))))
 
-;;; The create transient
-
-(defun herdr-dispatch--arg (args flag)
-  "Return the value of FLAG in transient ARGS, or nil."
-  (when-let* ((hit (seq-find (lambda (arg)
-                               (string-prefix-p (concat flag "=") arg))
-                             args)))
-    (substring hit (1+ (length flag)))))
-
-(defun herdr-dispatch--args ()
-  "Return the create transient\\='s arguments, or nil outside it."
-  (when (and (boundp 'transient-current-command)
-             (eq transient-current-command 'herdr-dispatch-create))
-    (transient-args 'herdr-dispatch-create)))
+;;; The create verbs
 
 (herdr-dispatch-defverb herdr-dispatch-create-workspace ()
-  "Create a workspace.
-A workspace has no parent section to inherit from, so the directory
-comes from --directory when set, and otherwise from a prompt defaulting
-to the directory of the workspace at point."
-  (let* ((args (herdr-dispatch--args))
-         (default (or (herdr-dispatch--arg args "--directory")
-                      (when-let* ((id (herdr-dispatch--value-at-point
+  "Create a workspace, prompting for its directory.
+
+A workspace has no parent section to inherit from, so unlike every other
+verb here this one asks.  The prompt defaults to the directory of the
+workspace at point, which is where a sibling checkout usually lives.
+
+The label is left to herdr, which names a workspace after its directory.
+Presetting one was a `--label\\=' argument on a transient this buffer no
+longer has, and `herdr-pane-rename\\=' — `R\\=' on the row — is the
+answer for a name you want to choose."
+  (let* ((default (or (when-let* ((id (herdr-dispatch--value-at-point
                                        'herdr-workspace)))
                         (herdr-state-workspace-directory
                          (herdr-state-current) id))
-                      default-directory))
-         (dir (or (herdr-dispatch--arg args "--directory")
-                  (read-directory-name "Workspace directory: " default))))
-    (herdr-workspace-create dir (herdr-dispatch--arg args "--label"))))
+                      default-directory)))
+    (herdr-workspace-create
+     (read-directory-name "Workspace directory: " default))))
 
 (defun herdr-dispatch--pane-for-directory-at-point ()
   "Return a pane for a new terminal in the directory the row at point names.
@@ -1104,11 +1092,17 @@ Calls `herdr-rpc-call\\=' directly rather than through
 `herdr-worktree-create\\=', which derives its `cwd\\=' from the calling
 buffer's `default-directory\\=' — here that would be `*herdr-agents*\\=',
 not the workspace at point, matching the treatment already given to
-`herdr-dispatch-open-worktree\\='."
-  (let* ((args (herdr-dispatch--args))
-         (workspace (herdr-dispatch--require 'herdr-workspace "a workspace"))
+`herdr-dispatch-open-worktree\\='.
+
+The base ref is a prompt, and empty means the current HEAD.  It used to
+be `--base\\=' on a transient, which was the last thing in this package
+that needed `transient\\=' at all — and an argument you had to remember
+to set before pressing the key reads worse than a prompt that appears
+exactly when the answer is wanted."
+  (let* ((workspace (herdr-dispatch--require 'herdr-workspace "a workspace"))
          (branch (read-string "New worktree branch: "))
-         (base (herdr-dispatch--arg args "--base"))
+         (base (read-string
+                (format-prompt "Base ref" "the current HEAD") nil nil ""))
          (dir (herdr-state-workspace-directory (herdr-state-current) workspace)))
     (herdr-rpc-call "worktree.create"
                     `((branch . ,branch)
@@ -1117,25 +1111,6 @@ not the workspace at point, matching the treatment already given to
                       (focus . t)))
     (herdr-dispatch--forget-worktrees)
     (herdr-dispatch-refresh)))
-
-(defun herdr-dispatch--create-heading ()
-  "Return the create menu heading, naming what point resolves to."
-  (format "Create   [%s]"
-          (or (herdr-dispatch--value-at-point 'herdr-pane)
-              (herdr-dispatch--value-at-point 'herdr-workspace)
-              "nothing at point")))
-
-(transient-define-prefix herdr-dispatch-create ()
-  "Create a herdr object, taking its parent from point."
-  [:description herdr-dispatch--create-heading
-   ["Create"
-    ("w" "workspace" herdr-dispatch-create-workspace)
-    ("n" "terminal"  herdr-dispatch-create-pane)
-    ("%" "worktree"  herdr-dispatch-create-worktree)]
-   ["Arguments"
-    ("-b" "base ref"  "--base=")
-    ("-l" "label"     "--label=")
-    ("-d" "directory" "--directory=")]])
 
 (defun herdr-dispatch--live-project-root-p (root)
   "Return non-nil when ROOT is a directory that still exists.

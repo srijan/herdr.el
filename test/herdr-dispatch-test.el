@@ -2499,46 +2499,79 @@ consult the pane's own `workspace_id\\=' rather than assume nesting."
       (search-forward "w9:p1")
       (should (equal "w9" (herdr-dispatch--workspace-target))))))
 
-(ert-deftest herdr-dispatch-create-reads-transient-arguments ()
-  (should (equal "main" (herdr-dispatch--arg '("--base=main") "--base")))
-  (should-not (herdr-dispatch--arg '("--base=main") "--label")))
-
 (ert-deftest herdr-dispatch-create-worktree-omits-an-empty-base ()
-  "An empty --base means \"off the current ref\"; `herdr-worktree-create's
+  "An empty base means \"off the current ref\"; `herdr-worktree-create's
 own contract (see herdr-cmd-test.el) is that a blank string must not
 reach the server as one.  `herdr-dispatch-create-worktree' calls
 `herdr-rpc-call\\=' directly rather than through that command, so the
-same contract has to be reasserted here rather than inherited."
+same contract has to be reasserted here rather than inherited.
+
+The base used to come from a `--base\\=' transient argument and now comes
+from the second prompt, which is the shape that makes RET the answer for
+the ordinary case."
   (let ((params nil)
-        (transient-current-command 'herdr-dispatch-create))
+        (prompts nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
                (lambda (_method p) (setq params p) nil))
               ((symbol-function 'herdr-state-workspace-directory)
                (lambda (_state _id) "/tmp/herdr.el/"))
-              ((symbol-function 'read-string) (lambda (&rest _) "feature"))
-              ((symbol-function 'transient-args) (lambda (_) '("--base=")))
+              ((symbol-function 'read-string)
+               (lambda (prompt &rest _)
+                 (push prompt prompts)
+                 (if (string-match-p "branch" prompt) "feature" "")))
               ((symbol-function 'herdr-dispatch-refresh) #'ignore))
       (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
         (search-forward "herdr.el")
         (herdr-dispatch-create-worktree)
         (should (equal "feature" (alist-get 'branch params)))
         (should-not (alist-get 'base params))
-        (should (equal "/tmp/herdr.el/" (alist-get 'cwd params)))))))
+        (should (equal "/tmp/herdr.el/" (alist-get 'cwd params)))
+        ;; Branch first, then base: the order the prompts must come in.
+        (should (= 2 (length prompts)))
+        (should (string-match-p "branch" (nth 1 prompts)))
+        (should (string-match-p "Base ref" (nth 0 prompts)))))))
 
-(ert-deftest herdr-dispatch-create-workspace-uses-the-directory-argument-when-set ()
-  "--directory short-circuits both the point-derived default and the prompt."
+(ert-deftest herdr-dispatch-create-worktree-passes-a-base-that-was-given ()
+  "The capability the prompt replaced: a worktree off something other
+than the current HEAD."
+  (let ((params nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (_method p) (setq params p) nil))
+              ((symbol-function 'herdr-state-workspace-directory)
+               (lambda (_state _id) "/tmp/herdr.el/"))
+              ((symbol-function 'read-string)
+               (lambda (prompt &rest _)
+                 (if (string-match-p "branch" prompt) "feature" "v1.4")))
+              ((symbol-function 'herdr-dispatch-refresh) #'ignore))
+      (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+        (search-forward "herdr.el")
+        (herdr-dispatch-create-worktree)
+        (should (equal "v1.4" (alist-get 'base params)))))))
+
+(ert-deftest herdr-dispatch-create-workspace-prompts-from-the-row-at-point ()
+  "A workspace has no parent section to inherit from, so this verb asks —
+and the default it offers is the directory of the workspace at point,
+where a sibling checkout usually lives.
+
+It used to take `--directory\\=' and `--label\\=' from a transient
+instead.  Both only skipped a prompt, and the label skipped one that was
+never asked: herdr names a workspace after its directory when none is
+given."
   (let ((called nil)
-        (transient-current-command 'herdr-dispatch-create))
+        (default nil))
     (cl-letf (((symbol-function 'herdr-workspace-create)
-               (lambda (dir label) (setq called (list dir label))))
-              ((symbol-function 'transient-args)
-               (lambda (_) '("--directory=/tmp/proj" "--label=proj")))
+               (lambda (dir &optional label) (setq called (list dir label))))
+              ((symbol-function 'herdr-state-workspace-directory)
+               (lambda (_state _id) "/tmp/herdr.el/"))
               ((symbol-function 'read-directory-name)
-               (lambda (&rest _) (error "should not prompt"))))
+               (lambda (_prompt &optional given &rest _)
+                 (setq default given)
+                 "/tmp/proj")))
       (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
         (search-forward "herdr.el")
         (herdr-dispatch-create-workspace)
-        (should (equal '("/tmp/proj" "proj") called))))))
+        (should (equal "/tmp/herdr.el/" default))
+        (should (equal '("/tmp/proj" nil) called))))))
 
 ;;; Starting an agent from anywhere in the tree
 
@@ -2743,18 +2776,31 @@ heading is that id directly."
         (should (equal "w1" (alist-get 'workspace_id params)))))))
 
 (ert-deftest herdr-dispatch-binds-the-create-verbs ()
-  (should (eq #'herdr-dispatch-create
-              (lookup-key herdr-dispatch-mode-map "c")))
   (should (eq #'herdr-dispatch-create-workspace
               (lookup-key herdr-dispatch-mode-map "w")))
   (should (eq #'herdr-dispatch-create-pane
               (lookup-key herdr-dispatch-mode-map "n")))
   (should (eq #'herdr-dispatch-create-worktree
               (lookup-key herdr-dispatch-mode-map "%")))
-  (dolist (verb '(herdr-dispatch-create herdr-dispatch-create-workspace
-                                        herdr-dispatch-create-pane
-                                        herdr-dispatch-create-worktree))
+  (dolist (verb '(herdr-dispatch-create-workspace
+                  herdr-dispatch-create-pane
+                  herdr-dispatch-create-worktree))
     (should (commandp verb))))
+
+(ert-deftest herdr-dispatch-binds-no-create-menu ()
+  "`c' opened `herdr-dispatch-create', a transient offering the same
+three verbs `w', `n' and `%' offer directly, plus three arguments.
+`--directory' and `--label' only skipped a prompt.  `--base' was the one
+capability, and it is the second prompt of
+`herdr-dispatch-create-worktree' now.
+
+It was also the last transient prefix in the package, so deleting it
+dropped `transient' as a dependency — which is the reason to assert the
+symbol is gone rather than merely unbound."
+  (should-not (lookup-key herdr-dispatch-mode-map "c"))
+  (should-not (fboundp 'herdr-dispatch-create))
+  (should-not (fboundp 'herdr-dispatch--args))
+  (should-not (fboundp 'herdr-dispatch--arg)))
 
 (ert-deftest herdr-dispatch-offers-no-second-way-to-create-a-place-to-run-in ()
   "`a' started an agent through `agent.start', asking for a kind and a

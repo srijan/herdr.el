@@ -21,8 +21,29 @@ a `featurep' check would pass in a session where something else had
 already loaded the library; what has to hold is that this file's search
 made it findable under `emacs -Q'."
   (should (locate-library "magit-section"))
-  (should (locate-library "transient"))
   (should (featurep 'herdr-dispatch)))
+
+(ert-deftest herdr-no-longer-declares-transient ()
+  "`transient' was declared for one thing: the dashboard's `c' create
+menu, a transient prefix offering the same three verbs as `w', `n' and
+`%' plus three arguments.  Two of the three only skipped a prompt; the
+third, `--base', is a prompt now.
+
+Declared, not needed — and the difference matters enough to say here.
+magit-section requires `transient' itself, and Emacs has shipped one
+since 28.1, so it is loaded in any session that draws the dashboard.
+What changed is that no file here names it, which is why this asserts
+the headers rather than `locate-library' or `featurep': both would
+answer yes for reasons that have nothing to do with this package."
+  (dolist (file '("herdr.el" "herdr-dispatch.el"))
+    (with-temp-buffer
+      (insert-file-contents file nil 0 2000)
+      (goto-char (point-min))
+      (should (re-search-forward "^;; Package-Requires:" nil t))
+      (should-not (string-match-p
+                   "transient"
+                   (buffer-substring (line-beginning-position)
+                                     (line-end-position)))))))
 
 (ert-deftest herdr-deps-fails-loudly-when-a-dependency-is-missing ()
   "Not finding a required library must stop the build, not warn.

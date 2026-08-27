@@ -8,7 +8,8 @@ You must have these items:
 
 - Emacs 28.1 or a later version.
 - [herdr](https://herdr.dev) 0.8.2. This version speaks protocol 20.
-- The Emacs packages `ghostel`, `transient` and `magit-section`.
+- The Emacs packages `ghostel` and `magit-section`. (`magit-section` requires `transient`, which
+  Emacs ships from version 28.1.)
 
 To find your herdr version, use this command:
 
@@ -27,8 +28,8 @@ herdr.el is not on MELPA. Get the code with `git`:
 git clone https://github.com/srijan/herdr.el ~/src/herdr.el
 ```
 
-Install `ghostel` from [its repository](https://github.com/dakra/ghostel). Install `transient`
-and `magit-section` from MELPA or from GNU ELPA.
+Install `ghostel` from [its repository](https://github.com/dakra/ghostel). Install
+`magit-section` from MELPA or from GNU ELPA.
 
 ## Step 2: Configure Emacs
 

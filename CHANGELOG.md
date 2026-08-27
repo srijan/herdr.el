@@ -65,7 +65,7 @@ This entry covers the whole divergence from
   option: set it to nil for the old splitting behaviour.
 - **`herdr-new-terminal`.** Opens a terminal, asking where first: an open workspace, or a
   `project.el` project with no workspace open, which is created and then opened in.
-- **A test suite.** 482 hermetic tests across 15 files, and a live suite that includes a schema
+- **A test suite.** 485 hermetic tests across 15 files, and a live suite that includes a schema
   drift test.
 - **Dependency resolution for the build.** `test/herdr-deps.el` finds `magit-section` and
   `transient` in the directories of `elpaca`, `package.el` and `straight.el`. A missing
@@ -110,6 +110,17 @@ This entry covers the whole divergence from
 - **The `pane.updated` subscription.** The event fires about 7.5 times each second and carries a
   full pane record, but it stops exactly when an agent becomes idle. Connection B now carries
   the statuses, and `herdr-state-reconcile-panes` carries the rest.
+- **`transient` from `Package-Requires`.** The dashboard's `c` create menu was the last
+  transient prefix in the package. It offered the same three verbs as `w`, `n` and `%` directly,
+  plus three arguments: `--directory` and `--label` only skipped a prompt, and `--label` skipped
+  one that was never asked, since herdr names a workspace after its directory. The third,
+  `--base`, was the one capability -- a worktree off something other than the current HEAD -- and
+  it is the second prompt of `herdr-dispatch-create-worktree` now, where RET is the answer for
+  the ordinary case.
+
+  Declared, not needed: `magit-section` requires `transient` itself, and Emacs has shipped one
+  since 28.1, so it loads in any session that draws the dashboard. What changed is that no file
+  here names it. Nothing changes at install time.
 - **Twenty-eight commands and the transient menu.** A command now exists only if the dashboard or
   `herdr-command-map` calls it, which leaves eleven. Gone: `herdr-transient` and its six
   sub-menus; the TUI layout commands `herdr-pane-split-right`/`-down`, `-zoom`, `-resize` and

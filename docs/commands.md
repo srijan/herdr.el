@@ -133,6 +133,7 @@ dashboard or `herdr-command-map` calls it.
 | Removed | Reason |
 |---|---|
 | `herdr-transient` and its six sub-menus, `herdr-menu` | A third surface over commands the dashboard and the prefix keymap already reach. |
+| The dashboard's `c` create menu | The same three verbs as `w`, `n` and `%`, plus three arguments. Two of them only skipped a prompt. The third is the base ref of a worktree, which is a prompt now. |
 | `herdr-pane-split-right`, `herdr-pane-split-down`, `herdr-pane-zoom`, `herdr-pane-resize`, `herdr-pane-swap` | Layout of the TUI. The `agent-windows` backend gives the layout to Emacs. These commands then move nothing that you see. |
 | `herdr-tab-create`, `herdr-tab-close`, `herdr-tab-focus`, `herdr-tab-rename` | A tab has one visual form only, which is the tab bar of the TUI. The `agent-windows` backend already hid these commands. |
 | `herdr-pane-run`, `herdr-pane-send-text`, `herdr-pane-wait-for-output`, `herdr-agent-wait` | Scripting of the session. The herdr CLI and the agent skill both do this already. |
