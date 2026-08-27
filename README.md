@@ -76,17 +76,17 @@ hangs its worktrees off itself beside that group, so the two kinds of row are ne
 each other:
 
 ```
-gmc-rearchitecture (1)       ~/workspace/gmc-rearchitecture/
+example-api (1)              ~/src/example-api/
   main (2)
-    · shell     idle      wA:p1   VLM to Claude schema generation
-    ✓ claude    done      wA:p5   Veda issue 278 demo breakdown
+    · shell     idle      wA:p1   npm run watch
+    ✓ claude    done      wA:p5   Add the pagination endpoint
 
-herdr.el (2)                 ~/workspace/srijan/herdr.el/
+herdr.el (2)                 ~/src/herdr.el/
   main (1)
-    · claude    idle      wS:pR   Lantern plugin compatibility
-  project-el (1)             ~/workspace/herdr-worktrees/herdr.el/project-el/ ▶
+    · claude    idle      wS:pR   Fix the reconcile order
+  feat-dispatch (1)          ~/src/herdr.el-worktrees/feat-dispatch/ ▶
     main (1)
-      ▶ claude  working   w19:p1  Inactive projects display in herdr
+      ▶ claude  working   w19:p1  Nest worktrees under their repository
 ```
 
 A worktree you have open as a workspace of its own is drawn where it belongs — inside the
@@ -104,9 +104,9 @@ repository's checkouts underneath — a `main` row for its own, then one per wor
 
 ```
 Inactive (24)
-  butler_server (16)         ~/workspace/butler_server/
-    main                     ~/workspace/butler_server
-    7.2.0.1-HF13             ~/workspace/butler_server-worktrees/7.2.0.1-HF13
+  example-api (16)           ~/src/example-api/
+    main                     ~/src/example-api
+    release-1.4              ~/src/example-api-worktrees/release-1.4
     …
 ```
 
