@@ -91,27 +91,17 @@ The herdr server keeps running; agents are unaffected."
 ;;;###autoload
 (defun herdr ()
   "Start herdr if needed and open the dispatcher.
-The transient stays on `herdr-transient\\=', which is the right surface
-when you are inside an agent\\='s terminal buffer and do not want to leave
-it."
+
+The one entry point that guarantees the start sequence has run:
+`herdr-start\\=' brings up the server, the terminals and the event
+stream, so the dashboard is drawn from a cache with something in it
+rather than from a cold one.  `herdr-agents\\=' on its own does not, and
+neither does `herdr-transient\\=' — which is why `s\\=' in
+`herdr-command-map\\=' is bound here rather than there."
   (interactive)
   (herdr-start)
   (herdr-term-display)
   (herdr-agents))
-
-;;;###autoload
-(defun herdr-menu ()
-  "Start herdr if needed and open the compact menu instead of the dashboard.
-Does the same startup as `herdr\\=' — `herdr-start\\=' and
-`herdr-term-display\\=' — but ends on `herdr-transient\\=' rather than
-`herdr-agents\\='.  This is the surface to reach for from inside an
-agent\\='s terminal buffer, where popping open a full-window dashboard
-would pull you out of what you were doing; use `herdr\\=' instead when
-you want to survey the whole session."
-  (interactive)
-  (herdr-start)
-  (herdr-term-display)
-  (call-interactively 'herdr-transient))
 
 ;; Loaded last: herdr-transient autoloads `herdr-project', which is
 ;; defined above, so requiring it here rather than at the top avoids a
@@ -119,6 +109,38 @@ you want to survey the whole session."
 ;; as soon as this file is loaded.  A lazy require inside `herdr' would
 ;; leave `M-x herdr-transient' broken until `M-x herdr' had run once.
 (require 'herdr-transient)
+
+(defvar herdr-command-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "s" #'herdr)
+    (define-key map "f" #'herdr-pane-focus)
+    (define-key map "n" #'herdr-new-terminal)
+    (define-key map "k" #'herdr-pane-close)
+    (define-key map "w" #'herdr-workspace-focus)
+    (define-key map "p" #'herdr-project)
+    (define-key map "%" #'herdr-transient-worktree)
+    (define-key map "g" #'herdr-state-resync)
+    (define-key map "?" #'herdr-transient)
+    map)
+  "Prefix keymap for herdr, meant to be bound to one key of your own.
+
+    (define-key global-map (kbd \"C-c H\") herdr-command-map)
+
+Bound by you rather than by this package, the way `project-prefix-map\\='
+is: a package that seizes a `C-c' binding takes it from the user, and
+which key is spare is the user\\='s question.
+
+The letters are the dashboard\\='s letters.  `n\\=' opens a terminal and
+`k\\=' closes one here, exactly as they do on a row in `*herdr-agents*\\=';
+the difference is only where the target comes from, a picker here and
+point there.  `s\\=' is the status buffer, the one entry point that
+guarantees the start sequence has run — see `herdr\\='.
+
+`?\\=' opens `herdr-transient\\='.  It reaches it directly, with no start
+sequence of its own, which is what `herdr-menu\\=' used to add.  That
+command is gone: `s\\=' guarantees the startup, and a second entry point
+whose whole content was \"the same thing but ending elsewhere\" is the
+kind of duplication this prefix exists to remove.")
 
 (provide 'herdr)
 ;;; herdr.el ends here

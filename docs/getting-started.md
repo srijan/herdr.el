@@ -39,7 +39,7 @@ Put this form in your init file:
   :ensure nil                          ; a local checkout, not MELPA
   :load-path "~/src/herdr.el"
   :bind (("C-x M" . herdr)
-         ("C-c H" . herdr-agents)
+         ("C-c H" . herdr-command-map)
          :map project-prefix-map
          ("h" . herdr-project))
   :custom (herdr-terminal-backend 'session)
@@ -66,9 +66,9 @@ For the cause, see [Protocol notes](protocol.md#the-server-replays-its-full-even
 
 ## Step 4: Read the dashboard
 
-The dashboard shows the session as a tree. The top level is one row per repository. Each
-workspace holds its own panes in a `main` group, and hangs its worktrees off itself beside that
-group.
+The dashboard shows the session as a tree. The top level is one row per repository. A workspace
+with worktrees holds its own panes in a `main` group, and hangs its worktrees off itself beside
+that group. A workspace with no worktrees hangs its panes off its own row.
 
 ```
 herdr.el (2)                          ~/src/herdr.el/
@@ -76,24 +76,27 @@ herdr.el (2)                          ~/src/herdr.el/
     · claude    working   wS:p1       Fix the reconcile order
       shell     idle      wS:p2
   feat-dispatch (1)                   ~/src/herdr.el-worktrees/feat-dispatch/
-    main (1)
-      · claude  idle      w19:p1      Nest worktrees under their repository
+    · claude    idle      w19:p1      Nest worktrees under their repository
+
+example-api (1)                       ~/src/example-api/
+  · shell       idle      wA:p1       npm run watch
 
 Inactive (14)
-  example-api (1)                     ~/src/example-api/
-    main                              ~/src/example-api
+  other-api (1)                       ~/src/other-api/
+    main                              ~/src/other-api
 ```
 
-Read the counts this way: a repository row counts its checkouts, its own plus one per worktree,
-and the `main` group counts the panes it holds. Here `herdr.el` has two checkouts — itself and
-the worktree `feat-dispatch`, which is open as a workspace and so is drawn in full rather than as a
-one-line pointer.
+Read the counts this way: a repository row counts its checkouts, its own plus one per worktree.
+Where a `main` group is drawn, it counts the panes it holds. Here `herdr.el` has two checkouts —
+itself and the worktree `feat-dispatch`, which is open as a workspace and so is drawn in full
+rather than as a one-line pointer. `example-api` has one checkout and no worktrees, so it has no
+`main` group and its pane sits directly under it.
 
 A closed section shows the worst status inside it. A closed section therefore never hides a
 blocked agent.
 
 The `Inactive` section lists the `project.el` projects that have no open workspace. Press `RET`
-on one row to create the workspace, or `a` on any checkout under it to start an agent there.
+on one row to create the workspace, or `n` on any checkout under it to open a terminal there.
 
 ## Step 5: Do the first tasks
 
@@ -103,7 +106,6 @@ on one row to create the workspace, or `a` on any checkout under it to start an 
 | Open or close a section | `TAB` |
 | Create a workspace | `w` |
 | Create a terminal | `n` |
-| Start an agent | `a` |
 | Send a prompt to the agent at point | `p` |
 | Read the output of the pane at point | `r` |
 | Rename the item at point | `R` |

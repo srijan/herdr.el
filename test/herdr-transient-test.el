@@ -230,7 +230,7 @@ that were meant to be added and silently were not."
          ;; `herdr-adopt-shell' and `herdr-release-shell' are obsolete
          ;; (every pane is attachable now) and deliberately dropped from
          ;; the menu, though the registry keeps their entries.
-         (deliberately-absent '(herdr-pane-send-text herdr-agent-start
+         (deliberately-absent '(herdr-pane-send-text
                                 herdr-notification-show herdr-pane-swap
                                 herdr-adopt-shell herdr-release-shell))
          (missing nil))

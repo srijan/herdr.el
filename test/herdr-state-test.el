@@ -25,6 +25,17 @@
 
 ;;; Snapshot hydration
 
+(ert-deftest herdr-state-workspace-finds-one-by-id ()
+  "The workspace counterpart of `herdr-state-pane\\=', and the way a
+caller holding one string tells a workspace id from a directory: only
+one of the two is in the cache under that name."
+  (let ((state (herdr-state-from-snapshot
+                '((workspaces . (((workspace_id . "w1") (label . "ws"))
+                                 ((workspace_id . "w2") (label . "api"))))))))
+    (should (equal "api" (alist-get 'label (herdr-state-workspace state "w2"))))
+    (should-not (herdr-state-workspace state "/tmp/not-a-workspace/"))
+    (should-not (herdr-state-workspace state "w9"))))
+
 (ert-deftest herdr-state-from-snapshot-populates-everything ()
   (let ((state (herdr-state-test--seed)))
     (should (= 2 (length (herdr-state-panes state))))

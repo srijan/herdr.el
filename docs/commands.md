@@ -16,7 +16,6 @@ The transient menu shows the target before you act. The target is therefore neve
 | Command | Function |
 |---|---|
 | `herdr` | Start herdr and open the dashboard. |
-| `herdr-menu` | Start herdr and open the compact menu. |
 | `herdr-start` | Start the server, the terminals and the event stream. |
 | `herdr-stop` | Stop the event stream and remove the Emacs buffers. The server continues. |
 | `herdr-project` | Focus the workspace of the current project, or create it. |
@@ -29,7 +28,49 @@ The transient menu shows the target before you act. The target is therefore neve
 the server.
 
 `herdr-transient` does not run the start sequence. From a cold Emacs, the menu therefore opens
-with an empty cache. Use `herdr-menu` to make sure that the start sequence runs.
+with an empty cache. Run `herdr` first to make sure that the start sequence runs.
+
+## The prefix keymap
+
+`herdr-command-map` holds the verbs the dashboard holds, for use from anywhere else. Bind it
+yourself:
+
+```elisp
+(define-key global-map (kbd "C-c H") herdr-command-map)
+```
+
+| Key | Command |
+|---|---|
+| `s` | `herdr` |
+| `f` | `herdr-pane-focus` |
+| `n` | `herdr-new-terminal` |
+| `k` | `herdr-pane-close` |
+| `w` | `herdr-workspace-focus` |
+| `p` | `herdr-project` |
+| `%` | `herdr-transient-worktree` |
+| `g` | `herdr-state-resync` |
+| `?` | `herdr-transient` |
+
+The letters are the letters the dashboard uses. The target comes from a picker here, and from
+point in the dashboard.
+
+## Terminals
+
+| Command | Method | Function |
+|---|---|---|
+| `herdr-new-terminal` | `tab.create`, `workspace.create` | Open a terminal in a workspace or a directory. |
+
+`herdr-new-terminal` asks where first. It offers each open workspace by id, and each `project.el`
+project with no workspace open by path. A workspace gets a new tab. A directory is opened as a
+workspace, and the terminal is that workspace's root pane.
+
+A worktree appears in the list only when project.el knows it as a project. The command does not
+ask the server for worktrees, because `worktree.list` needs a directory inside a repository that
+is already open. To open a terminal in a worktree the server knows about, press `n` on its row in
+the dashboard.
+
+This is the one way to make a place to run something. To run an agent, run the agent in the
+terminal. See [Agents](#agents).
 
 ## Panes
 
@@ -98,16 +139,15 @@ server cannot find a repository that has no open workspace.
 
 | Command | Method | Function |
 |---|---|---|
-| `herdr-agent-start` | `agent.start` | Start an agent in an idle pane. |
 | `herdr-agent-prompt` | `agent.prompt` | Send a prompt to an agent. |
 | `herdr-agent-read` | `agent.read` | Put the output of an agent into a buffer. |
 | `herdr-agent-wait` | `agent.wait` | Report when an agent reaches a status. |
 | `herdr-agent-focus` | `agent.focus` | Focus an agent and select its buffer. |
 | `herdr-agent-explain` | `agent.explain` | Show how herdr detected the agent. |
 
-The picker of `herdr-agent-start` offers a last entry that reads `＋ new terminal`. That entry
-creates a fresh tab and starts the agent there. A session with no free pane is therefore never a
-dead end.
+There is no command for `agent.start`. To run an agent, open a terminal with
+`herdr-new-terminal` and run the agent in it. herdr detects the agent and names the pane a few
+seconds later. This is the mechanism the herdr TUI uses, and it is now the only one here.
 
 `herdr-agent-wait` does not block Emacs.
 

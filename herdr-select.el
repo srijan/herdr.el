@@ -41,11 +41,10 @@
 (declare-function herdr-pane-zoom "herdr-cmd" (&optional pane-id))
 (declare-function herdr-agent-prompt "herdr-cmd" (text &optional target))
 
-(defconst herdr-select-create-new-shell "＋ new terminal"
-  "Sentinel entry offered by `herdr-select-available-shell'.
-Choosing it means \"make a fresh shell for me\" rather than naming an
-existing pane; `herdr-agent-start' turns that into a fresh tab.  Its
-text is deliberately unlike a pane id so it cannot be confused for one.")
+;; project.el is optional here, the same way it is in `herdr.el' and
+;; `herdr-dispatch.el': `herdr-select-place' guards it with `fboundp'
+;; and offers open workspaces alone when it is absent.
+(declare-function project-known-project-roots "project" ())
 
 (defun herdr-select--status-glyph (status)
   "Return a short glyph for agent STATUS."
@@ -58,33 +57,28 @@ text is deliberately unlike a pane id so it cannot be confused for one.")
 
 (defun herdr-select--annotate-pane (pane-id)
   "Return the annotation string for PANE-ID."
-  (if (equal pane-id herdr-select-create-new-shell)
-      "  create a new tab and start the agent in it"
-    (let ((pane (herdr-state-pane (herdr-state-current) pane-id)))
-      (if (not pane)
-          ""
-        ;; `herdr-tree-pane-name' rather than the terminal title alone,
-        ;; so a pane somebody renamed — or a plugin pane seated with its
-        ;; manifest title — is findable here by the name it is known by
-        ;; as well as by what it is doing.  Shared with the dispatcher
-        ;; row so the two cannot disagree about what a pane is called.
-        (let ((agent (alist-get 'agent pane))
-              (status (alist-get 'agent_status pane))
-              (title (herdr-tree-pane-name pane))
-              (cwd (alist-get 'cwd pane)))
-          (concat "  "
-                  (if agent
-                      (format "%s %-8s" (herdr-select--status-glyph status) agent)
-                    (format "%-10s" "shell"))
-                  " " (or title "")
-                  (if cwd (format "  %s" (abbreviate-file-name cwd)) "")))))))
+  (let ((pane (herdr-state-pane (herdr-state-current) pane-id)))
+    (if (not pane)
+        ""
+      ;; `herdr-tree-pane-name' rather than the terminal title alone,
+      ;; so a pane somebody renamed — or a plugin pane seated with its
+      ;; manifest title — is findable here by the name it is known by
+      ;; as well as by what it is doing.  Shared with the dispatcher
+      ;; row so the two cannot disagree about what a pane is called.
+      (let ((agent (alist-get 'agent pane))
+            (status (alist-get 'agent_status pane))
+            (title (herdr-tree-pane-name pane))
+            (cwd (alist-get 'cwd pane)))
+        (concat "  "
+                (if agent
+                    (format "%s %-8s" (herdr-select--status-glyph status) agent)
+                  (format "%-10s" "shell"))
+                " " (or title "")
+                (if cwd (format "  %s" (abbreviate-file-name cwd)) ""))))))
 
 (defun herdr-select--annotate-workspace (workspace-id)
   "Return the annotation string for WORKSPACE-ID."
-  (let ((workspace (seq-find (lambda (w)
-                               (equal workspace-id
-                                      (alist-get 'workspace_id w)))
-                             (herdr-state-workspaces (herdr-state-current)))))
+  (let ((workspace (herdr-state-workspace (herdr-state-current) workspace-id)))
     (if workspace
         (format "  %-16s %s panes"
                 (or (alist-get 'label workspace) "")
@@ -131,35 +125,42 @@ than one extra round trip, and the cache can drift."
                               (herdr-state-agents (herdr-state-current)))
                       'herdr-pane #'herdr-select--annotate-pane))
 
-(defun herdr-select--available-shell-ids (state)
-  "Return the ids of panes in STATE that `agent.start' can take over.
-A pane is available only when it has no agent at all.  The server
-refuses every pane carrying a reported agent with \"not an available
-shell\", so a busy pane offered here would buy nothing but that
-rejection; the `herdr-select-create-new-shell' entry is the way to a
-pane with no agent on it."
-  (mapcar (lambda (pane) (alist-get 'pane_id pane))
-          (seq-remove (lambda (pane) (alist-get 'agent pane))
-                      (herdr-state-panes state))))
+(defun herdr-select--place-annotation (place)
+  "Return the annotation string for PLACE in `herdr-select-place\\='."
+  (if (herdr-state-workspace (herdr-state-current) place)
+      (herdr-select--annotate-workspace place)
+    "  not open yet"))
 
-(defun herdr-select-available-shell (&optional prompt)
-  "Read where `agent.start' should run: an idle pane, or a fresh shell.
-PROMPT overrides the default \"Start agent in shell pane: \" prompt text.
-Panes carrying any agent are omitted, so the choice cannot land on one
-the server would refuse.  A trailing `herdr-select-create-new-shell'
-entry is always offered, so the picker never dead-ends even when every
-pane is busy — where the old behaviour was to error and send you off to
-split by hand.
+(defun herdr-select-place (&optional prompt)
+  "Read where to open a terminal: an open workspace, or a directory.
 
-Returns a pane id, or the symbol `:create-new' when that entry is chosen;
-the caller creates a fresh tab for it."
+An open workspace is offered by id, and gets a tab.  A directory with no
+workspace open is offered by path, and is opened as a workspace first.
+
+Directories come from `project-known-project-roots\\=', guarded with
+`fboundp\\=' the way the rest of the package guards project.el, and the
+ones already open as a workspace are dropped: they are in the list once
+already, under the id the verbs act on.
+
+A worktree appears here only when project.el knows it as a project in
+its own right.  Worktrees are not asked for: `worktree.list\\=' needs a
+directory inside a repository that is already open, so a picker built
+from it would cost one round trip per open workspace to offer what the
+dashboard offers for free.  \\[herdr-dispatch-create-pane] on the
+worktree row is the way to a worktree the server knows about and
+project.el does not."
   (herdr-state-refresh)
-  (let* ((ids (herdr-select--available-shell-ids (herdr-state-current)))
-         (choice (herdr-select--read
-                  (or prompt "Start agent in shell pane: ")
-                  (append ids (list herdr-select-create-new-shell))
-                  'herdr-pane #'herdr-select--annotate-pane)))
-    (if (equal choice herdr-select-create-new-shell) :create-new choice)))
+  (let* ((state (herdr-state-current))
+         (workspaces (mapcar (lambda (workspace)
+                               (alist-get 'workspace_id workspace))
+                             (herdr-state-workspaces state)))
+         (roots (when (fboundp 'project-known-project-roots)
+                  (seq-remove (lambda (root)
+                                (herdr-state-workspace-for-directory state root))
+                              (project-known-project-roots)))))
+    (herdr-select--read (or prompt "New terminal in: ")
+                        (append workspaces roots)
+                        'herdr-place #'herdr-select--place-annotation)))
 
 (defun herdr-select-workspace (&optional prompt)
   "Read a workspace id, defaulting the prompt to PROMPT."
@@ -191,9 +192,9 @@ In order: a prefix argument always prompts; otherwise the pane of the
 current buffer if it is a herdr terminal; otherwise the pane herdr has
 focused; otherwise a prompt.
 
-The buffer comes first because it is the more local answer.  herdr\='s
+The buffer comes first because it is the more local answer.  herdr\\='s
 focus is server-side and only moves when something explicitly moves it,
-so acting from inside one agent\='s buffer used to target whichever pane
+so acting from inside one agent\\='s buffer used to target whichever pane
 you last went to — which could be a different agent entirely."
   (cond
    (current-prefix-arg (herdr-select-pane prompt))

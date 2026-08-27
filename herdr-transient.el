@@ -137,7 +137,6 @@ where magit puts the same two ideas."
     ("r" "read → buffer" herdr-agent-read)
     ("w" "wait until…"   herdr-agent-wait)]
    ["Manage"
-    ("s" "start"   herdr-agent-start)
     ("f" "focus"   herdr-agent-focus)
     ("e" "explain" herdr-agent-explain)]])
 

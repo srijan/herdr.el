@@ -139,6 +139,14 @@ first line of defence.")
   (seq-find (lambda (pane) (equal id (alist-get 'pane_id pane)))
             (herdr-state-panes state)))
 
+(defun herdr-state-workspace (state id)
+  "Return the workspace in STATE whose id is ID, or nil.
+The workspace counterpart of `herdr-state-pane\\=', and the way a caller
+holding one string tells a workspace id from a directory: only one of
+the two is in the cache under that name."
+  (seq-find (lambda (workspace) (equal id (alist-get 'workspace_id workspace)))
+            (herdr-state-workspaces state)))
+
 (defcustom herdr-shell-agent-name "shell"
   "Agent name `herdr-adopt-shell' used to report for plain shells.
 Obsolete: since herdr 0.8.2, `herdr terminal attach' takes any pane, so
@@ -1116,7 +1124,7 @@ anything changed."
 (defun herdr-state-refresh ()
   "Replace the cache from a fresh snapshot, leaving subscriptions alone.
 
-Lighter than `herdr-state-resync\=', which also rebuilds the per-pane
+Lighter than `herdr-state-resync\\=', which also rebuilds the per-pane
 event connection and so triggers another replay.  This is what the
 pickers use: the cache can drift, and a picker offering panes that no
 longer exist is worse than one extra round trip."

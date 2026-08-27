@@ -483,7 +483,11 @@ this a test of a redraw again rather than a test of the skip."
     (goto-char (point-min))
     (search-forward "w1:p2")
     (let ((ident (magit-section-ident (magit-current-section))))
-      (should (equal '((herdr-pane . "w1:p2") (herdr-panes . "w1")
+      ;; No `herdr-panes' level: the fixture workspace has no worktrees,
+      ;; so its panes hang off the workspace row itself.  Asserted rather
+      ;; than derived, because the ident is what point is restored
+      ;; through and a change to the tree's shape changes it.
+      (should (equal '((herdr-pane . "w1:p2")
                        (herdr-workspace . "w1") (herdr-root))
                      ident))
       (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
@@ -2573,88 +2577,29 @@ Real state rather than mocked accessors, for the reason given in
      (herdr-dispatch-test-with-buffer herdr-dispatch-test--start-nodes
        ,@body)))
 
-(ert-deftest herdr-dispatch-create-agent-starts-in-a-free-pane-at-point ()
-  "A pane with no agent is the one case that needs no new pane, so
-nothing may be split when point is on one.  The kind and name come from
-the transient's arguments when set, skipping both prompts."
-  (let ((calls nil)
-        (started nil)
-        (transient-current-command 'herdr-dispatch-create))
-    (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (method params) (push (cons method params) calls) nil))
-              ((symbol-function 'herdr-agent-start)
-               (lambda (name kind pane) (setq started (list name kind pane))))
-              ((symbol-function 'transient-args)
-               (lambda (_) '("--kind=claude" "--label=scout")))
-              ((symbol-function 'completing-read)
-               (lambda (&rest _) (error "should not prompt for kind")))
-              ((symbol-function 'read-string)
-               (lambda (&rest _) (error "should not prompt for name"))))
-      (herdr-dispatch-test-with-start-tree
-        (search-forward "w1:p3")
-        (herdr-dispatch-create-agent)
-        (should (equal '("scout" "claude" "w1:p3") started))
-        (should-not (assoc "pane.split" calls))))))
-
-(ert-deftest herdr-dispatch-create-agent-creates-a-tab-when-the-pane-at-point-is-taken ()
-  "`agent.start\\=' refuses any pane carrying a reported agent, which is
-the `agent_pane_busy\\=' the user hit by pressing `a\\=' on a `shell*\\=' pane.
-So a taken pane is not a target to retry but a reason to create a fresh
-tab in its workspace, and the agent starts in the tab's root pane.
-
-Both flavours of taken are checked: a real agent, and an adopted shell
-that runs nothing at all.  The second is the reported case and the one a
-\"has no agent running\" test would wave through."
-  (dolist (pane '("w1:p1" "w1:p2"))
-    (let ((workspace-id nil)
-          (started nil)
-          (transient-current-command 'herdr-dispatch-create))
-      (cl-letf (((symbol-function 'herdr-rpc-call)
-                 (lambda (_method params)
-                   (setq workspace-id (alist-get 'workspace_id params))
-                   '((root_pane . ((pane_id . "w1:p9"))))))
-                ((symbol-function 'herdr-agent-start)
-                 (lambda (name kind pane) (setq started (list name kind pane))))
-                ((symbol-function 'transient-args)
-                 (lambda (_) '("--kind=claude" "--label=scout"))))
-        (herdr-dispatch-test-with-start-tree
-          (search-forward pane)
-          (herdr-dispatch-create-agent)
-          (should (equal "w1" workspace-id))
-          (should (equal '("scout" "claude" "w1:p9") started)))))))
-
-(ert-deftest herdr-dispatch-create-agent-works-on-a-flattened-workspace-heading ()
-  "A single-tab workspace is rendered with its tab level dropped, so its
-heading encloses no `herdr-tab\\=' section: the workspace id is the
-heading's own value, not something resolved through a pane."
-  (let ((workspace-id nil)
-        (started nil)
-        (transient-current-command 'herdr-dispatch-create))
+(ert-deftest herdr-dispatch-create-pane-creates-a-tab-in-the-workspace-of-the-pane ()
+  "A pane row resolves through its own record to its workspace, so `n'
+on any pane opens a terminal beside it rather than wherever the server
+happens to be focused."
+  (let ((workspace-id nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
                (lambda (_method params)
                  (setq workspace-id (alist-get 'workspace_id params))
                  '((root_pane . ((pane_id . "w1:p9"))))))
-              ((symbol-function 'herdr-agent-start)
-               (lambda (name kind pane) (setq started (list name kind pane))))
-              ((symbol-function 'transient-args)
-               (lambda (_) '("--kind=claude" "--label=scout"))))
+              ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
       (herdr-dispatch-test-with-start-tree
-        (search-forward "herdr.el")
-        (herdr-dispatch-create-agent)
-        (should (equal "w1" workspace-id))
-        (should (equal '("scout" "claude" "w1:p9") started))))))
+        (search-forward "w1:p1")
+        (herdr-dispatch-create-pane)
+        (should (equal "w1" workspace-id))))))
 
-(ert-deftest herdr-dispatch-create-agent-creates-a-tab-for-the-agent ()
-  "The wire is the assertion, because the failure this guards against —
-adopting the pane before starting the agent in it — is a call that
-should not be made rather than one whose return value would show it.
-The whole conversation is the tab creation, the start, and the focus
-that surfaces it, with no `pane.report_agent\\=' in between."
+(ert-deftest herdr-dispatch-create-pane-follows-the-pane-it-creates ()
+  "The whole conversation, on the wire.  `tab.create' carries `focus',
+and the created pane is followed — a terminal that opens somewhere you
+cannot see reads as a no-op."
   (let ((methods nil)
-        (transient-current-command 'herdr-dispatch-create))
-    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) t))
-              ((symbol-function 'transient-args)
-               (lambda (_) '("--kind=claude" "--label=scout"))))
+        (followed nil))
+    (cl-letf (((symbol-function 'herdr-cmd--follow-new-pane)
+               (lambda (pane) (setq followed pane))))
       (herdr-test-with-server
           (lambda (req)
             (let ((method (alist-get 'method req)))
@@ -2667,31 +2612,111 @@ that surfaces it, with no `pane.report_agent\\=' in between."
                     nil)))
         (herdr-dispatch-test-with-start-tree
           (search-forward "w1:p2")
-          (herdr-dispatch-create-agent))))
-    (should (equal '("tab.create" "agent.start" "pane.focus")
-                   (reverse methods)))))
+          (herdr-dispatch-create-pane))))
+    (should (equal '("tab.create") (reverse methods)))
+    (should (equal "w1:p9" followed))))
 
-(ert-deftest herdr-dispatch-create-agent-defaults-the-name-to-the-kind ()
-  "`agent.start\\=' requires a name, so the prompt cannot be skipped — but
-RET must be enough to answer it.  Both halves are checked: the prompt
-offers the kind as its default, and a name that comes back empty is
-still the kind rather than an empty string on the wire."
-  (dolist (answer '(:take-the-default ""))
-    (let ((started nil)
-          (prompt nil))
-      (cl-letf (((symbol-function 'herdr-agent-start)
-                 (lambda (name kind pane) (setq started (list name kind pane))))
-                ((symbol-function 'transient-args) (lambda (_) nil))
-                ((symbol-function 'completing-read) (lambda (&rest _) "codex"))
-                ((symbol-function 'read-string)
-                 (lambda (given &optional _initial _history default &rest _)
-                   (setq prompt given)
-                   (if (eq answer :take-the-default) default answer))))
-        (herdr-dispatch-test-with-start-tree
-          (search-forward "w1:p3")
-          (herdr-dispatch-create-agent)
-          (should (equal '("codex" "codex" "w1:p3") started))
-          (should (string-match-p "codex" prompt)))))))
+;;; `n' on a row that names a directory rather than a workspace
+
+(ert-deftest herdr-dispatch-create-pane-opens-a-known-project-first ()
+  "The defect this closes: `herdr-dispatch--workspace-target' answers nil
+on a row that names a directory, and a nil `workspace_id' makes
+`tab.create' fall back to whatever workspace the SERVER has focused.  So
+`n' on an inactive project quietly opened a terminal in some other
+repository, with nothing on screen saying where it went.
+
+Nothing is open at the directory here, so the workspace is created and
+its root pane — not a second tab in it — is what gets followed."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
+    (let ((herdr-state--current (herdr-state-empty))
+          (calls nil)
+          (followed nil))
+      (search-forward "other-project (0)")
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (method params)
+                   (push (cons method params) calls)
+                   '((root_pane . ((pane_id . "w7:p1"))))))
+                ((symbol-function 'herdr-cmd--follow-new-pane)
+                 (lambda (pane) (setq followed pane))))
+        (herdr-dispatch-create-pane))
+      (should (equal '(("workspace.create" . ((cwd . "/tmp/other-project/")
+                                              (label . "other-project")
+                                              (focus . t))))
+                     (reverse calls)))
+      (should (equal "w7:p1" followed)))))
+
+(ert-deftest herdr-dispatch-create-pane-reuses-a-workspace-already-open-there ()
+  "The row is built only for a root with no workspace open, but the
+render can be one poll tick behind by the time `n' lands.  Creating a
+second workspace for a directory that already has one is the bug
+`herdr-state-workspace-for-directory' exists to prevent, so the answer
+is a tab in the workspace that is already there."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w9"))))
+              (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
+                         (cwd . "/tmp/other-project")))))))
+          (calls nil))
+      (search-forward "other-project (0)")
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (method params)
+                   (push (cons method params) calls)
+                   '((root_pane . ((pane_id . "w9:p2"))))))
+                ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
+        (herdr-dispatch-create-pane))
+      (should (equal '(("tab.create" . ((workspace_id . "w9")
+                                        (cwd . nil)
+                                        (focus . t))))
+                     (reverse calls))))))
+
+(ert-deftest herdr-dispatch-create-pane-prefers-a-worktree-row-to-its-repository ()
+  "A worktree row inside an open repository has that repository as its
+enclosing workspace.  Walking up would open the terminal in the
+repository the user was pointing past, so the directory row wins."
+  (herdr-dispatch-test-with-buffer
+      '((herdr-workspace "w1" "herdr.el (2)"
+         ((herdr-panes "w1" "main (1)" ((herdr-pane "w1:p1" "claude" nil)))
+          (herdr-worktree "/tmp/herdr.el-fix/" "fix" nil))))
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1"))))
+              (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                         (cwd . "/tmp/herdr.el")))))))
+          (calls nil))
+      (search-forward "fix")
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (method params)
+                   (push (cons method params) calls)
+                   '((root_pane . ((pane_id . "w8:p1"))))))
+                ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
+        (herdr-dispatch-create-pane))
+      (should (equal "workspace.create" (car (car (reverse calls)))))
+      (should (equal "/tmp/herdr.el-fix/"
+                     (alist-get 'cwd (cdr (car (reverse calls)))))))))
+
+(ert-deftest herdr-dispatch-create-pane-refuses-a-heading-that-names-no-place ()
+  "The last hole of the same shape.  `herdr-dispatch--workspace-target'
+answers nil on a row that resolves to no workspace, and a nil
+`workspace_id' makes `tab.create' fall back to whatever workspace the
+server has focused.  Point on the `Inactive (N)' heading, or on the
+dashboard's own header line, therefore opened a terminal in some other
+repository with nothing on screen saying where it went — the same defect
+the directory rows had, in the two places that name no directory either.
+
+Every other verb already refuses both headings.  This one has to as
+well, or the refusal is a property of which verb you happened to press."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
+    (dolist (target '("Inactive (2)" :header))
+      (if (eq target :header)
+          (goto-char (point-min))
+        (goto-char (point-min))
+        (search-forward target))
+      (should (equal nil
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-rpc-call herdr-cmd--follow-new-pane)
+                       (should-error (herdr-dispatch-create-pane)
+                                     :type 'user-error)))))))
 
 (ert-deftest herdr-dispatch-create-pane-creates-a-tab-from-a-flattened-workspace-heading ()
   "`herdr-tree\\=' renders a single-tab workspace flattened, dropping the
@@ -2714,15 +2739,22 @@ heading is that id directly."
               (lookup-key herdr-dispatch-mode-map "w")))
   (should (eq #'herdr-dispatch-create-pane
               (lookup-key herdr-dispatch-mode-map "n")))
-  (should (eq #'herdr-dispatch-create-agent
-              (lookup-key herdr-dispatch-mode-map "a")))
   (should (eq #'herdr-dispatch-create-worktree
               (lookup-key herdr-dispatch-mode-map "%")))
   (dolist (verb '(herdr-dispatch-create herdr-dispatch-create-workspace
                                         herdr-dispatch-create-pane
-                                        herdr-dispatch-create-agent
                                         herdr-dispatch-create-worktree))
     (should (commandp verb))))
+
+(ert-deftest herdr-dispatch-offers-no-second-way-to-create-a-place-to-run-in ()
+  "`a' started an agent through `agent.start', asking for a kind and a
+name that herdr\='s own TUI never asks for: there a new tab opens a
+shell, and the agent is whatever you run in it.  Two doors to one place
+is what this buffer no longer has, so both the key and the command are
+gone rather than merely unbound."
+  (should-not (lookup-key herdr-dispatch-mode-map "a"))
+  (should-not (fboundp 'herdr-dispatch-create-agent))
+  (should-not (fboundp 'herdr-agent-start)))
 
 (provide 'herdr-dispatch-test)
 ;;; herdr-dispatch-test.el ends here

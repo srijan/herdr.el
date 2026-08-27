@@ -215,78 +215,66 @@ follow Emacs."
           (should (equal "w1:pA" (herdr-select-target-pane))))
       (kill-buffer buffer))))
 
-;;; Available-shell selection for agent.start
+;;; Choosing where a new terminal goes
 
-(ert-deftest herdr-select-available-shell-lists-only-unoccupied-panes ()
-  "Panes running a real agent are occupied and must not be offered."
-  (herdr-select-test-with-state
-      '(((pane_id . "w1:p1") (agent . "claude"))
-        ((pane_id . "w1:p2") (agent . nil))
-        ((pane_id . "w1:p3")))
-    (should (equal '("w1:p2" "w1:p3")
-                   (herdr-select--available-shell-ids (herdr-state-current))))))
-
-;;; A "create new" entry lets agent.start make its own shell
-
-(ert-deftest herdr-select-available-shell-offers-create-new-last ()
-  "The picker always ends with a create-new entry, so a fresh shell can
-be made without leaving the command."
+(ert-deftest herdr-select-place-offers-open-workspaces-and-unopened-roots ()
+  "The two kinds of candidate the dashboard already draws: an open
+workspace by id, and a project with no workspace open by path."
   (let (offered)
-    (herdr-select-test-with-state
-        '(((pane_id . "w1:p2") (agent . nil))
-          ((pane_id . "w1:p3")))
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1"))))
+              (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                         (cwd . "/tmp/open"))))))))
       (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'project-known-project-roots)
+                 (lambda () '("/tmp/open/" "/tmp/elsewhere/")))
                 ((symbol-function 'herdr-select--read)
                  (lambda (_prompt candidates &rest _)
                    (setq offered candidates) (car candidates))))
-        (herdr-select-available-shell)
-        (should (member herdr-select-create-new-shell offered))
-        (should (equal herdr-select-create-new-shell (car (last offered))))))))
+        (herdr-select-place)
+        ;; `/tmp/open/' is dropped: it is in the list once already, under
+        ;; the id the verbs act on.
+        (should (equal '("w1" "/tmp/elsewhere/") offered))))))
 
-(ert-deftest herdr-select-available-shell-returns-create-new-when-chosen ()
-  "Choosing create-new yields a marker the caller acts on, not a pane id."
-  (herdr-select-test-with-state
-      '(((pane_id . "w1:p2") (agent . nil)))
-    (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
-              ((symbol-function 'herdr-select--read)
-               ;; A copy, because `completing-read' returns one: matching
-               ;; the marker by identity works only against the constant.
-               (lambda (&rest _) (copy-sequence herdr-select-create-new-shell))))
-      (should (eq :create-new (herdr-select-available-shell))))))
+(ert-deftest herdr-select-place-works-without-project-el ()
+  "project.el is guarded with `fboundp' here the way it is everywhere
+else in this package, so its absence costs the directory half of the
+list rather than the command.  The function is unbound and restored
+rather than stubbed: `fboundp' is what the guard asks, and a stub that
+answers calls cannot make it answer nil."
+  (let ((offered nil)
+        (saved (when (fboundp 'project-known-project-roots)
+                 (symbol-function 'project-known-project-roots))))
+    (unwind-protect
+        (let ((herdr-state--current
+               (herdr-state-from-snapshot
+                '((workspaces . (((workspace_id . "w1"))))))))
+          (fmakunbound 'project-known-project-roots)
+          (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                    ((symbol-function 'herdr-select--read)
+                     (lambda (_prompt candidates &rest _)
+                       (setq offered candidates) (car candidates))))
+            (herdr-select-place)
+            (should (equal '("w1") offered))))
+      (when saved (fset 'project-known-project-roots saved)))))
 
-(ert-deftest herdr-select-available-shell-returns-a-chosen-pane-id ()
-  "Choosing a real pane returns its id, exactly as before."
-  (herdr-select-test-with-state
-      '(((pane_id . "w1:p2") (agent . nil)))
-    (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
-              ((symbol-function 'herdr-select--read)
-               (lambda (&rest _) "w1:p2")))
-      (should (equal "w1:p2" (herdr-select-available-shell))))))
+(ert-deftest herdr-select-place-annotates-an-unopened-root-as-not-open ()
+  "A directory has no workspace annotation to give, and saying so is
+what tells the two kinds of candidate apart in the picker."
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot
+          '((workspaces . (((workspace_id . "w1") (label . "ws")
+                            (pane_count . 2))))))))
+    (should (string-match-p "ws" (herdr-select--place-annotation "w1")))
+    (should (string-match-p "not open"
+                            (herdr-select--place-annotation "/tmp/elsewhere/")))))
 
-(ert-deftest herdr-select-available-shell-offers-create-new-when-none-free ()
-  "With every pane busy the create-new entry is the only choice, so the
-command no longer dead-ends with an error."
-  (let (offered)
-    (herdr-select-test-with-state
-        '(((pane_id . "w1:p1") (agent . "claude"))
-          ((pane_id . "w1:p2") (agent . "codex")))
-      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
-                ((symbol-function 'herdr-select--read)
-                 (lambda (_prompt candidates &rest _)
-                   (setq offered candidates) (car candidates))))
-        (herdr-select-available-shell)
-        (should (equal (list herdr-select-create-new-shell) offered))))))
-
-(ert-deftest herdr-select-annotates-the-create-new-entry ()
-  "The create-new entry explains what picking it will do.
-
-Annotated through a copy of the marker, not the marker itself:
-`completing-read' hands back a fresh string, so an `eq' comparison in
-the annotator would pass against the constant here and answer nothing at
-all in use."
-  (should (string-match-p
-           "tab" (herdr-select--annotate-pane
-                  (copy-sequence herdr-select-create-new-shell)))))
+(ert-deftest herdr-select-offers-no-agent-start-picker ()
+  "`agent.start' is gone, and with it the picker that existed only to
+keep the choice away from a pane the server would refuse."
+  (should-not (fboundp 'herdr-select-available-shell))
+  (should-not (boundp 'herdr-select-create-new-shell)))
 
 ;;; Every glyph, and the two annotators nothing exercised
 

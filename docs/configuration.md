@@ -63,7 +63,6 @@ traffic. The debounce stops a busy agent from causing many redraws each second.
 |---|---|---|
 | `herdr-adopt-created-shells` | `t` | Obsolete no-op, kept so an old config does not error. |
 | `herdr-shell-agent-name` | `"shell"` | The agent name `herdr-adopt-shell` reports. |
-| `herdr-agent-kinds` | 22 names | The agent kinds that the pickers offer. |
 | `herdr-notify-statuses` | `nil` | The agent statuses that raise a desktop notification. |
 
 Since herdr 0.8.2, every pane is attachable, so `herdr-adopt-created-shells` does nothing;
@@ -80,10 +79,6 @@ To get desktop notifications, set the statuses that you want:
 ```
 
 herdr.el uses the `alert` package when the package is present.
-
-The default value of `herdr-agent-kinds` holds these names: `pi`, `claude`, `codex`, `gemini`,
-`cursor`, `devin`, `agy`, `cline`, `omp`, `mastracode`, `opencode`, `copilot`, `kimi`, `kiro`,
-`droid`, `amp`, `grok`, `hermes`, `kilo`, `qodercli`, `qwen` and `maki`.
 
 ## The event stream
 
