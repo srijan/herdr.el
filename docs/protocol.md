@@ -134,18 +134,20 @@ to the other:
 - Start Claude in a pane already reported as `shell`, and herdr relabels it `claude` about 3
   seconds later.
 - Report `shell` on a pane where Claude is *already* running, and the label stays `shell`
-  indefinitely — `agent.explain` answers `claude`, with a matched rule and a live session id,
+  indefinitely. `agent.explain` answers `claude`, with a matched rule and a live session id,
   while the pane record goes on carrying the report. Two panes, hours apart.
 
-The reading that fits both is that a relabel rides on the agent starting rather than on the
-state being wrong, so a report applied after the fact is never revisited. That is a hypothesis;
-what is certain is that the second case does not correct itself and cannot be made to. Releasing
-the report leaves the pane with no agent at all — watched for 25 seconds — and `agent.explain`
-then refuses it with `agent_not_found`, since that method runs only against panes herdr already
-counts as agents. Killing the pane is the cure.
+One reading fits both. A relabel rides on the agent starting, not on the state being wrong, so a
+report applied after the fact is never revisited. That is a hypothesis. What is certain is that
+the second case does not correct itself and cannot be made to.
 
-This matters less than it reads. Nothing in herdr.el reports an agent automatically any more, so
-the first case is the one that happens: open a pane, start an agent in it, get the right label. The second is a stale report, and
+Releasing the report does not help. The pane then has no agent at all, watched for 25 seconds,
+and `agent.explain` refuses it with `agent_not_found`. That method runs only against panes herdr
+already counts as agents. Killing the pane is the cure.
+
+This matters less than it reads. Nothing in herdr.el reports an agent on its own, so the first
+case is the one that happens. Open a pane, start an agent in it, get the right label. The second
+case is a stale report, and
 [Troubleshooting](troubleshooting.md#a-pane-is-labelled-shell-but-is-running-an-agent) says what
 to do about it.
 
@@ -154,7 +156,7 @@ Nothing in herdr.el reads it.
 
 ~~**`pane.report_agent` makes a plain shell pane attachable.**~~ Every pane is attachable since
 herdr 0.8.2, independent of `pane.report_agent`.
-Reporting only gives a pane an entry in herdr's own agent list — the sidebar, and the events
+Reporting only gives a pane an entry in herdr's own agent list: the sidebar, and the events
 `pane.agent_status_changed` subscribes to.
 
 **Focus is shared.** The session has one focused pane, not one for each client. When you move

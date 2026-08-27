@@ -90,11 +90,12 @@ Inactive (14)
     main                              ~/src/other-api
 ```
 
-Read the counts this way: a repository row counts its checkouts, its own plus one per worktree.
-Where a `main` group is drawn, it counts the panes it holds. Here `herdr.el` has two checkouts —
-itself and the worktree `feat-dispatch`, which is open as a workspace and so is drawn in full
-rather than as a one-line pointer. `example-api` has one checkout and no worktrees, so it has no
-`main` group and its pane sits directly under it.
+Read the counts this way. A repository row counts its checkouts: its own, plus one for each
+worktree. Where a `main` group is drawn, it counts the panes it holds.
+
+Here `herdr.el` has two checkouts, itself and the worktree `feat-dispatch`. That worktree is open
+as a workspace, so it is drawn in full rather than as a one-line pointer. `example-api` has one
+checkout and no worktrees, so it has no `main` group and its pane sits directly under it.
 
 A closed section shows the worst status inside it. A closed section therefore never hides a
 blocked agent.
