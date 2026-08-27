@@ -112,33 +112,45 @@ workspace, not make one for the subdirectory it happened to be in."
     (should (equal '("workspace.focus") wire))
     (should (equal "w1" (alist-get 'workspace_id params)))))
 
-(ert-deftest herdr-menu-ends-on-the-transient-and-herdr-on-the-dashboard ()
-  "Which surface each command opens is the whole difference between them.
-
-This used to compare their function cells with `eq'.  Two separately
-defined `defun's are never `eq' whatever they contain, so that assertion
-could not fail — confirmed by making the two bodies byte-for-byte
-identical, which the suite passed."
-  (should (commandp 'herdr-menu))
+(ert-deftest herdr-opens-the-dashboard-after-running-the-start-sequence ()
+  "`herdr' is the one entry point that guarantees the startup has run,
+which is why `s' in `herdr-command-map' is bound to it rather than to
+`herdr-agents'."
   (should (commandp 'herdr))
-  (let (opened)
-    (cl-letf (((symbol-function 'herdr-start) #'ignore)
+  (let (opened started)
+    (cl-letf (((symbol-function 'herdr-start) (lambda () (setq started t)))
               ((symbol-function 'herdr-term-display) #'ignore)
-              ;; The two that replaced it: `herdr-cmd-open-workspace-for'
-              ;; goes to the new pane rather than showing a primary
-              ;; buffer, and unstubbed they would add `pane.current' to
-              ;; the wire these tests assert on.
-              ((symbol-function 'herdr-term-select-focused) #'ignore)
-              ((symbol-function 'herdr-term-select-pane) #'ignore)
               ((symbol-function 'herdr-agents)
-               (lambda () (push 'dashboard opened)))
-              ((symbol-function 'herdr-transient)
-               (lambda () (interactive) (push 'transient opened))))
+               (lambda () (push 'dashboard opened))))
       (herdr)
-      (should (equal '(dashboard) opened))
-      (setq opened nil)
-      (herdr-menu)
-      (should (equal '(transient) opened)))))
+      (should started)
+      (should (equal '(dashboard) opened)))))
+
+;;; The prefix keymap
+
+(ert-deftest herdr-command-map-binds-the-verbs-the-dashboard-uses ()
+  "The letters are the dashboard's letters, so one set is learnt rather
+than two.  The difference is only where the target comes from: a picker
+here, point there."
+  (should (keymapp herdr-command-map))
+  (dolist (entry '(("s" . herdr)
+                   ("f" . herdr-pane-focus)
+                   ("n" . herdr-new-terminal)
+                   ("k" . herdr-pane-close)
+                   ("w" . herdr-workspace-focus)
+                   ("p" . herdr-project)
+                   ("%" . herdr-transient-worktree)
+                   ("g" . herdr-state-resync)
+                   ("?" . herdr-transient)))
+    (should (eq (cdr entry) (lookup-key herdr-command-map (car entry))))
+    (should (commandp (cdr entry)))))
+
+(ert-deftest herdr-command-map-replaces-herdr-menu ()
+  "`herdr-menu' was `herdr-start' plus `herdr-transient', and its whole
+value was guaranteeing the startup before the menu.  `s' guarantees the
+startup and `?' reaches the menu, so the command is gone rather than
+kept as an alias for a thing the prefix already does."
+  (should-not (fboundp 'herdr-menu)))
 
 ;;; Startup, shutdown and the protocol check
 

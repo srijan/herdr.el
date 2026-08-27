@@ -29,22 +29,35 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
                  (agent . "shell") (agent_status . "idle")
                  (cwd . "/tmp/herdr.el"))))))))
 
+(defun herdr-tree-test--nodes-of-type (type nodes)
+  "Return the nodes among NODES whose node type is TYPE."
+  (seq-filter (lambda (node) (eq type (nth 0 node))) nodes))
+
 (defun herdr-tree-test--worktree-rows (children)
   "Return the worktree nodes among CHILDREN, a workspace node's children.
-A workspace holds its own panes in one `main' group and hangs its
-worktrees off itself beside that group, so the worktrees are everything
-after it."
-  (cdr children))
+Selected by type rather than by position.  A workspace draws its `main'
+group only when it has worktrees, so \"everything after the first
+child\" stopped naming the worktrees the moment the group became
+conditional — it named the second pane onwards instead, and every
+should-not on this helper passed for the wrong reason."
+  (seq-filter (lambda (node)
+                (memq (nth 0 node) '(herdr-worktree herdr-workspace)))
+              children))
 
 (defun herdr-tree-test--main-group (children)
-  "Return the `main' group among CHILDREN, which every workspace has."
-  (car children))
+  "Return the `main' group among CHILDREN, or nil when there is none.
+A workspace draws one only when it has worktrees to tell its panes
+apart from; see `herdr-tree--main-node'."
+  (car (herdr-tree-test--nodes-of-type 'herdr-panes children)))
 
 (defun herdr-tree-test--pane-nodes (workspace)
   "Return the pane nodes of WORKSPACE, a node from `herdr-tree-build'.
-Panes live one level in from a workspace's children, inside its `main'
-group."
-  (nth 3 (car (nth 3 workspace))))
+Panes are the workspace's own children, unless it has worktrees — then
+they sit one level in, inside its `main' group."
+  (let ((children (nth 3 workspace)))
+    (if-let* ((group (herdr-tree-test--main-group children)))
+        (nth 3 group)
+      (herdr-tree-test--nodes-of-type 'herdr-pane children))))
 
 (defun herdr-tree-test--types (nodes)
   "Return the nested (TYPE . CHILD-TYPES) shape of NODES."
@@ -107,8 +120,7 @@ without costing the row what the agent is working on."
 The fixture has two tabs holding three panes between them; the built
 tree must show all three as the workspace's own direct children, with
 no `herdr-tab' node anywhere in the shape."
-  (should (equal '((herdr-workspace
-                    (herdr-panes (herdr-pane) (herdr-pane) (herdr-pane))))
+  (should (equal '((herdr-workspace (herdr-pane) (herdr-pane) (herdr-pane)))
                  (herdr-tree-test--types
                   (herdr-tree-build (herdr-tree-test--state) nil)))))
 
@@ -121,7 +133,7 @@ no `herdr-tab' node anywhere in the shape."
                             (label . "1") (pane_count . 1))))
                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
                              (tab_id . "w1:t1") (agent . "claude"))))))))
-    (should (equal '((herdr-workspace (herdr-panes (herdr-pane))))
+    (should (equal '((herdr-workspace (herdr-pane)))
                    (herdr-tree-test--types (herdr-tree-build state nil))))))
 
 (ert-deftest herdr-tree-workspace-line-carries-directory-and-rollup ()
@@ -470,7 +482,7 @@ no tabs."
                              (tab_id . "w1:t1") (agent . "claude")
                              (agent_status . "blocked"))))))))
     (let ((tree (herdr-tree-build state nil)))
-      (should (equal '((herdr-workspace (herdr-panes (herdr-pane))))
+      (should (equal '((herdr-workspace (herdr-pane)))
                      (herdr-tree-test--types tree)))
       ;; The row must name the pane, or it is reachable only in shape.
       (should (equal "w1:p1"
@@ -492,8 +504,7 @@ hold renders exactly like any other pane of its workspace."
                             ((pane_id . "w1:p9") (workspace_id . "w1")
                              (tab_id . "w1:t9") (agent . "gemini"))))))
          (tree (herdr-tree-build state nil)))
-    (should (equal '((herdr-workspace
-                     (herdr-panes (herdr-pane) (herdr-pane) (herdr-pane))))
+    (should (equal '((herdr-workspace (herdr-pane) (herdr-pane) (herdr-pane)))
                    (herdr-tree-test--types tree)))
     (should (equal "w1:p9"
                    (nth 1 (nth 2 (herdr-tree-test--pane-nodes (car tree))))))))
@@ -810,7 +821,7 @@ section drew a dimmed pointer at it -- the same worktree twice.  The
 workspace now takes the pointer's place, panes and all."
   (should (equal '((herdr-workspace
                     (herdr-panes (herdr-pane))
-                    (herdr-workspace (herdr-panes (herdr-pane)))
+                    (herdr-workspace (herdr-pane))
                     (herdr-worktree)))
                  (herdr-tree-test--types
                   (herdr-tree-build (herdr-tree-test--worktree-state "w1" "w2")
@@ -827,7 +838,7 @@ deeper would file every worktree of the repository under every other one."
     (should (= 2 (length rows)))
     (should (equal 'herdr-workspace (nth 0 nested)))
     (should (equal "w2" (nth 1 nested)))
-    (should (equal '(herdr-panes)
+    (should (equal '(herdr-pane)
                    (mapcar (lambda (n) (nth 0 n)) (nth 3 nested))))))
 
 (ert-deftest herdr-tree-build-leaves-a-worktree-workspace-with-no-repository-open ()

@@ -571,13 +571,24 @@ two lives in the cache that builds WORKTREES rather than here."
 (defun herdr-tree--main-node (workspace-id panes)
   "Return the `main (N)\\=' node holding PANES, the panes of WORKSPACE-ID.
 
-Drawn for every workspace, worktrees or not.  Appearing only where it
-was strictly needed to tell panes from worktrees would have made the
-group a signal that the workspace has worktrees, moving every pane in
-the session one level in or out as worktrees came and went — and it
-would have left the workspaces without them with no `main\\=' row to put
-point on, which is where \\[herdr-dispatch-create-agent] wants to be
-aimed.
+Drawn only for a workspace that has worktrees, where it is the row that
+tells this repository\\='s own panes apart from the checkouts beside
+them.  A workspace with no worktrees has nothing to be told apart from,
+and its panes hang off the workspace row directly.
+
+The group used to be drawn for every workspace, on two arguments.  One
+was that a conditional group makes every pane in the session move a
+level in or out as worktrees come and go — true, and the price paid
+here.  The other was that a workspace without worktrees would have no
+`main\\=' row to aim the create-agent verb at, and that argument went
+with the verb: \\[herdr-dispatch-create-pane] resolves the workspace row
+itself, so nothing needs a group row to stand on.
+
+What is bought is a plugin workspace reading as what it is.  herdr seats
+a plugin pane in a workspace of its own — the Lantern chat arrives as
+one pane labelled `Lantern\\=' — and a `main (1)\\=' group over a single
+pane that is not a checkout of anything described it wrongly and cost a
+line doing it.  The same is true of every ordinary one-agent workspace.
 
 `main\\=' is git's word for the checkout the worktrees hang off, which is
 exactly what these panes are running in.  It names the worktree, not a
@@ -595,8 +606,8 @@ the worktree branch column width, threaded the same way to
 `herdr-tree--worktree-nodes\\='.  NESTED is passed straight through to it;
 see there for what it does.
 
-A workspace holds its own panes in a `main (N)\\=' group and its
-worktrees beside it, one node each:
+A workspace with worktrees holds its own panes in a `main (N)\\=' group
+and its worktrees beside it, one node each:
 
     herdr.el (3)
       main (2)
@@ -604,6 +615,13 @@ worktrees beside it, one node each:
         shell
       project-el (1)
         claude
+
+A workspace with no worktrees has no group: the panes hang off the
+workspace row itself, which is the ordinary case and the shape a plugin
+workspace needs.  See `herdr-tree--main-node\\='.
+
+    herdr.el (1)
+      claude
 
 The count in parentheses is the repository's checkouts — its own, plus
 one per worktree — not its panes.  Those moved down to `main (N)\\=' when
@@ -639,7 +657,11 @@ a known-project row already shows for free, since
                      (or (herdr-state-workspace-directory state id) ""))
                     'font-lock-comment-face)
                    (herdr-tree--rollup (alist-get 'agent_status workspace))))
-          (cons (herdr-tree--main-node id panes) worktree-nodes))))
+          ;; The `main (N)' group only where there are worktrees to tell
+          ;; the panes apart from; see `herdr-tree--main-node'.
+          (if worktree-nodes
+              (cons (herdr-tree--main-node id panes) worktree-nodes)
+            panes))))
 
 (defun herdr-tree--main-checkout-node (root worktrees width)
   "Return the `main\\=' row for ROOT, or nil when ROOT is not a checkout.
@@ -679,7 +701,7 @@ The repository\\='s own checkout leads the list, as a `main\\=' row; see
 `herdr-tree--main-checkout-node\\=' for why it is drawn here and not
 under an open workspace.  A repository with no worktrees at all is
 therefore one `main\\=' row rather than nothing: the row is where
-\\[herdr-dispatch-create-agent] is aimed, and a repository does not stop
+\\[herdr-dispatch-create-pane] is aimed, and a repository does not stop
 having a checkout for having no worktrees.
 
 Nil still means the reply has not landed.  That is absence of knowledge,

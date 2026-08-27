@@ -57,7 +57,6 @@
     (herdr-agent-prompt          "agent.prompt"         "target" "text")
     (herdr-agent-read            "agent.read"           "target" "source" "lines" "format" "strip_ansi")
     (herdr-agent-wait            "agent.wait"           "target" "until" "timeout_ms")
-    (herdr-agent-start           "agent.start"          "pane_id" "name" "kind")
     (herdr-agent-explain         "agent.explain"        "target")
     (herdr-agent-focus           "agent.focus"          "target")
     (herdr-notification-show     "notification.show"    "title" "body" "sound")
@@ -440,17 +439,6 @@ name to a worktree with its own herdr workspace."
 
 ;;; Agents
 
-(defcustom herdr-agent-kinds
-  '("pi" "claude" "codex" "gemini" "cursor" "devin" "agy" "cline"
-    "omp" "mastracode" "opencode" "copilot" "kimi" "kiro" "droid"
-    "amp" "grok" "hermes" "kilo" "qodercli" "qwen" "maki")
-  "Known agent kinds offered when starting an agent.
-Completion candidates only, not a closed set: herdr types
-`agent.start''s `kind' parameter as a free string rather than an enum,
-so a kind not listed here is still accepted.  Add your own to taste."
-  :type '(repeat string)
-  :group 'herdr)
-
 (defun herdr-agent-prompt (text &optional target)
   "Send TEXT as a prompt to the agent in TARGET."
   (interactive (list (read-string "Prompt: ")))
@@ -488,6 +476,8 @@ about.  TIMEOUT is in seconds."
          (message "herdr: agent %s is now %s" agent
                   (or (alist-get 'agent_status result) "done")))))
     (message "herdr: watching agent %s" agent)))
+
+;;; Opening a place to run something
 
 (defun herdr-cmd-open-workspace-for (root label)
   "Focus the workspace at ROOT, creating it as LABEL if absent, and go there.
@@ -539,30 +529,51 @@ as N full-width tabs beats N slivers of one tab."
                      (cwd . ,cwd)
                      (focus . t)))))
 
-(defun herdr-agent-start (name kind &optional pane-id)
-  "Start agent NAME of KIND in PANE-ID.
-Interactively, PANE-ID is chosen from the panes not already running an
-agent: `agent.start' can only take over a shell sitting idle, so
-offering a busy pane would just earn a server rejection.  The picker also
-offers a create-new entry that creates a fresh tab to start in, so a
-full session is no longer a dead end."
-  (interactive
-   (list (read-string "Agent name: ")
-         (completing-read "Agent kind: " herdr-agent-kinds nil nil)))
-  (let ((pane (or pane-id (herdr-select-available-shell))))
-    (when (eq pane :create-new)
-      (setq pane (herdr-cmd--new-tab-pane)))
-    (herdr-rpc-call "agent.start"
-                    `((pane_id . ,pane) (name . ,name) (kind . ,kind)))
-    ;; Surface the agent that was just started.  Focusing is server-side,
-    ;; so under `session' the TUI repaints to it; under `agent-windows'
-    ;; the pane only just gained an agent, so its buffer is built off the
-    ;; event stream and may not exist yet — select it now if it does, and
-    ;; otherwise wait for reconciliation rather than looking like a no-op.
-    (herdr-rpc-call "pane.focus" `((pane_id . ,pane)))
-    (unless (herdr-term-select-pane pane)
-      (herdr-cmd--select-pane-when-ready pane))
-    pane))
+(defun herdr-cmd-pane-in-directory (directory)
+  "Return a pane for a new terminal in DIRECTORY.
+
+A workspace already open at DIRECTORY is used as it is, and the pane is
+a fresh tab in it.  Otherwise the workspace is created, and the pane
+returned is its root pane — a new workspace comes with a pane carrying
+nothing, so asking `tab.create\\=' for another would leave an empty tab
+behind on every first terminal.
+
+Shared by `herdr-new-terminal\\=' and the dispatcher\\='s create verb,
+which asked the same question of the same server and then differed only
+in which file they lived in.  Keeping it here also keeps
+`herdr-dispatch.el\\=' out of the business of deciding what a directory
+means, which is the split `herdr-cmd-open-workspace-for\\=' already
+makes for going to a project."
+  (if-let* ((open (herdr-state-workspace-for-directory
+                   (herdr-state-current) directory)))
+      (herdr-cmd--new-tab-pane (alist-get 'workspace_id open))
+    (herdr-cmd--created-pane-id
+     (herdr-rpc-call "workspace.create"
+                     `((cwd . ,(expand-file-name directory))
+                       (label . ,(file-name-nondirectory
+                                  (directory-file-name directory)))
+                       (focus . t))))))
+
+(defun herdr-new-terminal (&optional place)
+  "Open a terminal in PLACE and go to it.
+
+PLACE is a workspace id, or a directory — a worktree, or a project you
+have not opened yet.  Interactively it is read from
+`herdr-select-place\\=', which offers both.
+
+This is the one way to make a terminal.  herdr itself has no second
+mechanism: a new tab opens a shell, and an agent is whatever you then
+run in it, which herdr names by detection a few seconds later.  This
+package used to carry `agent.start\\=' beside it as a second, differently
+shaped door to the same place — one that demanded a name and a kind up
+front and could only take a pane with no agent on it — and two doors is
+what the herdr TUI itself does not have."
+  (interactive)
+  (let ((place (or place (herdr-select-place))))
+    (herdr-cmd--follow-new-pane
+     (if (herdr-state-workspace (herdr-state-current) place)
+         (herdr-cmd--new-tab-pane place)
+       (herdr-cmd-pane-in-directory place)))))
 
 (defun herdr-agent-explain (&optional target)
   "Explain how herdr detected the agent in TARGET."

@@ -309,8 +309,8 @@ is the very case this sentence describes."
             (inhibit-interaction t)
             (herdr-terminal-backend 'session)
             ;; Enough of a session for every picker to have something to
-            ;; offer: an agent pane, a bare shell for `agent.start' to
-            ;; take over, and an adopted one for `herdr-release-shell'.
+            ;; offer: an agent pane, a bare shell, and an adopted one for
+            ;; `herdr-release-shell'.
             (herdr-state--current
              (herdr-state-from-snapshot
               `((workspaces . (((workspace_id . "w1") (label . "ws"))))
@@ -523,61 +523,79 @@ directory's own name."
     (should (null (alist-get 'body params)))
     (should (equal "none" (alist-get 'sound params)))))
 
-;;; Starting an agent must surface it
+;;; Opening a terminal: the one create mechanism
 
-(ert-deftest herdr-agent-start-focuses-and-shows-the-new-agent ()
-  "Starting an agent that goes nowhere on screen reads as a no-op: the
-pane it runs in must be focused server-side and its buffer selected, or
-you only learn it worked on the next reload."
-  (let (selected focused)
-    (cl-letf (((symbol-function 'herdr-term-select-pane)
-               (lambda (pane) (setq selected pane) t)))
-      (herdr-test-with-server
-          (lambda (req)
-            (when (equal (alist-get 'method req) "pane.focus")
-              (setq focused (alist-get 'pane_id (alist-get 'params req))))
-            (cons (herdr-test-ok req '((type . "ok"))) nil))
-        (herdr-agent-start "web" "claude" "w1:p1")
-        (should (equal "w1:p1" selected))
-        (should (equal "w1:p1" focused))))))
+(ert-deftest herdr-cmd-pane-in-directory-opens-a-workspace-when-none-is-there ()
+  "A directory nothing is open in becomes a workspace, and the pane
+returned is that workspace\='s root pane.  Asking `tab.create' for
+another would leave an empty tab behind on every first terminal."
+  (let ((calls nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (method params)
+                 (push (cons method params) calls)
+                 '((root_pane . ((pane_id . "w7:p1")))))))
+      (let ((herdr-state--current (herdr-state-empty)))
+        (should (equal "w7:p1" (herdr-cmd-pane-in-directory "/tmp/fresh/")))
+        (should (equal '(("workspace.create" . ((cwd . "/tmp/fresh/")
+                                                (label . "fresh")
+                                                (focus . t))))
+                       (reverse calls)))))))
 
-(ert-deftest herdr-agent-start-waits-for-a-buffer-that-is-not-ready ()
-  "Under `agent-windows' the buffer is built off the event stream, so it
-may not exist the instant `agent.start' returns.  When select cannot
-show it yet the command schedules a retry rather than giving up."
-  (let (deferred)
-    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) nil))
-              ((symbol-function 'herdr-cmd--select-pane-when-ready)
-               (lambda (pane) (setq deferred pane))))
-      (herdr-test-with-server
-          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
-        (herdr-agent-start "web" "claude" "w1:p1")
-        (should (equal "w1:p1" deferred))))))
+(ert-deftest herdr-cmd-pane-in-directory-adds-a-tab-to-a-workspace-already-open ()
+  "A workspace already at the directory is used as it is."
+  (let ((calls nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (method params)
+                 (push (cons method params) calls)
+                 '((root_pane . ((pane_id . "w9:p2")))))))
+      (let ((herdr-state--current
+             (herdr-state-from-snapshot
+              '((workspaces . (((workspace_id . "w9"))))
+                (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
+                           (cwd . "/tmp/open"))))))))
+        (should (equal "w9:p2" (herdr-cmd-pane-in-directory "/tmp/open")))
+        (should (equal '(("tab.create" . ((workspace_id . "w9")
+                                          (cwd . nil)
+                                          (focus . t))))
+                       (reverse calls)))))))
 
-(ert-deftest herdr-agent-start-create-new-creates-a-tab-then-starts-on-its-root-pane ()
-  "Picking create-new creates a tab and starts the agent in its root
-pane, then shows it — no detour through a manual split."
-  (let (started-in selected)
-    (cl-letf (((symbol-function 'herdr-select-available-shell)
-               (lambda (&rest _) :create-new))
-              ((symbol-function 'herdr-term-select-pane)
-               (lambda (pane) (setq selected pane) t)))
-      (herdr-test-with-server
-          (lambda (req)
-            (let ((method (alist-get 'method req))
-                  (params (alist-get 'params req)))
-              (cond
-               ((equal method "tab.create")
-                (cons (herdr-test-ok req '((type . "tab_created")
-                                           (root_pane . ((pane_id . "w1:p9")))))
-                      nil))
-               ((equal method "agent.start")
-                (setq started-in (alist-get 'pane_id params))
-                (cons (herdr-test-ok req '((type . "ok"))) nil))
-               (t (cons (herdr-test-ok req '((type . "ok"))) nil)))))
-        (should (equal "w1:p9" (herdr-agent-start "web" "claude")))
-        (should (equal "w1:p9" started-in))
-        (should (equal "w1:p9" selected))))))
+(ert-deftest herdr-new-terminal-adds-a-tab-when-given-a-workspace-id ()
+  "The two kinds of place `herdr-select-place' offers are told apart by
+the cache: a string the cache holds as a workspace is a workspace, and
+anything else is a directory."
+  (let ((calls nil)
+        (followed nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (method params)
+                 (push (cons method params) calls)
+                 '((root_pane . ((pane_id . "w9:p2"))))))
+              ((symbol-function 'herdr-cmd--follow-new-pane)
+               (lambda (pane) (setq followed pane))))
+      (let ((herdr-state--current
+             (herdr-state-from-snapshot
+              '((workspaces . (((workspace_id . "w9"))))
+                (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
+                           (cwd . "/tmp/open"))))))))
+        (herdr-new-terminal "w9")
+        (should (equal "tab.create" (car (car calls))))
+        (should (equal "w9" (alist-get 'workspace_id (cdr (car calls)))))
+        (should (equal "w9:p2" followed))))))
+
+(ert-deftest herdr-new-terminal-opens-a-directory-that-is-not-a-workspace ()
+  "A directory the cache does not hold as a workspace id goes through
+`herdr-cmd-pane-in-directory', which opens it first."
+  (let ((calls nil)
+        (followed nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (method params)
+                 (push (cons method params) calls)
+                 '((root_pane . ((pane_id . "w7:p1"))))))
+              ((symbol-function 'herdr-cmd--follow-new-pane)
+               (lambda (pane) (setq followed pane))))
+      (let ((herdr-state--current (herdr-state-empty)))
+        (herdr-new-terminal "/tmp/fresh/")
+        (should (equal "workspace.create" (car (car calls))))
+        (should (equal "w7:p1" followed))))))
 
 ;;; Pane-selection retry chain
 

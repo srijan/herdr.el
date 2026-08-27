@@ -19,7 +19,7 @@ that do not exist upstream.
 | Session view | `herdr-agents.el`, a flat list | `herdr-dispatch.el` and `herdr-tree.el`, a foldable magit-section tree |
 | Modeline | inline in the agents buffer | `herdr-modeline.el`, its own file |
 | Extra dependency | none | `magit-section` 3.3 |
-| Tests | one agents test file | 473 offline tests across 16 files, plus a live suite |
+| Tests | one agents test file | 504 offline tests across 16 files, plus a live suite |
 
 The large additions are the dashboard and the pure tree layer behind it, a rewritten
 `herdr-state.el` that reconciles workspaces and tabs rather than only panes, and the test suite.
@@ -30,7 +30,7 @@ news, not as a branch to merge.
 
 ## The dashboard
 
-`M-x herdr` (or `C-c H`) opens `*herdr-agents*`: the whole session as a foldable tree of
+`M-x herdr` (or `C-c H s`) opens `*herdr-agents*`: the whole session as a foldable tree of
 repositories, their checkouts and their panes, and the place every command is reachable from.
 
 ```
@@ -51,7 +51,7 @@ M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
 | `RET` | go to the thing at point — a worktree that is not open yet is opened as a workspace |
 | `TAB` | fold |
 | `c` | create menu, with its parent taken from point |
-| `w` / `n` / `a` / `%` | create workspace / terminal / agent / worktree directly |
+| `w` / `n` / `%` | create workspace / terminal / worktree directly |
 | `p` | prompt the agent at point |
 | `r` | read the pane at point into a buffer |
 | `f` | focus the thing at point server-side, without moving Emacs |
@@ -61,10 +61,16 @@ M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
 | `q` | quit the window |
 | `?` | open `herdr-transient` |
 
-Every verb acts on the most specific thing under point. `a` on a row that names a directory
-rather than a workspace — a worktree, a `main` row, an inactive project — starts the agent in
+Every verb acts on the most specific thing under point. `n` on a row that names a directory
+rather than a workspace — a worktree, a `main` row, an inactive project — opens the terminal in
 that directory, opening it as a workspace first if nothing is open there. A heading is not a
 target: `TAB` folds it, and the other verbs say so rather than acting on what encloses it.
+
+There is one way to make a place to run something, and `n` is it. herdr's own TUI works the same
+way: a new tab opens a shell, and the agent is whatever you then run in it, which herdr names by
+detection a few seconds later. This package used to carry a second verb, `a`, that called
+`agent.start` and demanded an agent kind and a name up front. Two doors to one place is what the
+TUI does not have, so the second one is gone.
 
 A collapsed section still shows the worst status inside it, so folding never hides a blocked
 agent.
@@ -77,24 +83,28 @@ each other:
 
 ```
 example-api (1)              ~/src/example-api/
-  main (2)
-    · shell     idle      wA:p1   npm run watch
-    ✓ claude    done      wA:p5   Add the pagination endpoint
+  · shell       idle      wA:p1   npm run watch
+  ✓ claude      done      wA:p5   Add the pagination endpoint
 
 herdr.el (2)                 ~/src/herdr.el/
   main (1)
     · claude    idle      wS:pR   Fix the reconcile order
   feat-dispatch (1)          ~/src/herdr.el-worktrees/feat-dispatch/ ▶
-    main (1)
-      ▶ claude  working   w19:p1  Nest worktrees under their repository
+    ▶ claude    working   w19:p1  Nest worktrees under their repository
 ```
 
 A worktree you have open as a workspace of its own is drawn where it belongs — inside the
 repository it came from, panes and all — rather than as a second top-level row beside it. A
 worktree that is not open is a dimmed one-line row in the same place.
 
-The count on a repository row is its checkouts: its own, plus one per worktree. The pane count
-sits on the `main` group, which is the thing that holds the panes.
+The `main` group appears only where there are worktrees to tell the panes apart from, as under
+`herdr.el` above. A workspace with no worktrees — `example-api`, and every workspace herdr opens
+for a plugin — hangs its panes off its own row, so the common case is one row shorter and a
+plugin workspace is not described as a checkout of something. The Lantern chat arrives as a
+workspace of one pane and now reads as exactly that.
+
+The count on a repository row is its checkouts: its own, plus one per worktree. Where the `main`
+group is drawn, the pane count sits on it.
 
 ### Inactive projects
 
@@ -110,9 +120,9 @@ Inactive (24)
     …
 ```
 
-`RET` on the project row creates its workspace. `a` on any row under it starts an agent in that
+`RET` on the project row creates its workspace. `n` on any row under it opens a terminal in that
 directory, opening it as a workspace first if nothing is open there yet — so a worktree you have
-not touched in a week is two keystrokes from having an agent in it.
+not touched in a week is two keystrokes from having a shell in it.
 
 Two kinds of row are left out. A worktree you have also opened as a project in Emacs gets no row
 of its own: project.el remembers it as a project in its own right, and it is already listed under
@@ -128,15 +138,36 @@ place to watch it.
 Directories render with `~/` rather than the full home path. The abbreviation is display only;
 the row still carries the real path for the commands that act on it.
 
-### herdr-menu
+## One prefix key
 
-`M-x herdr-menu` does the same startup as `herdr`, bringing up the server, terminals and event
-stream, but ends on `herdr-transient`'s compact menu instead of the dashboard. Reach for `herdr`
-when you want to survey the session. Reach for `herdr-menu` from inside an agent's terminal
-buffer, where a full-window dashboard would pull you out of what you were doing.
+`herdr-command-map` is a prefix keymap holding the verbs the dashboard holds, for use from
+anywhere else. Bind it yourself — which key is spare is your question, not this package's:
 
-Calling `herdr-transient` directly skips that startup, so from a cold Emacs it opens with no state
-cache behind it. `herdr-menu` is the entry point that guarantees the startup has run.
+```elisp
+(define-key global-map (kbd "C-c H") herdr-command-map)
+```
+
+| Key | Action |
+| --- | --- |
+| `s` | the status buffer — `herdr`, which runs the start sequence first |
+| `f` | pick a shell or agent and go to it |
+| `n` | open a terminal, picking the workspace or project first |
+| `k` | pick a shell or agent and close it |
+| `w` | pick a workspace and go to it |
+| `p` | the workspace for the current project, created if absent |
+| `%` | the worktree menu |
+| `g` | resync the cache |
+| `?` | open `herdr-transient` |
+
+The letters are the dashboard's letters, so there is one set to learn rather than two. `n` opens a
+terminal and `k` closes one here exactly as they do on a row in `*herdr-agents*`; the difference
+is only where the target comes from, a picker here and point there.
+
+`s` is bound to `herdr` rather than `herdr-agents` because `herdr` is the entry point that
+guarantees the start sequence has run — the server, the terminals and the event stream — so the
+dashboard is drawn from a cache with something in it. `herdr-transient` called directly skips that
+startup, which is what the removed `herdr-menu` used to add; `s` covers it and `?` reaches the
+menu, so the command is gone rather than kept.
 
 ## Targeting and keys
 
@@ -173,7 +204,7 @@ Optional, used when present and never required: `marginalia`, `embark`, `consult
   :ensure nil                          ; local checkout, not on MELPA
   :load-path "~/src/herdr.el"
   :bind (("C-x M" . herdr)             ; pairs with C-x m if you bind ghostel there
-         ("C-c H" . herdr-agents)
+         ("C-c H" . herdr-command-map)
          :map project-prefix-map
          ("h" . herdr-project))
   :custom (herdr-terminal-backend 'session)
@@ -252,8 +283,7 @@ reads `claude` a few seconds later. Nothing needs reporting.
 
 `pane.report_agent` can name an agent on a pane by hand, which puts a long-running shell — a
 build, say — in herdr's own sidebar and modeline, across an Emacs restart, since the report is
-server-side state. It also takes the pane out of `herdr-agent-start`'s reach, since availability
-there means "has no agent at all". Naming an agent on a pane that is already running one leaves a
+server-side state. Naming an agent on a pane that is already running one leaves a
 label that never corrects itself; see
 [Troubleshooting](docs/troubleshooting.md#a-pane-is-labelled-shell-but-is-running-an-agent).
 
@@ -318,9 +348,9 @@ generated 91-entry menu.
 
 Worth knowing about:
 
-- `herdr-agent-start` starts an agent in an idle pane. The picker also offers a trailing
-  `＋ new shell pane` entry that splits the current pane and starts there, so a session with no
-  free pane is never a dead end.
+- `herdr-new-terminal` opens a terminal, picking the place first: an open workspace, or a
+  `project.el` project with no workspace open yet, which is created and then opened in. This is
+  the one way to make a place to run something; there is no `agent.start` command beside it.
 - `herdr-worktree-create` takes a branch name to a git worktree with its own herdr workspace,
   using herdr's native worktree support.
 - `herdr-pane-read` and `herdr-agent-read` put terminal output into a real Emacs buffer.
@@ -378,7 +408,7 @@ offers focus, read, prompt, close and zoom.
 ## Development
 
 ```bash
-make test        # 473 tests, hermetic; no herdr required, uses a fake server
+make test        # 504 tests, hermetic; no herdr required, uses a fake server
 make test-live   # needs a running herdr; includes the schema drift test
 make compile     # byte-compile, warnings are errors
 ```
