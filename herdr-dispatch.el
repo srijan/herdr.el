@@ -340,9 +340,20 @@ and do not need defending."
              (herdr-dispatch--insert-leaf line depth)
              (herdr-dispatch--insert-nodes children (1+ depth))))
           ('herdr-known-project
-           (magit-insert-section (herdr-known-project value)
-             (herdr-dispatch--insert-leaf line depth)
-             (herdr-dispatch--insert-nodes children (1+ depth))))
+           ;; A heading when it owns rows, a leaf when it owns none.
+           ;; The rows used to hang under a `worktrees (N)' heading,
+           ;; which was the foldable thing; hanging them off the project
+           ;; row directly left a repository of sixteen checkouts as
+           ;; sixteen rows with nothing to collapse them.  Still a leaf
+           ;; when it has no children, because a fold indicator beside
+           ;; something with nothing to fold is what
+           ;; `herdr-dispatch--insert-container' exists to avoid.
+           (herdr-dispatch--apply-fold
+            (magit-insert-section (herdr-known-project value)
+              (if children
+                  (herdr-dispatch--insert-container line depth)
+                (herdr-dispatch--insert-leaf line depth))
+              (herdr-dispatch--insert-nodes children (1+ depth)))))
           ('herdr-known-projects
            (herdr-dispatch--apply-fold
             (magit-insert-section (herdr-known-projects value)
@@ -992,6 +1003,40 @@ to the directory of the workspace at point."
                   (read-directory-name "Workspace directory: " default))))
     (herdr-workspace-create dir (herdr-dispatch--arg args "--label"))))
 
+(defun herdr-dispatch--pane-for-directory-at-point ()
+  "Return a pane for a new agent in the directory the row at point names.
+
+A `herdr-worktree\\=' row — a worktree, or the `main\\=' row standing for a
+repository\\='s own checkout — and a `herdr-known-project\\=' row both name
+a directory rather than a workspace.  \\[herdr-dispatch-create-agent] had
+no answer for either: `herdr-dispatch--workspace-target\\=' resolves a
+workspace or nothing, and nothing means `tab.create\\=' falls back to
+whatever workspace the SERVER has focused.  So `a\\=' on an inactive
+project quietly started an agent somewhere else entirely — the one
+outcome worse than refusing, because nothing on screen said where it
+went.
+
+The directory row wins over any enclosing workspace, and that ordering
+is the point rather than an accident: a worktree row inside an open
+repository has that repository as its enclosing workspace, and an agent
+started there would land in the repository the user was pointing past.
+
+A workspace already open at that directory is used as it is.  Otherwise
+one is created, and its root pane is the pane returned — a fresh
+workspace comes with a pane carrying no agent, so asking `tab.create\\='
+for another would leave an empty tab behind on every first `a\\='."
+  (when-let* ((directory (or (herdr-dispatch--value-at-point 'herdr-worktree)
+                             (herdr-dispatch--value-at-point 'herdr-known-project))))
+    (if-let* ((open (herdr-state-workspace-for-directory
+                     (herdr-state-current) directory)))
+        (herdr-cmd--new-tab-pane (alist-get 'workspace_id open))
+      (herdr-cmd--created-pane-id
+       (herdr-rpc-call "workspace.create"
+                       `((cwd . ,(expand-file-name directory))
+                         (label . ,(file-name-nondirectory
+                                    (directory-file-name directory)))
+                         (focus . t)))))))
+
 (defun herdr-dispatch--workspace-target ()
   "Return the workspace id point resolves to, or nil for the focused one.
 A pane row resolves through its own record; a workspace heading is
@@ -1036,16 +1081,25 @@ name you would have picked anyway for the first agent of its kind, and
 
 (herdr-dispatch-defverb herdr-dispatch-create-agent ()
   "Start an agent in the pane at point, or in a fresh tab.
-The pane at point is used only when it has no agent; anywhere else a new
-tab is created in the workspace at point, so `a\\=' has an answer
-everywhere in the buffer.  Both prompts come before the create, so
-abandoning either leaves nothing behind."
+
+Three answers, most specific first.  The pane at point is used when it
+has no agent.  A row naming a directory rather than a workspace — a
+worktree, the `main\\=' row, an inactive project — resolves through
+`herdr-dispatch--pane-for-directory-at-point\\=', which opens that
+directory as a workspace if nothing is open there yet.  Anywhere else a
+new tab is created in the workspace at point, so `a\\=' has an answer
+everywhere in the buffer.
+
+Both prompts come before any of that, so abandoning either leaves
+nothing behind — no empty tab, and no workspace opened for an agent that
+was never started."
   (let* ((args (herdr-dispatch--args))
          (kind (or (herdr-dispatch--arg args "--kind")
                    (completing-read "Agent kind: " herdr-agent-kinds nil nil)))
          (name (or (herdr-dispatch--arg args "--label")
                    (herdr-dispatch--read-agent-name kind)))
          (pane (or (herdr-dispatch--free-pane-at-point)
+                   (herdr-dispatch--pane-for-directory-at-point)
                    (herdr-cmd--new-tab-pane (herdr-dispatch--workspace-target)))))
     (herdr-agent-start name kind pane)))
 

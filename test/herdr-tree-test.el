@@ -31,16 +31,20 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
 
 (defun herdr-tree-test--worktree-rows (children)
   "Return the worktree nodes among CHILDREN, a workspace node's children.
-A workspace with worktrees holds its own panes in one `main' group and
-hangs its worktrees off the workspace beside it, so the worktrees are
-everything after that group.  A workspace without them holds its panes
-directly and has no worktrees to return."
-  (and (eq 'herdr-panes (nth 0 (car children)))
-       (cdr children)))
+A workspace holds its own panes in one `main' group and hangs its
+worktrees off itself beside that group, so the worktrees are everything
+after it."
+  (cdr children))
 
 (defun herdr-tree-test--main-group (children)
-  "Return the `main' group among CHILDREN, or nil when there is none."
-  (and (eq 'herdr-panes (nth 0 (car children))) (car children)))
+  "Return the `main' group among CHILDREN, which every workspace has."
+  (car children))
+
+(defun herdr-tree-test--pane-nodes (workspace)
+  "Return the pane nodes of WORKSPACE, a node from `herdr-tree-build'.
+Panes live one level in from a workspace's children, inside its `main'
+group."
+  (nth 3 (car (nth 3 workspace))))
 
 (defun herdr-tree-test--types (nodes)
   "Return the nested (TYPE . CHILD-TYPES) shape of NODES."
@@ -103,7 +107,8 @@ without costing the row what the agent is working on."
 The fixture has two tabs holding three panes between them; the built
 tree must show all three as the workspace's own direct children, with
 no `herdr-tab' node anywhere in the shape."
-  (should (equal '((herdr-workspace (herdr-pane) (herdr-pane) (herdr-pane)))
+  (should (equal '((herdr-workspace
+                    (herdr-panes (herdr-pane) (herdr-pane) (herdr-pane))))
                  (herdr-tree-test--types
                   (herdr-tree-build (herdr-tree-test--state) nil)))))
 
@@ -116,7 +121,7 @@ no `herdr-tab' node anywhere in the shape."
                             (label . "1") (pane_count . 1))))
                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
                              (tab_id . "w1:t1") (agent . "claude"))))))))
-    (should (equal '((herdr-workspace (herdr-pane)))
+    (should (equal '((herdr-workspace (herdr-panes (herdr-pane))))
                    (herdr-tree-test--types (herdr-tree-build state nil))))))
 
 (ert-deftest herdr-tree-workspace-line-carries-directory-and-rollup ()
@@ -148,13 +153,20 @@ line.  A `2 panes\\=' column in the middle of the line said it too, but
 said it in a place the eye has to travel to and in a shape shared with
 the leaf rows, which own nothing.  Both halves are asserted: the count is
 in parentheses on the label, and the column it replaced is gone rather
-than duplicated beside it."
+than duplicated beside it.
+
+Each row counts what it owns: the workspace owns checkouts, the `main\\='
+group owns panes.  Counting panes on both would have said one number
+twice and left the other unsaid."
   (let* ((worktrees '(("w1" . (((path . "/tmp/wt")
                                 (is_linked_worktree . t)
                                 (branch . "feat/x"))))))
          (workspace (car (herdr-tree-build (herdr-tree-test--state) worktrees)))
          (children (nth 3 workspace)))
-    (should (string-match-p "herdr\\.el (3)" (nth 2 workspace)))
+    ;; Two checkouts on the workspace row -- its own and the worktree --
+    ;; and the three panes counted one level down, on the group that
+    ;; actually holds them.
+    (should (string-match-p "herdr\\.el (2)" (nth 2 workspace)))
     (should (string-match-p "main (3)"
                             (nth 2 (herdr-tree-test--main-group children))))
     (should-not (string-match-p "panes" (nth 2 workspace)))))
@@ -174,7 +186,7 @@ asserted on the one heading left that still has one: the workspace."
     (should-not (string-match-p (herdr-tree-glyph "idle") line))))
 
 (ert-deftest herdr-tree-pane-line-shows-agent-status-and-title ()
-  (let* ((panes (nth 3 (car (herdr-tree-build (herdr-tree-test--state) nil))))
+  (let* ((panes (herdr-tree-test--pane-nodes (car (herdr-tree-build (herdr-tree-test--state) nil))))
          (pane (nth 2 (car panes))))
     (should (string-match-p "claude" pane))
     (should (string-match-p "working" pane))
@@ -272,7 +284,7 @@ version — which a mutation run found it doing."
 
 A `herdr-tree--steady-title' that nothing calls would pass every
 assertion above while the dashboard went on redrawing once a second."
-  (let ((line (nth 2 (car (nth 3 (car (herdr-tree-build
+  (let ((line (nth 2 (car (herdr-tree-test--pane-nodes (car (herdr-tree-build
                                        (herdr-tree-test--spinning-state
                                         "◐ Debug webmentions")
                                        nil)))))))
@@ -317,7 +329,7 @@ on a real pane row as well as on `herdr-tree--faced\\=' directly."
   (let ((plain (herdr-tree--faced "working" nil)))
     (should-not (get-text-property 0 'font-lock-face plain))
     (should-not (get-text-property 0 'face plain)))
-  (let* ((panes (nth 3 (car (herdr-tree-build (herdr-tree-test--state) nil))))
+  (let* ((panes (herdr-tree-test--pane-nodes (car (herdr-tree-build (herdr-tree-test--state) nil))))
          (pane (nth 2 (car panes))))
     (dolist (field '("working" "w1:p1" "fixing tests"))
       (let ((at (string-match field pane)))
@@ -331,7 +343,7 @@ on a real pane row as well as on `herdr-tree--faced\\=' directly."
 The glyph and the word take the same face, which turns the leading
 column into a strip you can read down; blocked and working must not
 share one, or the strip says only \"something is happening\"."
-  (let* ((panes (nth 3 (car (herdr-tree-build (herdr-tree-test--state) nil))))
+  (let* ((panes (herdr-tree-test--pane-nodes (car (herdr-tree-build (herdr-tree-test--state) nil))))
          (working (nth 2 (car panes)))
          (blocked (nth 2 (nth 1 panes))))
     (should (eq (herdr-tree-status-face "working")
@@ -354,7 +366,7 @@ asserting the face name is what would catch a hardcoded colour creeping
 back in."
   (let* ((workspace (car (herdr-tree-build (herdr-tree-test--state) nil)))
          (line (nth 2 workspace))
-         (pane (nth 2 (car (nth 3 workspace)))))
+         (pane (nth 2 (car (herdr-tree-test--pane-nodes workspace)))))
     (should (eq 'font-lock-comment-face
                 (herdr-tree-test--face-of line "/tmp/herdr\\.el")))
     (should (eq 'shadow (herdr-tree-test--face-of pane "w1:p1")))
@@ -396,7 +408,7 @@ constant."
                              ((pane_id . "w1:p2") (workspace_id . "w1")
                               (tab_id . "w1:t1") (agent . "claude")
                               (agent_status . "blocked")))))))
-         (children (nth 3 (car (herdr-tree-build state nil))))
+         (children (herdr-tree-test--pane-nodes (car (herdr-tree-build state nil))))
          (line1 (nth 2 (car children)))
          (line2 (nth 2 (nth 1 children)))
          (label-width (length "claude/schema-pipeline")))
@@ -413,7 +425,7 @@ present must not produce a cramped column."
                    (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
                               (tab_id . "w1:t1") (agent . "claude")
                               (agent_status . "working")))))))
-         (line (nth 2 (car (nth 3 (car (herdr-tree-build state nil)))))))
+         (line (nth 2 (car (herdr-tree-test--pane-nodes (car (herdr-tree-build state nil)))))))
     (should (= (+ herdr-tree-agent-column-min 3) (string-match "working" line)))))
 
 (ert-deftest herdr-tree-marks-agentless-panes-as-shells ()
@@ -422,7 +434,7 @@ present must not produce a cramped column."
                  '(panes . (((pane_id . "w1:p3") (workspace_id . "w1")
                              (tab_id . "w1:t2") (agent_status . "idle")
                              (cwd . "/tmp/herdr.el"))))))
-         (panes (nth 3 (car (herdr-tree-build state nil))))
+         (panes (herdr-tree-test--pane-nodes (car (herdr-tree-build state nil))))
          (pane (nth 2 (car panes))))
     (should (string-match-p "~" pane))
     (should (string-match-p "shell" pane))
@@ -432,7 +444,7 @@ present must not produce a cramped column."
   (let* ((state (herdr-tree-test--state
                  '(agents . (((pane_id . "w1:p1") (agent . "claude")
                               (name . "reviewer"))))))
-         (panes (nth 3 (car (herdr-tree-build state nil))))
+         (panes (herdr-tree-test--pane-nodes (car (herdr-tree-build state nil))))
          (pane (nth 2 (car panes))))
     (should (string-match-p "claude/reviewer" pane))))
 
@@ -458,11 +470,14 @@ no tabs."
                              (tab_id . "w1:t1") (agent . "claude")
                              (agent_status . "blocked"))))))))
     (let ((tree (herdr-tree-build state nil)))
-      (should (equal '((herdr-workspace (herdr-pane)))
+      (should (equal '((herdr-workspace (herdr-panes (herdr-pane))))
                      (herdr-tree-test--types tree)))
       ;; The row must name the pane, or it is reachable only in shape.
-      (should (equal "w1:p1" (nth 1 (car (nth 3 (car tree))))))
-      (should (string-match-p "w1:p1" (nth 2 (car (nth 3 (car tree)))))))))
+      (should (equal "w1:p1"
+                     (nth 1 (car (herdr-tree-test--pane-nodes (car tree))))))
+      (should (string-match-p
+               "w1:p1"
+               (nth 2 (car (herdr-tree-test--pane-nodes (car tree)))))))))
 
 (ert-deftest herdr-tree-flat-listing-ignores-whether-a-panes-tab-is-cached ()
   "The partial case that used to need dedicated orphan handling: some
@@ -477,9 +492,11 @@ hold renders exactly like any other pane of its workspace."
                             ((pane_id . "w1:p9") (workspace_id . "w1")
                              (tab_id . "w1:t9") (agent . "gemini"))))))
          (tree (herdr-tree-build state nil)))
-    (should (equal '((herdr-workspace (herdr-pane) (herdr-pane) (herdr-pane)))
+    (should (equal '((herdr-workspace
+                     (herdr-panes (herdr-pane) (herdr-pane) (herdr-pane))))
                    (herdr-tree-test--types tree)))
-    (should (equal "w1:p9" (nth 1 (nth 2 (nth 3 (car tree))))))))
+    (should (equal "w1:p9"
+                   (nth 1 (nth 2 (herdr-tree-test--pane-nodes (car tree))))))))
 
 (defun herdr-tree-test--pane-ids (nodes)
   "Return the id of every `herdr-pane\\=' node anywhere under NODES.
@@ -505,7 +522,7 @@ their own tab already renders.  Every pane appears exactly once."
   "A workspace absent from WORKTREES gets no worktrees section."
   (should-not
    (seq-find (lambda (node) (eq 'herdr-worktrees (car node)))
-             (nth 3 (car (herdr-tree-build (herdr-tree-test--state) nil))))))
+             (herdr-tree-test--pane-nodes (car (herdr-tree-build (herdr-tree-test--state) nil))))))
 
 (ert-deftest herdr-tree-includes-worktrees-when-fetched ()
   "A workspace present in WORKTREES gets a worktree node, after its panes."
@@ -540,7 +557,7 @@ destructively."
                                 (branch . "main")
                                 (is_linked_worktree . nil)
                                 (open_workspace_id . "w1"))))))
-         (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
+         (children (herdr-tree-test--pane-nodes (car (herdr-tree-build (herdr-tree-test--state)
                                                  worktrees)))))
     (should-not (seq-find (lambda (node) (eq 'herdr-worktrees (nth 0 node)))
                           children))
@@ -793,7 +810,7 @@ section drew a dimmed pointer at it -- the same worktree twice.  The
 workspace now takes the pointer's place, panes and all."
   (should (equal '((herdr-workspace
                     (herdr-panes (herdr-pane))
-                    (herdr-workspace (herdr-pane))
+                    (herdr-workspace (herdr-panes (herdr-pane)))
                     (herdr-worktree)))
                  (herdr-tree-test--types
                   (herdr-tree-build (herdr-tree-test--worktree-state "w1" "w2")
@@ -810,7 +827,8 @@ deeper would file every worktree of the repository under every other one."
     (should (= 2 (length rows)))
     (should (equal 'herdr-workspace (nth 0 nested)))
     (should (equal "w2" (nth 1 nested)))
-    (should (equal '(herdr-pane) (mapcar (lambda (n) (nth 0 n)) (nth 3 nested))))))
+    (should (equal '(herdr-panes)
+                   (mapcar (lambda (n) (nth 0 n)) (nth 3 nested))))))
 
 (ert-deftest herdr-tree-build-leaves-a-worktree-workspace-with-no-repository-open ()
   "Nothing to nest under means nothing moves, and the workspace keeps the
@@ -915,12 +933,12 @@ one that is not actually open."
     (should (eq 'shadow (get-text-property 0 'font-lock-face line)))))
 
 (ert-deftest herdr-tree-known-project-node-includes-its-own-worktrees ()
-  "A known project is still a repository, and its worktrees hang off its
-row the same way an open workspace's hang off that workspace.  Only
-`herdr-tree-linked-worktree-p' filters here, since there is no open
-workspace id for `herdr-tree-own-workspace-p' to compare against; the
-main checkout is already excluded by not being a linked worktree at
-all."
+  "A known project is still a repository, and its checkouts hang off its
+row the same way an open workspace's hang off that workspace.  Its own
+checkout leads, as a `main' row: `herdr-tree-linked-worktree-p' drops it
+from the worktree rows, and it is put back deliberately so that the one
+directory most likely to be wanted is not the one directory with no row
+to aim a verb at."
   (let* ((worktrees `(("/tmp/other-project/"
                        . (((path . "/tmp/other-project/") (branch . "main")
                            (is_linked_worktree . nil))
@@ -929,9 +947,13 @@ all."
          (node (herdr-tree--known-project-node
                 "/tmp/other-project/" worktrees 20))
          (children (nth 3 node)))
-    (should (= 1 (length children)))
-    (should (equal 'herdr-worktree (nth 0 (car children))))
-    (should (equal "/tmp/other-project-fix/" (nth 1 (car children))))))
+    (should (equal '("main" "fix")
+                   (mapcar (lambda (row)
+                             (car (split-string (substring-no-properties
+                                                 (nth 2 row)))))
+                           children)))
+    (should (equal '("/tmp/other-project/" "/tmp/other-project-fix/")
+                   (mapcar (lambda (row) (nth 1 row)) children)))))
 
 (ert-deftest herdr-tree-known-project-node-has-no-worktrees-section-when-uncached ()
   "Absence of knowledge, not absence of worktrees -- the same contract
