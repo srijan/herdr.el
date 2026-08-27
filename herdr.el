@@ -81,20 +81,12 @@ The herdr server keeps running; agents are unaffected."
   "Focus the herdr workspace for the current project, creating it if absent."
   (interactive)
   (herdr-start)
-  (let* ((root (or (when (fboundp 'project-current)
-                     (when-let* ((project (project-current nil)))
-                       (expand-file-name (project-root project))))
-                   default-directory))
-         (existing (herdr-state-workspace-for-directory
-                    (herdr-state-current) root)))
-    (if existing
-        (herdr-rpc-call "workspace.focus"
-                        `((workspace_id . ,(alist-get 'workspace_id existing))))
-      (herdr-rpc-call "workspace.create"
-                      `((cwd . ,root)
-                        (label . ,(file-name-nondirectory
-                                   (directory-file-name root))))))
-    (herdr-term-display)))
+  (let ((root (or (when (fboundp 'project-current)
+                    (when-let* ((project (project-current nil)))
+                      (expand-file-name (project-root project))))
+                  default-directory)))
+    (herdr-cmd-open-workspace-for
+     root (file-name-nondirectory (directory-file-name root)))))
 
 ;;;###autoload
 (defun herdr ()

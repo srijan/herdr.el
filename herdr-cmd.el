@@ -489,6 +489,44 @@ about.  TIMEOUT is in seconds."
                   (or (alist-get 'agent_status result) "done")))))
     (message "herdr: watching agent %s" agent)))
 
+(defun herdr-cmd-open-workspace-for (root label)
+  "Focus the workspace at ROOT, creating it as LABEL if absent, and go there.
+
+Shared by `herdr-project\\=' and the dispatcher's verb for an inactive
+project row, which asked the same question of the same server and then
+differed only in which file they lived in.
+
+Two things here were wrong in both of them for as long as they were
+separate.
+
+The create carried no `focus\\=', so the new workspace was made but not
+focused, and anything that then asked the server \"where am I?\" answered
+with the pane the user had been on before.  The reply names the new
+workspace\\='s root pane, so this goes there directly rather than asking.
+
+And both ended on `herdr-term-display\\=', which shows the backend\\='s
+primary buffer.  Under `session\\=' that is the herdr TUI and so is the
+whole interface; under `agent-windows\\=' there is no primary buffer,
+every pane being its own, and the function returns nil by design.  The
+commands therefore did exactly what was asked of the server and then
+moved nothing in Emacs, silently.  `herdr-term-select-pane\\=' and
+`herdr-term-select-focused\\=' are what every other \"take me there\" path
+in this file uses, and they answer for both backends."
+  (if-let* ((existing (herdr-state-workspace-for-directory
+                       (herdr-state-current) root)))
+      (progn
+        (herdr-rpc-call "workspace.focus"
+                        `((workspace_id . ,(alist-get 'workspace_id existing))))
+        (or (herdr-term-select-focused) (herdr-term-display)))
+    (let ((pane (herdr-cmd--created-pane-id
+                 (herdr-rpc-call "workspace.create"
+                                 `((cwd . ,(expand-file-name root))
+                                   (label . ,label)
+                                   (focus . t))))))
+      (or (and pane (herdr-term-select-pane pane))
+          (herdr-term-select-focused)
+          (herdr-term-display)))))
+
 (defun herdr-cmd--new-tab-pane (&optional workspace-id cwd)
   "Create a tab and return its root pane's id.
 WORKSPACE-ID nil means whatever workspace the server has focused; CWD

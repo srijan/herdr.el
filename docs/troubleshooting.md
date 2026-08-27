@@ -101,6 +101,47 @@ herdr integration status
 
 The first command writes a hook file into the configuration directory of the agent.
 
+## `herdr-project` or `RET` on an inactive project appears to do nothing
+
+Under `herdr-terminal-backend` set to `agent-windows`, both commands work server-side and show
+you nothing. The workspace is focused or created as asked; Emacs simply does not move.
+
+The last step in each is `herdr-term-display`, which shows the backend's *primary* buffer. Under
+`session` that is the herdr TUI, the whole interface. Under `agent-windows` there is no primary
+buffer — every pane is its own — so the function returns nil by design, and neither command says
+anything either way.
+
+Every other "take me there" path uses `herdr-term-select-pane` or `herdr-term-select-focused`,
+which handle both backends. These two do not. Until that is fixed, reach the new workspace from
+the dashboard: `M-x herdr`, then `RET` on one of its panes.
+
+This is a known gap in herdr.el, not a server problem or a misconfiguration.
+
+## A pane is labelled `shell` but is running an agent
+
+herdr names the agent in a pane on its own, a few seconds after it starts. The one case that
+never corrects itself is a pane that had an agent *reported* on it — by `herdr-adopt-shell`, or by
+an older version of herdr.el that reported one automatically — while something was already
+running in it.
+
+The label then stays put indefinitely. Measured on two panes, hours apart: `agent.explain`
+answered `claude` for both, with a matched detection rule and a live session id, while the pane
+record went on carrying the reported `shell`.
+
+Releasing the report does not hand the pane to detection either. A released pane sat at no agent
+at all for 25 seconds, and `agent.explain` then refused it outright:
+
+```
+herdr error: "agent_not_found", "agent target wA:p1 not found"
+```
+
+That method runs only against panes herdr already counts as agents, so the report was the reason
+detection ran on the pane at all.
+
+**Kill the pane and start the agent again.** A fresh pane gets its agent named correctly with no
+report involved. `herdr-release-shell` alone leaves the pane with no name rather than the right
+one.
+
 ## `make test` fails and names `EXTRA_LOAD_PATH`
 
 **Symptom.** The build stops with an error that names `EXTRA_LOAD_PATH`.

@@ -52,6 +52,12 @@ this goes wrong while still sending the right method."
           wire params)
       (cl-letf (((symbol-function 'herdr-start) #'ignore)
                 ((symbol-function 'herdr-term-display) #'ignore)
+              ;; The two that replaced it: `herdr-cmd-open-workspace-for'
+              ;; goes to the new pane rather than showing a primary
+              ;; buffer, and unstubbed they would add `pane.current' to
+              ;; the wire these tests assert on.
+              ((symbol-function 'herdr-term-select-focused) #'ignore)
+              ((symbol-function 'herdr-term-select-pane) #'ignore)
                 ((symbol-function 'project-current) (lambda (&rest _) nil)))
         (herdr-test-with-server
             (lambda (req)
@@ -67,6 +73,12 @@ this goes wrong while still sending the right method."
         params)
     (cl-letf (((symbol-function 'herdr-start) #'ignore)
               ((symbol-function 'herdr-term-display) #'ignore)
+              ;; The two that replaced it: `herdr-cmd-open-workspace-for'
+              ;; goes to the new pane rather than showing a primary
+              ;; buffer, and unstubbed they would add `pane.current' to
+              ;; the wire these tests assert on.
+              ((symbol-function 'herdr-term-select-focused) #'ignore)
+              ((symbol-function 'herdr-term-select-pane) #'ignore)
               ((symbol-function 'project-current) (lambda (&rest _) nil)))
       (herdr-test-with-server
           (lambda (req)
@@ -83,6 +95,12 @@ workspace, not make one for the subdirectory it happened to be in."
         wire params)
     (cl-letf (((symbol-function 'herdr-start) #'ignore)
               ((symbol-function 'herdr-term-display) #'ignore)
+              ;; The two that replaced it: `herdr-cmd-open-workspace-for'
+              ;; goes to the new pane rather than showing a primary
+              ;; buffer, and unstubbed they would add `pane.current' to
+              ;; the wire these tests assert on.
+              ((symbol-function 'herdr-term-select-focused) #'ignore)
+              ((symbol-function 'herdr-term-select-pane) #'ignore)
               ((symbol-function 'project-current) (lambda (&rest _) 'fake))
               ((symbol-function 'project-root) (lambda (_) "/tmp/project/")))
       (herdr-test-with-server
@@ -106,6 +124,12 @@ identical, which the suite passed."
   (let (opened)
     (cl-letf (((symbol-function 'herdr-start) #'ignore)
               ((symbol-function 'herdr-term-display) #'ignore)
+              ;; The two that replaced it: `herdr-cmd-open-workspace-for'
+              ;; goes to the new pane rather than showing a primary
+              ;; buffer, and unstubbed they would add `pane.current' to
+              ;; the wire these tests assert on.
+              ((symbol-function 'herdr-term-select-focused) #'ignore)
+              ((symbol-function 'herdr-term-select-pane) #'ignore)
               ((symbol-function 'herdr-agents)
                (lambda () (push 'dashboard opened)))
               ((symbol-function 'herdr-transient)

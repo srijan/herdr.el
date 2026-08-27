@@ -1998,12 +1998,24 @@ round trip each one would otherwise cost -- sees only live roots."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
     (let ((herdr-state--current (herdr-state-empty)))
       (search-forward "other-project (0)")
+      ;; `focus' rides on the create: without it the workspace is made
+      ;; but not focused, and going to "wherever the server is now"
+      ;; lands on the pane the user was already on.
       (should (equal '((herdr-rpc-call "workspace.create"
                                        ((cwd . "/tmp/other-project/")
-                                        (label . "other-project")))
+                                        (label . "other-project")
+                                        (focus . t)))
+                       ;; Every recorder answers nil, so the whole
+                       ;; fallback chain fires: no created pane id to go
+                       ;; to, then no focused pane, then the backend's
+                       ;; primary buffer.  Against a real server the
+                       ;; first of the three answers.
+                       (herdr-term-select-focused)
                        (herdr-term-display))
                      (herdr-dispatch-test-with-recorders
-                         (herdr-rpc-call herdr-term-display)
+                         (herdr-rpc-call herdr-term-select-pane
+                                         herdr-term-select-focused
+                                         herdr-term-display)
                        (herdr-dispatch-visit)))))))
 
 (ert-deftest herdr-dispatch-visit-focuses-rather-than-double-creates ()
@@ -2020,9 +2032,12 @@ the test that would catch losing the check."
       (search-forward "other-project (0)")
       (should (equal '((herdr-rpc-call "workspace.focus"
                                        ((workspace_id . "w9")))
+                       (herdr-term-select-focused)
                        (herdr-term-display))
                      (herdr-dispatch-test-with-recorders
-                         (herdr-rpc-call herdr-term-display)
+                         (herdr-rpc-call herdr-term-select-pane
+                                         herdr-term-select-focused
+                                         herdr-term-display)
                        (herdr-dispatch-visit)))))))
 
 (ert-deftest herdr-dispatch-focus-refuses-a-known-project-and-points-at-ret ()
