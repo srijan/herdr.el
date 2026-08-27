@@ -71,22 +71,22 @@ workspace holds its own panes in a `main` group, and hangs its worktrees off its
 group.
 
 ```
-herdr.el (2)                          ~/workspace/srijan/herdr.el/
+herdr.el (2)                          ~/src/herdr.el/
   main (2)
     · claude    working   wS:p1       Fix the reconcile order
       shell     idle      wS:p2
-  project-el (1)                      ~/workspace/herdr-worktrees/herdr.el/project-el/
+  feat-dispatch (1)                   ~/src/herdr.el-worktrees/feat-dispatch/
     main (1)
-      · claude  idle      w19:p1      Inactive projects display in herdr
+      · claude  idle      w19:p1      Nest worktrees under their repository
 
 Inactive (14)
-  fleet-infra (1)                     ~/workspace/srijan/fleet-infra/
-    main                              ~/workspace/srijan/fleet-infra
+  example-api (1)                     ~/src/example-api/
+    main                              ~/src/example-api
 ```
 
 Read the counts this way: a repository row counts its checkouts, its own plus one per worktree,
 and the `main` group counts the panes it holds. Here `herdr.el` has two checkouts — itself and
-the worktree `project-el`, which is open as a workspace and so is drawn in full rather than as a
+the worktree `feat-dispatch`, which is open as a workspace and so is drawn in full rather than as a
 one-line pointer.
 
 A closed section shows the worst status inside it. A closed section therefore never hides a
