@@ -465,7 +465,7 @@ of which repository it belongs to.  Clamped to
 `herdr-tree-worktree-column-min\\='.
 
 Includes each entry's own main checkout, not only the linked worktrees
-`herdr-tree--worktrees-node\\=' and `herdr-tree--known-project-worktrees-node\\='
+`herdr-tree--worktree-nodes\\=' and `herdr-tree--known-project-worktree-nodes\\='
 go on to filter to: widening the column for a name that never renders
 costs nothing, and computing this from the pre-filter list once here is
 simpler than re-deriving the same filtered set a second time."
@@ -482,7 +482,7 @@ WIDTH is the worktree branch column width, computed once in
 `herdr-tree-build\\=' by `herdr-tree--worktree-column-width\\=' and threaded
 down here the same way the agent column width reaches a pane row.
 
-`herdr-tree--worktrees-node\\=' has already dropped the repository\\='s own
+`herdr-tree--worktree-nodes\\=' has already dropped the repository\\='s own
 checkout, so `open_workspace_id\\=' here means what it appears to mean: a
 worktree herdr has opened as a workspace of its own.  The workspace
 itself takes this row's place when its repository is the workspace this
@@ -518,8 +518,8 @@ human reads faster."
            'shadow)
           nil)))
 
-(defun herdr-tree--worktrees-node (workspace-id worktrees width &optional nested)
-  "Return the worktrees node for WORKSPACE-ID, or nil when it has none.
+(defun herdr-tree--worktree-nodes (workspace-id worktrees width &optional nested)
+  "Return a node per worktree of WORKSPACE-ID, or nil when it has none.
 WIDTH is the worktree branch column width; see `herdr-tree--worktree-node\\='.
 
 NESTED is an alist of (WORKSPACE-ID . NODE) for the workspaces that are
@@ -530,9 +530,12 @@ which is what puts a worktree you are working in underneath the
 repository it belongs to rather than beside it.  A row not in NESTED
 renders as before.
 
-The heading counts both kinds together, because both are worktrees of
-this repository and the count answers that question rather than the
-question of which ones happen to be open.
+A list rather than one `worktrees (N)\\=' container: the nodes are hung
+directly off the workspace, beside the `main (N)\\=' group holding its own
+panes.  The container cost a level and a line to say what the rows beside
+it already said, and once a worktree could be a whole workspace with
+panes of its own, that level pushed a running agent three deep.  See
+`herdr-tree--workspace-node\\=' for the arrangement that replaced it.
 
 Two things are dropped, and they are different questions with the same
 consequence.  `herdr-tree-linked-worktree-p\\=' drops the repository\\='s own
@@ -560,13 +563,25 @@ two lives in the cache that builds WORKTREES rather than here."
                              (not (herdr-tree-own-workspace-p worktree
                                                               workspace-id))))
                       (cdr entry))))
-    (list 'herdr-worktrees workspace-id
-          (format "worktrees (%s)" (length found))
-          (mapcar (lambda (worktree)
-                    (or (cdr (assoc (alist-get 'open_workspace_id worktree)
-                                    nested))
-                        (herdr-tree--worktree-node worktree width)))
-                  found))))
+    (mapcar (lambda (worktree)
+              (or (cdr (assoc (alist-get 'open_workspace_id worktree) nested))
+                  (herdr-tree--worktree-node worktree width)))
+            found)))
+
+(defun herdr-tree--main-node (workspace-id panes)
+  "Return the `main (N)\\=' node holding PANES, the panes of WORKSPACE-ID.
+
+Drawn only when the workspace has worktrees to sit beside; a workspace
+without them has nothing its panes could be confused with, and a heading
+there would cost every workspace in the session a level to disambiguate
+a thing that is not ambiguous.
+
+`main\\=' is git's word for the checkout the worktrees hang off, which is
+exactly what these panes are running in.  It names the worktree, not a
+branch: the repository's own branch may be called anything at all."
+  (list 'herdr-panes workspace-id
+        (format "main (%s)" (length panes))
+        panes))
 
 (defun herdr-tree--workspace-node (state workspace worktrees width worktree-width
                                          &optional nested)
@@ -574,8 +589,21 @@ two lives in the cache that builds WORKTREES rather than here."
 WIDTH is the agent column width, computed once in `herdr-tree-build\\='
 and threaded down to every pane in this workspace.  WORKTREE-WIDTH is
 the worktree branch column width, threaded the same way to
-`herdr-tree--worktrees-node\\='.  NESTED is passed straight through to it;
+`herdr-tree--worktree-nodes\\='.  NESTED is passed straight through to it;
 see there for what it does.
+
+A workspace with worktrees holds its own panes in a `main (N)\\=' group and
+its worktrees beside it, one node each:
+
+    herdr.el (3)
+      main (2)
+        claude
+        shell
+      project-el (1)
+        claude
+
+A workspace without worktrees holds its panes directly, since there is
+then nothing to tell them apart from.
 
 The pane count rides in parentheses on the label — `repo (3)\\=' — rather
 than as a `3 panes\\=' column of its own.  That is magit's idiom for the
@@ -590,9 +618,9 @@ a known-project row already shows for free, since
 `herdr-state-workspace-directory\\=' derives this one from a pane\\='s
 `cwd\\=' and had nothing shortening it."
   (let* ((id (alist-get 'workspace_id workspace))
-         (children (herdr-tree--panes-in-workspace state id width))
-         (worktree-node (herdr-tree--worktrees-node id worktrees worktree-width
-                                                    nested)))
+         (panes (herdr-tree--panes-in-workspace state id width))
+         (worktree-nodes (herdr-tree--worktree-nodes id worktrees
+                                                     worktree-width nested)))
     (list 'herdr-workspace id
           (string-trim-right
            (format "%-28s %-30s %s"
@@ -604,13 +632,21 @@ a known-project row already shows for free, since
                      (or (herdr-state-workspace-directory state id) ""))
                     'font-lock-comment-face)
                    (herdr-tree--rollup (alist-get 'agent_status workspace))))
-          (if worktree-node (append children (list worktree-node)) children))))
+          (if worktree-nodes
+              (cons (herdr-tree--main-node id panes) worktree-nodes)
+            panes))))
 
-(defun herdr-tree--known-project-worktrees-node (root worktrees width)
-  "Return ROOT's worktrees node from WORKTREES, or nil when it has none.
+(defun herdr-tree--known-project-worktree-nodes (root worktrees width)
+  "Return a node per worktree of ROOT in WORKTREES, or nil when it has none.
 WIDTH is the worktree branch column width; see `herdr-tree--worktree-node\\='.
 
-Two things are dropped, as in `herdr-tree--worktrees-node\\=', but the
+A list rather than a `worktrees (N)\\=' container, for the reason
+`herdr-tree--worktree-nodes\\=' gives.  Here the container had even less
+to hold apart: an inactive project row has no panes, so its worktrees
+were the only thing under it and the heading grouped them against
+nothing.
+
+Two things are dropped, as in `herdr-tree--worktree-nodes\\=', but the
 second question is asked by path rather than by workspace id.
 `herdr-tree-linked-worktree-p\\=' drops the repository's own main
 checkout.  What remains is then compared against ROOT itself, because a
@@ -631,13 +667,12 @@ compare against.  Its path is the identity ROOT does have."
                                           (alist-get 'path worktree))
                                          (herdr-tree--as-directory root)))))
                       (cdr entry))))
-    (list 'herdr-worktrees root
-          (format "worktrees (%s)" (length found))
-          (mapcar (lambda (w) (herdr-tree--worktree-node w width)) found))))
+    (mapcar (lambda (worktree) (herdr-tree--worktree-node worktree width))
+            found)))
 
 (defun herdr-tree--known-project-node (root worktrees worktree-width)
   "Return the node for ROOT, a known project with no workspace open.
-WORKTREES is threaded through to `herdr-tree--known-project-worktrees-node\\=',
+WORKTREES is threaded through to `herdr-tree--known-project-worktree-nodes\\=',
 the same cache `herdr-tree--workspace-node\\=' reads for an open workspace's
 own worktrees section — ROOT's own repository is asked about exactly the
 same way, just keyed by ROOT itself rather than a workspace id.
@@ -650,7 +685,7 @@ that this row is not actually open, the same way
 `herdr-tree--worktree-node\\=' marks an unopened worktree with `open as
 WORKSPACE-ID\\=' rather than leaving it looking identical to one that is.
 Dimmed with `shadow\\=' for the same reason: nothing here is running."
-  (let ((worktrees-node (herdr-tree--known-project-worktrees-node
+  (let ((worktree-nodes (herdr-tree--known-project-worktree-nodes
                          root worktrees worktree-width)))
     (list 'herdr-known-project root
           (herdr-tree--faced
@@ -660,7 +695,7 @@ Dimmed with `shadow\\=' for the same reason: nothing here is running."
                             (file-name-nondirectory (directory-file-name root)))
                     root))
            'shadow)
-          (and worktrees-node (list worktrees-node)))))
+          worktree-nodes)))
 
 (defun herdr-tree--known-project-nodes (state known-project-roots worktrees
                                               worktree-width)
@@ -711,7 +746,7 @@ above.  VALUE is a stable placeholder string rather than nil, because a
   "Return the dispatcher tree for STATE.
 
 Each node is the list (TYPE VALUE LINE CHILDREN).  TYPE is one of
-`herdr-workspace\\=', `herdr-pane\\=', `herdr-worktrees\\=',
+`herdr-workspace\\=', `herdr-pane\\=', `herdr-panes\\=',
 `herdr-worktree\\=', `herdr-known-project\\=' or `herdr-known-projects\\=';
 VALUE is the id a command needs; LINE is the rendered text; CHILDREN is a
 list of nodes.
@@ -727,7 +762,7 @@ section, in place of the dimmed row that would otherwise point at it, so
 that the top level is one row per repository and a worktree you are
 working in sits under the repository it belongs to.  See
 `herdr-tree--nesting\\=' for which workspaces move and
-`herdr-tree--worktrees-node\\=' for what replaces their rows.
+`herdr-tree--worktree-nodes\\=' for what replaces their rows.
 
 A worktree open as a workspace whose repository is only an inactive
 project row keeps its top-level place, and that row keeps its `open as

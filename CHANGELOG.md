@@ -29,6 +29,18 @@ This entry covers the whole divergence from
   sizes itself to the widest branch in the session. A worktree you have open as a workspace of
   its own is drawn there in full -- its panes, its label, its status -- instead of as a dimmed
   row pointing at a second copy of it at the top level. The top level is one row per repository.
+  A worktree hangs off its workspace directly rather than under a `worktrees (N)` heading; a
+  workspace that has any holds its own panes in a `main (N)` group beside them, so the two kinds
+  of row are never mistaken for each other:
+
+  ```
+  herdr.el (3)
+    main (2)
+      claude
+      shell
+    project-el (1)
+      claude
+  ```
 - **`herdr-menu`.** The command runs the same start sequence as `herdr` but ends on the compact
   menu. Use it from inside a terminal buffer, where a full-window dashboard is the wrong result.
 - **A test suite.** 478 hermetic tests across 16 files, and a live suite that includes a schema
