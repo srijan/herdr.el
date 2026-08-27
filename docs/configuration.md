@@ -1,7 +1,10 @@
 # Configuration
 
-This document lists every user option. Set an option with `M-x customize-group RET herdr RET`,
-or with `setq` in your init file.
+This document lists every user option. There are eighteen. Set an option with
+`M-x customize-group RET herdr RET`, or with `setq` in your init file.
+
+herdr.el binds no key. `herdr-command-map` is a prefix keymap that you bind yourself. See
+[Commands](commands.md#the-prefix-keymap).
 
 ## Connection
 
@@ -85,6 +88,17 @@ To get desktop notifications, set the statuses that you want:
 ```
 
 herdr.el uses the `alert` package when the package is present.
+
+## Options that no longer exist
+
+Delete these from your configuration. Each one now signals a void variable, or is silently
+ignored if you set it with `setq`.
+
+| Removed option | What to do |
+|---|---|
+| `herdr-terminal-backend` | Delete it. There is one arrangement now: one buffer for each pane, which is what the value `agent-windows` did. |
+| `herdr-agent-kinds` | Delete it. The command it fed, `herdr-agent-start`, is gone. Open a terminal with `n` and run the agent in it. |
+| `herdr-adopt-created-shells` | Delete it. Every pane is attachable since herdr 0.8.2. |
 
 ## The event stream
 

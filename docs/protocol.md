@@ -68,7 +68,7 @@ Subscription::PaneAgentStatusChanged { .. } => {
 This is a fault in herdr, not a design choice. The correction is one line for each arm. It also
 explains why connection B never makes ghost panes and connection A always does.
 
-Measured against a live 0.8.2 server, with the 23 subscriptions that herdr.el uses: 253 events
+Measured against a live 0.8.2 server, with the 18 subscriptions that herdr.el uses: 253 events
 in 5 seconds, and the stream had not stopped. The ring still held events from workspaces that
 closed hours before. The `pane.created` events outlast the `pane.closed` events, so some
 replayed panes get no closing event. Those panes stay until the next `pane.list` reconcile.
@@ -110,6 +110,9 @@ These events carry no nested record. Read the fields directly.
 
 herdr.el read a `workspace`, `tab` or `pane` object out of these events. The events were
 therefore dropped without an error.
+
+The `tab_*` rows are the server's behaviour, not herdr.el's. herdr.el subscribes to no `tab.*`
+event now, and models no tab. The rows stay here because this document records the server.
 
 ## Panes and agents
 
@@ -163,10 +166,10 @@ not from the server.
 
 ## Throughput and terminals
 
-**Throughput is not a concern.** A pane dump of 12.2 MB reached Emacs as 17 KB under the
-`session` backend. The same dump reached Emacs as 24 KB under the `agent-windows` backend.
-Both finished in 0.2 seconds.
-The VT of herdr emits the differences of the visible frame only.
+**Throughput is not a concern.** A pane dump of 12.2 MB reached Emacs as 17 KB when the herdr
+TUI rendered it, and as 24 KB when one buffer per pane did. Both finished in 0.2 seconds. The
+two numbers came from the two terminal backends that herdr.el used to have; only the second
+arrangement remains. The VT of herdr emits the differences of the visible frame only.
 
 **OSC sequences do not pass through.** The VT of herdr consumes OSC 7 and OSC 133. Beware of a
 false positive here: when you send the escapes inline, the shell echoes the command text, and

@@ -12,12 +12,12 @@ herdr.el has eleven source files. Each file has one duty.
 | `herdr-rpc.el` | 260 | The transport for the socket API. |
 | `herdr-state.el` | 1086 | The cache of the session, and the two event streams. |
 | `herdr-term.el` | 526 | The terminal buffers, and directory tracking. |
-| `herdr-cmd.el` | 342 | The 11 curated commands. |
+| `herdr-cmd.el` | 342 | The 12 curated commands. |
 | `herdr-call.el` | 96 | The generic caller for all 91 methods. |
 | `herdr-schema.el` | 245 | The reader for the JSON Schema of the server. |
 | `herdr-select.el` | 264 | The `completing-read` pickers. |
 | `herdr-tree.el` | 877 | The dashboard tree, as data only. |
-| `herdr-dispatch.el` | 1260 | The dashboard renderer, and its verbs. |
+| `herdr-dispatch.el` | 1308 | The dashboard renderer, and its verbs. |
 | `herdr-modeline.el` | 191 | The modeline segment, and the notifications. |
 
 ## The data flow
@@ -26,7 +26,7 @@ herdr.el has eleven source files. Each file has one duty.
 herdr server
     |
     |  1. session.snapshot          (one time, at start)
-    |  2. events.subscribe          (connection A: 23 global event types)
+    |  2. events.subscribe          (connection A: 18 global event types)
     |  3. events.subscribe          (connection B: pane.agent_status_changed)
     v
 herdr-state.el   --- the cache ---
@@ -43,38 +43,43 @@ costs no socket traffic.
 
 herdr.el holds two long-lived connections.
 
-**Connection A** carries the 23 global event types. The types cover workspaces, tabs, panes,
-worktrees and the layout. Connection A never changes after the start.
+**Connection A** carries the 18 global event types. The types cover workspaces, panes, worktrees
+and the layout. Connection A never changes after the start.
 
-**Connection B** carries one `pane.agent_status_changed` subscription for each attachable pane.
-herdr.el rebuilds connection B when the set of panes changes.
+There is no `tab.*` subscription. herdr.el does not model a tab. A tab has one visual form only,
+which is the tab bar of the TUI, so nothing here draws one. A closing tab still reaches you,
+because each of its panes sends `pane.closed`.
+
+**Connection B** carries one `pane.agent_status_changed` subscription for each agent pane.
+herdr.el rebuilds connection B when the set of agent panes changes.
 
 Connection B exists because the global stream reports a status change late. The measured lag was
 6.18 seconds in one case and 31.79 seconds in another. See
 [Protocol notes](protocol.md).
 
-Connection B watches the attachable panes only. Each per-pane subscription makes the server
-send a `pane.get` into its main loop every 100 milliseconds. A session with twelve shells
-therefore cost about 120 server requests each second before this limit existed.
+Connection B watches the agent panes only, not every pane. Attachment widened to every pane in
+herdr 0.8.2, but `pane.agent_status_changed` still has nothing to say about a pane with no agent.
+Each per-pane subscription makes the server send a `pane.get` into its main loop every 100
+milliseconds. A session with twelve plain shells therefore cost about 120 server requests each
+second before this limit existed.
 
 ## Reconciliation
 
 The event stream alone cannot keep the cache correct. Two faults break it:
 
 1. A disconnect drops the events that happen during the gap. The server never sends them again.
-2. A new subscription replays the full event ring of the server. The replay creates panes,
-   tabs and workspaces that closed long ago.
+2. A new subscription replays the full event ring of the server. The replay creates panes and
+   workspaces that closed long ago.
 
-herdr.el therefore compares its cache against the server. Three functions do this:
+herdr.el therefore compares its cache against the server. Two functions do this:
 
 | Function | Method | Corrects |
 |---|---|---|
 | `herdr-state-reconcile-panes` | `pane.list` | The pane set. |
 | `herdr-state-reconcile-workspaces` | `workspace.list` | The workspace set. |
-| `herdr-state-reconcile-tabs` | `tab.list` | The tab set. |
 
-The three methods need no parameters. Each returns the full live set. Each is therefore a
-symmetric target: herdr.el adds what is missing and removes what is extra.
+Both methods need no parameters. Each returns the full live set. Each is therefore a symmetric
+target: herdr.el adds what is missing and removes what is extra.
 
 The reconcile runs at `herdr-state-settle-delay` after a connect. The reconcile then runs at
 every directory poll, which is every `herdr-term-directory-interval` seconds.

@@ -39,15 +39,19 @@ Put this form in your init file:
 (use-package herdr
   :ensure nil                          ; a local checkout, not MELPA
   :load-path "~/src/herdr.el"
-  :bind (("C-x M" . herdr)
-         ("C-c H" . herdr-command-map)
-         :map project-prefix-map
+  :bind (:map project-prefix-map
          ("h" . herdr-project))
+  :bind-keymap ("C-c H" . herdr-command-map)
   :config (herdr-modeline-mode 1))
 ```
 
 The `:ensure nil` line is necessary if you set `use-package-always-ensure`. Without the line,
 Emacs looks for herdr on MELPA. Emacs then fails at start.
+
+`herdr-command-map` is a keymap, not a command. Use `:bind-keymap` for it, not `:bind`.
+`C-c H` is an example. Choose a key that is free in your configuration.
+
+herdr.el binds no key of its own. One prefix reaches every entry point, `C-c H s` included.
 
 ## Step 3: Start herdr
 
@@ -110,7 +114,9 @@ on one row to create the workspace, or `n` on any checkout under it to open a te
 | Read the output of the pane at point | `r` |
 | Rename the item at point | `R` |
 | Close the item at point | `k` |
+| Create a git worktree | `%` |
 | Refresh the dashboard | `g` |
+| Leave the dashboard | `q` |
 
 ## Step 6: Install an agent integration
 
@@ -132,6 +138,8 @@ The integration makes the modeline and the dashboard accurate.
 
 ## Next steps
 
+- The same letters work outside the dashboard, under the prefix `C-c H`. There the target comes
+  from a picker instead of from point. `C-h` after the prefix lists them.
 - Read [Commands](commands.md) for the full command list.
 - Read [Configuration](configuration.md) to change the defaults.
 - Read the terminal-hosting section of the main [README](../README.md). Agents stay alive when you

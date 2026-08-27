@@ -15,7 +15,7 @@ behaviour of the server that the herdr documentation does not state.
 
 ```bash
 make compile     # byte-compile. A warning stops the build.
-make test        # 460 tests. No herdr server is necessary.
+make test        # 466 tests. No herdr server is necessary.
 make test-live   # more tests. A herdr server is necessary.
 ```
 
@@ -61,6 +61,8 @@ faults:
 
 - A modeline that renders `*invalid*`.
 - A command that splits a window.
+- A `require` that nothing pulls in any more. Every file is loaded by the suite itself, so a
+  function that is only reachable through a deleted file still answers `fboundp`.
 
 Several faults passed a green suite. A person found them by driving a real Emacs under a PTY.
 
@@ -116,7 +118,8 @@ evidence.
 ## Relationship to upstream
 
 Upstream is [eddof13/herdr.el](https://github.com/eddof13/herdr.el). This repository is a fork
-that has diverged by about 12,900 lines. A rebase onto upstream is no longer realistic.
+that has diverged by about 15,400 lines added and 2,600 removed, over 123 commits. A rebase onto
+upstream is no longer realistic.
 
 Send a change here. If the change also suits upstream, say so, and we can carry it over.
 
@@ -126,7 +129,7 @@ Include these items:
 
 1. Your Emacs version, from `M-x emacs-version`.
 2. Your herdr version, from `herdr --version`.
-3. The value of `herdr-terminal-backend`.
+3. The values of `herdr-display-action` and `herdr-dispatch-display-action`.
 4. The exact message, or a screenshot of the dashboard.
 5. Whether the fault survives a reconcile. Press `g`, then wait five seconds.
 

@@ -1,7 +1,7 @@
 # Commands
 
-herdr.el has 11 curated commands. Each curated command wraps one server method. The command
-`herdr-call` reaches all 91 methods of the server.
+herdr.el has 12 curated commands. Each one wraps a server method. The command `herdr-call`
+reaches all 91 methods of the server.
 
 The list is short on purpose. A command exists here only if the dashboard or `herdr-command-map`
 calls it. Everything else was deleted, because `herdr-call` reaches it. See
@@ -40,6 +40,13 @@ yourself:
 
 ```elisp
 (define-key global-map (kbd "C-c H") herdr-command-map)
+```
+
+Under `use-package`, use `:bind-keymap`. `herdr-command-map` is a keymap, not a command, so
+`:bind` does not take it:
+
+```elisp
+:bind-keymap ("C-c H" . herdr-command-map)
 ```
 
 | Key | Command |
@@ -127,12 +134,13 @@ the row.
 
 ## What was removed
 
-Twenty-eight commands and the transient menu were deleted. A command survives only if the
-dashboard or `herdr-command-map` calls it.
+The package had 44 commands and six transient menus. It has 21: the 12 curated ones, the seven entry
+points above, `herdr-state-resync` and the dashboard's own `herdr-dispatch-refresh`. A command survives only if the dashboard or
+`herdr-command-map` calls it.
 
 | Removed | Reason |
 |---|---|
-| `herdr-transient` and its six sub-menus, `herdr-menu` | A third surface over commands the dashboard and the prefix keymap already reach. |
+| `herdr-transient` and its five sub-menus, `herdr-menu`, `herdr-transient-status` | A third surface over commands the dashboard and the prefix keymap already reach. |
 | The dashboard's `c` create menu | The same three verbs as `w`, `n` and `%`, plus three arguments. Two of them only skipped a prompt. The third is the base ref of a worktree, which is a prompt now. |
 | `herdr-pane-split-right`, `herdr-pane-split-down`, `herdr-pane-zoom`, `herdr-pane-resize`, `herdr-pane-swap` | Layout of the TUI. Emacs owns the layout. These commands move nothing that you see. |
 | `herdr-tab-create`, `herdr-tab-close`, `herdr-tab-focus`, `herdr-tab-rename` | A tab has one visual form only, which is the tab bar of the TUI. The tab records in the cache went with them: nothing outside `herdr-state.el` read one. |
@@ -141,6 +149,7 @@ dashboard or `herdr-command-map` calls it.
 | `herdr-pane-run`, `herdr-pane-send-text`, `herdr-pane-wait-for-output`, `herdr-agent-wait` | Scripting of the session. The herdr CLI and the agent skill both do this already. |
 | `herdr-agent-read`, `herdr-agent-focus` | The same call as the pane command, with a different type of target. |
 | `herdr-agent-explain` | A debugging aid for the detection of agents. |
+| `herdr-agent-start`, and the dashboard's `a` key | A second door to the place `n` already goes, and a narrower one: it demanded an agent kind and a name, and took only a pane with no agent on it. |
 | `herdr-worktree-list`, `herdr-worktree-open` | The dashboard gets its own worktrees. `RET` on a worktree row opens it. |
 | `herdr-notification-show` | A notification on the herdr side, which nothing here needs. |
 | `herdr-adopt-shell`, `herdr-release-shell` | Obsolete since herdr 0.8.2, when every pane became attachable. |
@@ -155,4 +164,9 @@ names, the types and the enumerated values from the schema of the server. herdr.
 needs no generated menu of 91 entries, and no method is out of reach.
 
 `herdr-call` has no key. It is the surface of last resort, and it grew more necessary as the
-curated list got shorter: each of the 28 removed commands is one `M-x herdr-call` away.
+curated list got shorter: each removed command is one `M-x herdr-call` away.
+
+It is also the only thing that pulls in `herdr-call.el`. `herdr.el` requires that file
+explicitly. It used to arrive with `herdr-transient.el`, and deleting that file made
+`herdr-call` a `void-function` in a fresh Emacs — which no test caught, because the suite loads
+every file itself.

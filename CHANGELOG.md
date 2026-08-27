@@ -8,8 +8,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Unreleased
 
 This entry covers the whole divergence from
-[eddof13/herdr.el](https://github.com/eddof13/herdr.el). It holds 82 commits. It adds about
-12,900 lines and removes about 970.
+[eddof13/herdr.el](https://github.com/eddof13/herdr.el). It holds 123 commits. It adds about
+15,400 lines and removes about 2,600.
 
 ### Added
 
@@ -55,9 +55,10 @@ This entry covers the whole divergence from
 - **`herdr-command-map`.** A prefix keymap holding the verbs the dashboard holds, for use from
   anywhere else: `s` the status buffer, `f` go to a pane, `n` open a terminal, `k` close one,
   `w` go to a workspace, `p` the project workspace, `%` create a worktree, `g` resync. Bind it
-  yourself, the way `project-prefix-map` is bound. The letters are the dashboard's letters, so
-  there is one set to learn rather than two. There is no help key: `C-h` after the prefix lists
-  the bindings already.
+  yourself, the way `project-prefix-map` is bound — with `:bind-keymap` under `use-package`,
+  since it is a keymap and not a command. The letters are the dashboard's letters, so there is
+  one set to learn rather than two. There is no help key: `C-h` after the prefix lists the
+  bindings already.
 - **`herdr-dispatch-create-terminal`**, renamed from `herdr-dispatch-create-pane`. It creates a
   tab in the usual case but a whole workspace on a row whose directory has none open, so neither
   `pane` nor `tab` named it. What it always produces is a terminal, which is what the docs and
@@ -69,8 +70,8 @@ This entry covers the whole divergence from
   option: set it to nil for the old splitting behaviour.
 - **`herdr-new-terminal`.** Opens a terminal, asking where first: an open workspace, or a
   `project.el` project with no workspace open, which is created and then opened in.
-- **A test suite.** 460 hermetic tests across 15 files, and a live suite that includes a schema
-  drift test.
+- **A test suite.** 466 hermetic tests across 12 files, and a live suite of three files that
+  includes a schema drift test.
 - **Dependency resolution for the build.** `test/herdr-deps.el` finds `magit-section` and
   `transient` in the directories of `elpaca`, `package.el` and `straight.el`. A missing
   dependency is now a hard error that names `EXTRA_LOAD_PATH`.
@@ -81,18 +82,18 @@ This entry covers the whole divergence from
 - **`magit-section` 3.3 is now a hard dependency.** The dashboard is built on it.
 - **The modeline moved to `herdr-modeline.el`.** The command is now `herdr-modeline-mode`. The
   old name `herdr-agents-mode-line-mode` still works as an obsolete alias.
-- **Workspaces and tabs are now reconciled against the server.** Before, only panes were. Ghost
-  workspaces therefore collected for the life of a session. The new functions are
-  `herdr-state-reconcile-workspaces` and `herdr-state-reconcile-tabs`.
+- **Workspaces are now reconciled against the server.** Before, only panes were. Ghost workspaces
+  therefore collected for the life of a session. The new function is
+  `herdr-state-reconcile-workspaces`. Tabs were reconciled too for a while; that went with the
+  tab cache, below.
 - **A directory renders with `~/`.** The abbreviation is for display only. A command still uses
   the real path.
 - **`herdr-state-workspace-for-directory` is now public.** Both `herdr-project` and the
   `Inactive` section use it.
-- **The dashboard tree flattened to two levels.** Workspace and pane only; a tab no longer gets
-  its own row, since herdr's own attach client, `herdr terminal attach`, now takes any pane and
-  no longer needs an agent first. `n` creates a terminal as a fresh tab directly, and `t` is gone
-  from the dashboard keymap; `herdr-tab-create` and the tab commands remain reachable from
-  `herdr-transient-tab` for TUI users.
+- **The dashboard tree flattened.** A tab no longer gets its own row, since herdr's own attach
+  client, `herdr terminal attach`, now takes any pane and no longer needs an agent first. `n`
+  creates a terminal as a fresh tab directly, and `t` is gone from the dashboard keymap. The tab
+  commands went with it; `M-x herdr-call` reaches `tab.create` and the rest.
 - **One way to make a place to run something.** The dashboard's `n` now resolves a row that names
   a directory -- a worktree, a `main` row, an inactive project -- and opens the terminal there.
   Before, it resolved to nothing, and a nil `workspace_id` makes `tab.create` fall back to
@@ -104,10 +105,11 @@ This entry covers the whole divergence from
   `Inactive (N)` heading, or on the dashboard's own header line, resolved to no workspace, and a
   nil `workspace_id` makes `tab.create` fall back to whatever the server has focused. Both are
   now refused, the way every other verb already refused them.
-- **A reported agent no longer controls whether a pane is attachable.** Every pane already is.
-  `herdr-adopt-shell` and `herdr-release-shell` still work, and still put a pane in herdr's own
-  agent list — the modeline count, the agent picker and notifications — but nothing needs them
-  for a shell pane to get an Emacs buffer.
+- **A reported agent no longer controls whether a pane is attachable.** Every pane already is,
+  since herdr 0.8.2. Reporting one still puts a pane in herdr's own agent list — the modeline
+  count, the agent picker and notifications — but nothing needs it for a shell pane to get an
+  Emacs buffer, so the commands that did it are gone. `pane.report_agent` through
+  `M-x herdr-call` is how you name one by hand.
 
 ### Removed
 
@@ -142,21 +144,25 @@ This entry covers the whole divergence from
   Declared, not needed: `magit-section` requires `transient` itself, and Emacs has shipped one
   since 28.1, so it loads in any session that draws the dashboard. What changed is that no file
   here names it. Nothing changes at install time.
-- **Twenty-eight commands and the transient menu.** A command now exists only if the dashboard or
-  `herdr-command-map` calls it, which leaves eleven. Gone: `herdr-transient` and its six
-  sub-menus; the TUI layout commands `herdr-pane-split-right`/`-down`, `-zoom`, `-resize` and
-  `-swap`, which move nothing under `agent-windows` because Emacs owns the layout there; the four
-  `herdr-tab-*` commands, already hidden under that backend since a tab's only visual form is the
-  TUI's tab bar; the scripting commands `herdr-pane-run`, `-send-text`, `-wait-for-output` and
-  `herdr-agent-wait`, which the herdr CLI and the agent skill both cover; `herdr-agent-read` and
-  `herdr-agent-focus`, the same calls as their pane equivalents with a different target type;
-  `herdr-agent-explain`, `herdr-notification-show`, `herdr-worktree-list` and
-  `herdr-worktree-open`; and the adoption pair `herdr-adopt-shell`/`herdr-release-shell` with
-  `herdr-adopt-created-shells` and `herdr-shell-agent-name`, obsolete since herdr 0.8.2.
+- **Most of the commands, and the transient menu.** A command now exists only if the dashboard or
+  `herdr-command-map` calls it. The package had 44 commands and six transient menus; it has 21
+  commands, one of them new. Gone: `herdr-transient` and its five sub-menus, with
+  `herdr-transient-status`; the TUI layout commands `herdr-pane-split-right`/`-down`, `-zoom`,
+  `-resize` and `-swap`, which move nothing here because Emacs owns the layout; the four
+  `herdr-tab-*` commands, since a tab's only visual form is the TUI's tab bar; the scripting
+  commands `herdr-pane-run`, `-send-text`, `-wait-for-output` and `herdr-agent-wait`, which the
+  herdr CLI and the agent skill both cover; `herdr-agent-read` and `herdr-agent-focus`, the same
+  calls as their pane equivalents with a different target type; `herdr-agent-explain`,
+  `herdr-notification-show`, `herdr-worktree-list` and `herdr-worktree-open`; and the adoption
+  pair `herdr-adopt-shell`/`herdr-release-shell` with `herdr-adopt-created-shells` and
+  `herdr-shell-agent-name`, obsolete since herdr 0.8.2.
 
   None of it became unreachable. `M-x herdr-call` prompts its way to all 91 methods from the
   server's own schema, and that is what makes deleting a wrapper safe rather than lossy -- the
-  reason `herdr-call.el` and `herdr-schema.el` stayed while so much around them went.
+  reason `herdr-call.el` and `herdr-schema.el` stayed while so much around them went. `herdr.el`
+  requires `herdr-call.el` explicitly now: it used to arrive with `herdr-transient.el`, and
+  deleting that file made `herdr-call` a void function in a fresh Emacs. The test suite could not
+  see it, because the suite loads every file itself.
 - **`agent.start`, and everything that served it.** Gone: the command `herdr-agent-start`, the
   dashboard's `a` key and its `herdr-dispatch-create-agent` verb, the create menu's agent entry
   and `--kind` argument, the option `herdr-agent-kinds`, and the picker
@@ -166,9 +172,9 @@ This entry covers the whole divergence from
   to the same place: one that demanded a kind and a name up front and could only take a pane with
   no agent on it. `herdr-call` still reaches `agent.start` if you want it.
 - **`herdr-menu`.** Its whole value was guaranteeing the start sequence before the compact menu.
-  `herdr-command-map`'s `s` runs the start sequence and `?` reaches the menu, so a second entry
-  point whose content was "the same thing but ending elsewhere" is duplication the prefix exists
-  to remove.
+  `herdr-command-map`'s `s` runs the start sequence and the menu it opened is gone as well, so a
+  second entry point whose content was "the same thing but ending elsewhere" is duplication the
+  prefix exists to remove.
 - **`herdr-promote-shell`, and the poll behind it.** herdr relabels a pane on its own when an
   agent starts in it, so both existed to force a relabel that already happens. The poll called
   `agent.explain` on every reported shell at every directory poll: 936 calls in one session, three
@@ -198,6 +204,10 @@ This entry covers the whole divergence from
   identity to restore and survives the row above it changing width. The header line itself is
   the root legitimately and stays where it is.
 
+- **`herdr-call` is no longer a void function in a fresh Emacs.** It was reachable only because
+  `herdr-transient.el` required `herdr-call.el`, and that file is gone. `herdr.el` requires it
+  now. A batch suite cannot catch this: it loads every file itself, so the function is bound
+  either way.
 - **A slow server no longer freezes Emacs.** Every synchronous call on a timer now binds
   `herdr-rpc-timeout` to `herdr-rpc-background-timeout`, which is 2 seconds.
 - **A busy server no longer makes the dashboard flicker.** Redraws now group inside

@@ -10,7 +10,7 @@ segment and completion pickers.
 ## This is a fork
 
 Upstream is [eddof13/herdr.el](https://github.com/eddof13/herdr.el). This copy has moved a long
-way from it: 82 commits, about 12,900 lines added against 970 removed, and three source files
+way from it: 123 commits, about 15,400 lines added against 2,600 removed, and three source files
 that do not exist upstream.
 
 | | Upstream | Here |
@@ -18,12 +18,15 @@ that do not exist upstream.
 | herdr protocol | 19 | 20 (herdr 0.8.2) |
 | Session view | `herdr-agents.el`, a flat list | `herdr-dispatch.el` and `herdr-tree.el`, a foldable magit-section tree |
 | Modeline | inline in the agents buffer | `herdr-modeline.el`, its own file |
+| Surfaces | a transient menu of menus, plus the agents buffer | the dashboard and one prefix keymap |
+| Commands | 44, plus six transient menus | 21 |
 | Extra dependency | none | `magit-section` 3.3 |
-| Tests | one agents test file | 460 offline tests across 15 files, plus a live suite |
+| Tests | one agents test file | 466 offline tests across 12 files, plus a live suite |
 
 The large additions are the dashboard and the pure tree layer behind it, a rewritten
-`herdr-state.el` that reconciles workspaces and tabs rather than only panes, and the test suite.
-Everything else started upstream and has been corrected in place.
+`herdr-state.el` that reconciles workspaces rather than only panes, and the test suite. The large
+deletions are `herdr-transient.el` and the commands only a menu ever called. Everything else
+started upstream and has been corrected in place.
 
 Rebasing onto upstream is no longer realistic. Treat upstream as a source of ideas and protocol
 news, not as a branch to merge.
@@ -179,12 +182,13 @@ The dashboard is where you act on something you can see. `herdr-command-map` is 
 something you cannot, by naming it in a picker. That is the whole interface.
 
 There used to be a third, `herdr-transient` — a menu of menus over the same commands, with a
-`herdr-menu` entry point to reach it. Both are gone, along with twenty-eight commands that only a
-menu ever called. What went and why:
+`herdr-menu` entry point to reach it. Both are gone, along with the commands only a menu ever
+called. The package had 44 commands and six transient menus; it has 21 commands now, one of them
+new. What went and why:
 
 | Gone | Why |
 | --- | --- |
-| `herdr-transient` and its six sub-menus, and the dashboard's `c` create menu | surfaces over commands the other two already reach. `c` offered the same three verbs as `w`, `n` and `%` plus three arguments; two only skipped a prompt, and the third — a worktree's base ref — is a prompt now |
+| `herdr-transient` and its five sub-menus, `herdr-menu`, `herdr-transient-status`, and the dashboard's `c` create menu | surfaces over commands the other two already reach. `c` offered the same three verbs as `w`, `n` and `%` plus three arguments; two only skipped a prompt, and the third — a worktree's base ref — is a prompt now |
 | `herdr-pane-split-right` / `-down`, `-zoom`, `-resize`, `-swap` | TUI layout. Emacs owns the layout, so these move nothing you can see |
 | `herdr-tab-create` / `-close` / `-focus` / `-rename`, and the tab cache behind them | a tab's only visual form is the TUI's tab bar. Nothing outside `herdr-state.el` ever read a tab record |
 | The `session` backend | the herdr TUI in one ghostel buffer. `ghostel-project` runs the herdr CLI just as well |
@@ -192,6 +196,7 @@ menu ever called. What went and why:
 | `herdr-pane-run`, `-send-text`, `-wait-for-output`, `herdr-agent-wait` | scripting the session from Emacs, which the herdr CLI and the agent skill both already do |
 | `herdr-agent-read`, `herdr-agent-focus` | the same call as `herdr-pane-read` and `-focus` with a different target type |
 | `herdr-agent-explain`, `herdr-notification-show`, `herdr-worktree-list`, `herdr-worktree-open` | detection debugging; a niche notification; the dashboard fetches its own worktrees; `RET` on a worktree row already opens it |
+| `herdr-agent-start`, and the dashboard's `a` | a second door to the one place `n` already goes. herdr's own TUI has no such door: a new tab opens a shell, and the agent is whatever you run in it |
 | `herdr-adopt-shell`, `herdr-release-shell` | obsolete since herdr 0.8.2, when every pane became attachable |
 
 None of it is unreachable. `M-x herdr-call` still prompts its way to all 91 methods from the
@@ -227,12 +232,15 @@ changes for you at install time.
 (use-package herdr
   :ensure nil                          ; local checkout, not on MELPA
   :load-path "~/src/herdr.el"
-  :bind (("C-x M" . herdr)             ; pairs with C-x m if you bind ghostel there
-         ("C-c H" . herdr-command-map)
-         :map project-prefix-map
+  :bind (:map project-prefix-map
          ("h" . herdr-project))
+  :bind-keymap ("C-c H" . herdr-command-map)
   :config (herdr-modeline-mode 1))
 ```
+
+`herdr-command-map` is a keymap, not a command, so it needs `:bind-keymap` rather than `:bind`.
+Every entry point is one key away under it, `C-c H s` included, so no second global key is
+needed.
 
 `:ensure nil` matters if you set `use-package-always-ensure`. Without it Emacs tries MELPA and
 fails at startup.
@@ -273,7 +281,8 @@ cannot do that, being a child of Emacs that dies with it.
 Since herdr 0.8.2, `herdr terminal attach` takes any pane — agent or plain shell alike — so a
 shell pane gets a buffer the same way an agent pane does, on first visit; there is no longer a
 class of pane it refuses. Before you attach to one, it stays reachable through `pane.read`,
-`pane.send_text`, `pane.wait_for_output` and the menu, and `ghostel-project` covers ordinary
+`pane.send_text` and `pane.wait_for_output` — `M-x herdr-call` away each — and `ghostel-project`
+covers ordinary
 interactive shells outside herdr entirely.
 
 ## What a pane is
@@ -339,7 +348,7 @@ guessing from measurement.
 per-pane status subscription fifty lines down correctly uses `event_hub.current_sequence()`. It is
 an upstream bug, and the fix is one line per match arm.
 
-Measured on a live 0.8.2 server with the 23 subscriptions this package uses: 253 events in 5
+Measured on a live 0.8.2 server with the 18 subscriptions this package uses: 253 events in 5
 seconds, still arriving when the probe stopped. Events carry no sequence number and no timestamp,
 so a client cannot tell a replay from a live event and cannot filter it out.
 
@@ -351,7 +360,7 @@ Full analysis, with the source excerpts and the two wrong readings kept visible:
 
 ## Commands
 
-Eleven curated commands cover the methods the two surfaces call. `M-x herdr-call` reaches all 91,
+Twelve curated commands cover the methods the two surfaces call. `M-x herdr-call` reaches all 91,
 prompting for each parameter from the server's own schema. Nothing is out of reach and there is no
 generated 91-entry menu.
 
@@ -415,14 +424,14 @@ offers focus, read, prompt and close.
 ## Development
 
 ```bash
-make test        # 460 tests, hermetic; no herdr required, uses a fake server
+make test        # 466 tests, hermetic; no herdr required, uses a fake server
 make test-live   # needs a running herdr; includes the schema drift test
 make compile     # byte-compile, warnings are errors
 ```
 
 Both targets run `emacs -Q -L .`, which reads no init file, so `test/herdr-deps.el` searches the
-package directories of `elpaca`, `package.el` and `straight.el` for `magit-section` and
-`magit-section`. A missing one is a hard error naming `EXTRA_LOAD_PATH`. Nothing skips.
+package directories of `elpaca`, `package.el` and `straight.el` for `magit-section` and what it
+needs. A missing one is a hard error naming `EXTRA_LOAD_PATH`. Nothing skips.
 
 Both suites run in batch, and that is a real blind spot. A batch Emacs has no frame, so it cannot
 catch a modeline rendering `*invalid*`, a command splitting a window, or a `require` that nothing
