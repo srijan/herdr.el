@@ -147,21 +147,6 @@ the two is in the cache under that name."
   (seq-find (lambda (workspace) (equal id (alist-get 'workspace_id workspace)))
             (herdr-state-workspaces state)))
 
-(defcustom herdr-shell-agent-name "shell"
-  "Agent name `herdr-adopt-shell' used to report for plain shells.
-Obsolete: since herdr 0.8.2, `herdr terminal attach' takes any pane, so
-nothing needs to be reported to make a pane attachable."
-  :type 'string
-  :group 'herdr)
-(make-obsolete-variable 'herdr-shell-agent-name nil "0.2.0")
-
-(defun herdr-state-shell-pane-p (pane)
-  "Return non-nil when PANE was adopted via `herdr-adopt-shell'."
-  (equal (alist-get 'agent pane) (bound-and-true-p herdr-shell-agent-name)))
-(make-obsolete 'herdr-state-shell-pane-p
-               "test (alist-get 'agent pane) instead; every pane is attachable now."
-               "0.2.0")
-
 (defun herdr-state-attachable (state)
   "Return the panes in STATE a terminal client can attach to.
 `herdr terminal attach' takes any pane's raw terminal stream, so that

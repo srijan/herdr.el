@@ -31,6 +31,14 @@
 (require 'herdr-term)
 (require 'herdr-cmd)
 (require 'herdr-modeline)
+;; Required rather than left to its autoload cookie.  `herdr-call' is the
+;; escape hatch every deleted command now relies on — twenty-eight of
+;; them, reachable only through it — so "is it loaded?" must not depend
+;; on a package manager having generated an autoload file.  It used to
+;; arrive with `herdr-transient', which put it on `:'; nothing pulls it
+;; in since that file went, and `M-x herdr-call' answered
+;; `void-function' in a session that had only required this one.
+(require 'herdr-call)
 
 (declare-function project-root "project" (project))
 (declare-function project-current "project" (&optional maybe-prompt directory))
@@ -95,20 +103,13 @@ The herdr server keeps running; agents are unaffected."
 The one entry point that guarantees the start sequence has run:
 `herdr-start\\=' brings up the server, the terminals and the event
 stream, so the dashboard is drawn from a cache with something in it
-rather than from a cold one.  `herdr-agents\\=' on its own does not, and
-neither does `herdr-transient\\=' — which is why `s\\=' in
-`herdr-command-map\\=' is bound here rather than there."
+rather than from a cold one.  `herdr-agents\\=' on its own does not,
+which is why `s\\=' in `herdr-command-map\\=' is bound here rather than
+there."
   (interactive)
   (herdr-start)
   (herdr-term-display)
   (herdr-agents))
-
-;; Loaded last: herdr-transient autoloads `herdr-project', which is
-;; defined above, so requiring it here rather than at the top avoids a
-;; circular load while still making the whole command surface available
-;; as soon as this file is loaded.  A lazy require inside `herdr' would
-;; leave `M-x herdr-transient' broken until `M-x herdr' had run once.
-(require 'herdr-transient)
 
 (defvar herdr-command-map
   (let ((map (make-sparse-keymap)))
@@ -118,9 +119,8 @@ neither does `herdr-transient\\=' — which is why `s\\=' in
     (define-key map "k" #'herdr-pane-close)
     (define-key map "w" #'herdr-workspace-focus)
     (define-key map "p" #'herdr-project)
-    (define-key map "%" #'herdr-transient-worktree)
+    (define-key map "%" #'herdr-worktree-create)
     (define-key map "g" #'herdr-state-resync)
-    (define-key map "?" #'herdr-transient)
     map)
   "Prefix keymap for herdr, meant to be bound to one key of your own.
 
@@ -136,11 +136,16 @@ the difference is only where the target comes from, a picker here and
 point there.  `s\\=' is the status buffer, the one entry point that
 guarantees the start sequence has run — see `herdr\\='.
 
-`?\\=' opens `herdr-transient\\='.  It reaches it directly, with no start
-sequence of its own, which is what `herdr-menu\\=' used to add.  That
-command is gone: `s\\=' guarantees the startup, and a second entry point
-whose whole content was \"the same thing but ending elsewhere\" is the
-kind of duplication this prefix exists to remove.")
+There is no help key.  `C-h\\=' after the prefix lists these bindings,
+and `C-h m\\=' in `*herdr-agents*\\=' describes that buffer\\='s own.  Emacs
+answers both questions already; a third way to ask was one more thing to
+remember.
+
+`%\\=' creates a worktree rather than opening a menu of four worktree
+commands.  Listing them needed no command — the dashboard draws every
+worktree it knows about — opening one is `RET\\=' on its row, and removing
+one is `k\\=' there.  Creating is the only one of the four with nowhere
+else to be.")
 
 (provide 'herdr)
 ;;; herdr.el ends here

@@ -38,7 +38,6 @@
 (declare-function herdr-pane-read "herdr-cmd"
                   (&optional pane-id source lines))
 (declare-function herdr-pane-close "herdr-cmd" (&optional pane-id))
-(declare-function herdr-pane-zoom "herdr-cmd" (&optional pane-id))
 (declare-function herdr-agent-prompt "herdr-cmd" (text &optional target))
 
 ;; project.el is optional here, the same way it is in `herdr.el' and
@@ -83,17 +82,6 @@
         (format "  %-16s %s panes"
                 (or (alist-get 'label workspace) "")
                 (or (alist-get 'pane_count workspace) 0))
-      "")))
-
-(defun herdr-select--annotate-tab (tab-id)
-  "Return the annotation string for TAB-ID."
-  (let ((tab (seq-find (lambda (candidate)
-                         (equal tab-id (alist-get 'tab_id candidate)))
-                       (herdr-state-tabs (herdr-state-current)))))
-    (if tab
-        (format "  %-8s %s panes"
-                (or (alist-get 'label tab) "")
-                (or (alist-get 'pane_count tab) 0))
       "")))
 
 (defun herdr-select--read (prompt candidates category annotator)
@@ -170,14 +158,6 @@ project.el does not."
                               (herdr-state-workspaces (herdr-state-current)))
                       'herdr-workspace #'herdr-select--annotate-workspace))
 
-(defun herdr-select-tab (&optional prompt)
-  "Read a tab id, defaulting the prompt to PROMPT."
-  (herdr-state-refresh)
-  (herdr-select--read (or prompt "Tab: ")
-                      (mapcar (lambda (tab) (alist-get 'tab_id tab))
-                              (herdr-state-tabs (herdr-state-current)))
-                      'herdr-tab #'herdr-select--annotate-tab))
-
 (defun herdr-select-current-target (&optional buffer)
   "Return the pane a command would act on from BUFFER, or nil.
 Never prompts, so it is safe to call while rendering a menu."
@@ -215,8 +195,7 @@ you last went to — which could be a different agent entirely."
 
 (defconst herdr-select-annotators
   '((herdr-pane      herdr-select--annotate-pane)
-    (herdr-workspace herdr-select--annotate-workspace)
-    (herdr-tab       herdr-select--annotate-tab))
+    (herdr-workspace herdr-select--annotate-workspace))
   "Annotator per completion category, in `marginalia-annotators' order.")
 
 (defun herdr-select--register-marginalia ()
@@ -238,7 +217,6 @@ you last went to — which could be a different agent entirely."
     (define-key map "r" #'herdr-pane-read)
     (define-key map "p" #'herdr-agent-prompt)
     (define-key map "k" #'herdr-pane-close)
-    (define-key map "z" #'herdr-pane-zoom)
     map)
   "Embark actions offered on a herdr pane candidate.")
 

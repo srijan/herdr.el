@@ -5,7 +5,7 @@ with herdr's terminals hosted **inside** Emacs via [ghostel](https://github.com/
 
 No second terminal application sits in the loop. Commands go over herdr's unix socket. A live
 event stream keeps a cache of the session, and that cache feeds a foldable dashboard, a modeline
-segment, a [transient](https://github.com/magit/transient) menu, and completion pickers.
+segment and completion pickers.
 
 ## This is a fork
 
@@ -19,7 +19,7 @@ that do not exist upstream.
 | Session view | `herdr-agents.el`, a flat list | `herdr-dispatch.el` and `herdr-tree.el`, a foldable magit-section tree |
 | Modeline | inline in the agents buffer | `herdr-modeline.el`, its own file |
 | Extra dependency | none | `magit-section` 3.3 |
-| Tests | one agents test file | 504 offline tests across 16 files, plus a live suite |
+| Tests | one agents test file | 482 offline tests across 15 files, plus a live suite |
 
 The large additions are the dashboard and the pure tree layer behind it, a rewritten
 `herdr-state.el` that reconciles workspaces and tabs rather than only panes, and the test suite.
@@ -34,17 +34,24 @@ news, not as a branch to merge.
 repositories, their checkouts and their panes, and the place every command is reachable from.
 
 ```
-M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
+herdr   3 workspaces  5 panes  2▶1✓
 
- Go to            Menus             Session
-  p pane           P pane…           g resync
-  a agent          A agent…          l agents
-  w workspace      W workspace…      s status
-  t tab *          T tab… *          : any method…
-                   % worktree…
+example-api (1)              ~/src/example-api/
+  · shell       idle      w4:p1   npm run watch
+  ✓ claude      done      w4:p5   Add the pagination endpoint
 
-  * session backend only
+herdr.el (2)                 ~/src/herdr.el/
+  main (1)
+    ▶ claude    working   w7:p1   Fix the reconcile order
+  feat-dispatch (1)          ~/src/herdr.el-worktrees/feat-dispatch/ ▶
+    ▶ claude    working   w9:p1   Nest worktrees under their repository
+
+Inactive (24)
 ```
+
+It takes the frame rather than splitting one. That deletes your other windows, and `q` does not
+bring them back — it restores the buffer this window held. Set `herdr-dispatch-display-action` to
+nil for the old splitting behaviour.
 
 | Key | Action |
 | --- | --- |
@@ -59,7 +66,6 @@ M-x herdr   [w1:p1  claude:idle]   C-u on any command retargets
 | `k` | close or remove the thing at point |
 | `g` | refresh from the cache |
 | `q` | quit the window |
-| `?` | open `herdr-transient` |
 
 Every verb acts on the most specific thing under point. `n` on a row that names a directory
 rather than a workspace — a worktree, a `main` row, an inactive project — opens the terminal in
@@ -155,9 +161,8 @@ anywhere else. Bind it yourself — which key is spare is your question, not thi
 | `k` | pick a shell or agent and close it |
 | `w` | pick a workspace and go to it |
 | `p` | the workspace for the current project, created if absent |
-| `%` | the worktree menu |
+| `%` | create a git worktree |
 | `g` | resync the cache |
-| `?` | open `herdr-transient` |
 
 The letters are the dashboard's letters, so there is one set to learn rather than two. `n` opens a
 terminal and `k` closes one here exactly as they do on a row in `*herdr-agents*`; the difference
@@ -165,21 +170,35 @@ is only where the target comes from, a picker here and point there.
 
 `s` is bound to `herdr` rather than `herdr-agents` because `herdr` is the entry point that
 guarantees the start sequence has run — the server, the terminals and the event stream — so the
-dashboard is drawn from a cache with something in it. `herdr-transient` called directly skips that
-startup, which is what the removed `herdr-menu` used to add; `s` covers it and `?` reaches the
-menu, so the command is gone rather than kept.
+dashboard is drawn from a cache with something in it.
 
-## Targeting and keys
+There is no help key. `C-h` after the prefix lists these bindings and `C-h m` in `*herdr-agents*`
+describes that buffer's; Emacs answers both already.
+
+## Two surfaces, and no third
+
+The dashboard is where you act on something you can see. `herdr-command-map` is where you act on
+something you cannot, by naming it in a picker. That is the whole interface.
+
+There used to be a third, `herdr-transient` — a menu of menus over the same commands, with a
+`herdr-menu` entry point to reach it. Both are gone, along with twenty-eight commands that only a
+menu ever called. What went and why:
+
+| Gone | Why |
+| --- | --- |
+| `herdr-transient` and its six sub-menus | a surface over commands the other two already reach |
+| `herdr-pane-split-right` / `-down`, `-zoom`, `-resize`, `-swap` | TUI layout. Under `agent-windows`, Emacs owns the layout and these move nothing you can see |
+| `herdr-tab-create` / `-close` / `-focus` / `-rename` | already hidden under `agent-windows`; a tab's only visual form is the TUI's tab bar |
+| `herdr-pane-run`, `-send-text`, `-wait-for-output`, `herdr-agent-wait` | scripting the session from Emacs, which the herdr CLI and the agent skill both already do |
+| `herdr-agent-read`, `herdr-agent-focus` | the same call as `herdr-pane-read` and `-focus` with a different target type |
+| `herdr-agent-explain`, `herdr-notification-show`, `herdr-worktree-list`, `herdr-worktree-open` | detection debugging; a niche notification; the dashboard fetches its own worktrees; `RET` on a worktree row already opens it |
+| `herdr-adopt-shell`, `herdr-release-shell` | obsolete since herdr 0.8.2, when every pane became attachable |
+
+None of it is unreachable. `M-x herdr-call` still prompts its way to all 91 methods from the
+server's own schema, which is what makes deleting a wrapper safe rather than lossy.
 
 Commands act on the pane of the buffer you are in, if that is a herdr terminal, and otherwise on
-the pane herdr has focused. `C-u` on any command prompts instead. The header names the pane that
-will be acted on, so it is never a guess.
-
-A lowercase noun jumps to that kind of thing; the same letter uppercased opens its menu. Inside a
-menu the verbs stay constant: `c` create, `f` focus, `r` read, `R` rename, `k` close or remove,
-`l` list. `?` and `C-h` belong to transient's own help, so status is `s`. Worktrees are on `%` and
-the raw-method escape hatch on `:`, matching where magit puts those two ideas. Tests assert this,
-not just review.
+the pane herdr has focused. `C-u` on any command prompts instead.
 
 Tabs are hidden entirely under `agent-windows`. A tab is a grouping inside a workspace whose only
 visual form is the TUI's tab bar, so where nothing renders a tab, nothing tab-shaped is offered.
@@ -342,7 +361,7 @@ Full analysis, with the source excerpts and the two wrong readings kept visible:
 
 ## Commands
 
-33 curated commands cover the methods worth a keybinding. `M-x herdr-call` reaches all 91,
+Eleven curated commands cover the methods the two surfaces call. `M-x herdr-call` reaches all 91,
 prompting for each parameter from the server's own schema. Nothing is out of reach and there is no
 generated 91-entry menu.
 
@@ -353,10 +372,8 @@ Worth knowing about:
   the one way to make a place to run something; there is no `agent.start` command beside it.
 - `herdr-worktree-create` takes a branch name to a git worktree with its own herdr workspace,
   using herdr's native worktree support.
-- `herdr-pane-read` and `herdr-agent-read` put terminal output into a real Emacs buffer.
-  `recent_unwrapped` undoes terminal line-wrapping, which is what makes the result greppable.
-- `herdr-agent-wait` and `herdr-pane-wait-for-output` run asynchronously, so Emacs stays
-  responsive. "Tell me when the dev server prints `Listening on`" is one command.
+- `herdr-pane-read` puts terminal output into a real Emacs buffer. `recent_unwrapped` undoes
+  terminal line-wrapping, which is what makes the result greppable.
 - `herdr-project` focuses or creates the herdr workspace for the current `project.el` project.
 
 Terminal buffers track their pane's working directory (`herdr-term-track-directory`), so
@@ -382,8 +399,8 @@ herdr integration install claude     # writes ~/.claude/hooks/herdr-agent-state.
 herdr integration status
 ```
 
-That is what makes the modeline segment, the dashboard and `herdr-agent-wait` genuinely useful
-rather than approximate. Note it writes to the agent's own config.
+That is what makes the modeline segment and the dashboard genuinely useful rather than
+approximate. Note it writes to the agent's own config.
 
 Agents can also drive herdr themselves, via herdr's
 [agent skill](https://herdr.dev/docs/agent-skill/), splitting panes, running commands, waiting on
@@ -403,12 +420,12 @@ there, it appears in the agents list and modeline immediately, same as any other
 Pickers are plain `completing-read` over the cache, so they inherit whatever completion stack you
 already use. With `marginalia` the annotation shows agent, status, title and directory, and with
 `orderless` that makes `web claude blocked` a working query. `embark-act` on a pane candidate
-offers focus, read, prompt, close and zoom.
+offers focus, read, prompt and close.
 
 ## Development
 
 ```bash
-make test        # 504 tests, hermetic; no herdr required, uses a fake server
+make test        # 482 tests, hermetic; no herdr required, uses a fake server
 make test-live   # needs a running herdr; includes the schema drift test
 make compile     # byte-compile, warnings are errors
 ```

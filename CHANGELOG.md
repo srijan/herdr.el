@@ -54,12 +54,18 @@ This entry covers the whole divergence from
   that directory -- opening it as a workspace first if nothing is open there yet.
 - **`herdr-command-map`.** A prefix keymap holding the verbs the dashboard holds, for use from
   anywhere else: `s` the status buffer, `f` go to a pane, `n` open a terminal, `k` close one,
-  `w` go to a workspace, `p` the project workspace, `%` worktrees, `g` resync, `?` the menu.
-  Bind it yourself, the way `project-prefix-map` is bound. The letters are the dashboard's
-  letters, so there is one set to learn rather than two.
+  `w` go to a workspace, `p` the project workspace, `%` create a worktree, `g` resync. Bind it
+  yourself, the way `project-prefix-map` is bound. The letters are the dashboard's letters, so
+  there is one set to learn rather than two. There is no help key: `C-h` after the prefix lists
+  the bindings already.
+- **`herdr-dispatch-display-action`.** The dashboard takes the frame rather than splitting a
+  window. A pane row has four columns and the last two carry the news -- the pane id, and what
+  the agent reports it is working on -- so half a frame cuts off the part worth reading. Taking
+  the frame deletes the other windows and `q` does not bring them back, which is why this is an
+  option: set it to nil for the old splitting behaviour.
 - **`herdr-new-terminal`.** Opens a terminal, asking where first: an open workspace, or a
   `project.el` project with no workspace open, which is created and then opened in.
-- **A test suite.** 504 hermetic tests across 16 files, and a live suite that includes a schema
+- **A test suite.** 482 hermetic tests across 15 files, and a live suite that includes a schema
   drift test.
 - **Dependency resolution for the build.** `test/herdr-deps.el` finds `magit-section` and
   `transient` in the directories of `elpaca`, `package.el` and `straight.el`. A missing
@@ -104,6 +110,21 @@ This entry covers the whole divergence from
 - **The `pane.updated` subscription.** The event fires about 7.5 times each second and carries a
   full pane record, but it stops exactly when an agent becomes idle. Connection B now carries
   the statuses, and `herdr-state-reconcile-panes` carries the rest.
+- **Twenty-eight commands and the transient menu.** A command now exists only if the dashboard or
+  `herdr-command-map` calls it, which leaves eleven. Gone: `herdr-transient` and its six
+  sub-menus; the TUI layout commands `herdr-pane-split-right`/`-down`, `-zoom`, `-resize` and
+  `-swap`, which move nothing under `agent-windows` because Emacs owns the layout there; the four
+  `herdr-tab-*` commands, already hidden under that backend since a tab's only visual form is the
+  TUI's tab bar; the scripting commands `herdr-pane-run`, `-send-text`, `-wait-for-output` and
+  `herdr-agent-wait`, which the herdr CLI and the agent skill both cover; `herdr-agent-read` and
+  `herdr-agent-focus`, the same calls as their pane equivalents with a different target type;
+  `herdr-agent-explain`, `herdr-notification-show`, `herdr-worktree-list` and
+  `herdr-worktree-open`; and the adoption pair `herdr-adopt-shell`/`herdr-release-shell` with
+  `herdr-adopt-created-shells` and `herdr-shell-agent-name`, obsolete since herdr 0.8.2.
+
+  None of it became unreachable. `M-x herdr-call` prompts its way to all 91 methods from the
+  server's own schema, and that is what makes deleting a wrapper safe rather than lossy -- the
+  reason `herdr-call.el` and `herdr-schema.el` stayed while so much around them went.
 - **`agent.start`, and everything that served it.** Gone: the command `herdr-agent-start`, the
   dashboard's `a` key and its `herdr-dispatch-create-agent` verb, the create menu's agent entry
   and `--kind` argument, the option `herdr-agent-kinds`, and the picker

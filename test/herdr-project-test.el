@@ -139,18 +139,57 @@ here, point there."
                    ("k" . herdr-pane-close)
                    ("w" . herdr-workspace-focus)
                    ("p" . herdr-project)
-                   ("%" . herdr-transient-worktree)
-                   ("g" . herdr-state-resync)
-                   ("?" . herdr-transient)))
+                   ("%" . herdr-worktree-create)
+                   ("g" . herdr-state-resync)))
     (should (eq (cdr entry) (lookup-key herdr-command-map (car entry))))
     (should (commandp (cdr entry)))))
 
-(ert-deftest herdr-command-map-replaces-herdr-menu ()
-  "`herdr-menu' was `herdr-start' plus `herdr-transient', and its whole
-value was guaranteeing the startup before the menu.  `s' guarantees the
-startup and `?' reaches the menu, so the command is gone rather than
-kept as an alias for a thing the prefix already does."
-  (should-not (fboundp 'herdr-menu)))
+(ert-deftest herdr-dispatch-takes-the-frame-rather-than-splitting-it ()
+  "The dashboard is a whole-session view with four columns to a pane row.
+Half a frame truncates the two that carry the news, the pane id and what
+the agent is working on, so `herdr-agents' passes its own action rather
+than letting `pop-to-buffer' split whatever window it finds.
+
+Asserted on the action reaching `pop-to-buffer', not on the resulting
+window count: a batch Emacs has one window and `display-buffer-full-frame'
+is a no-op in it, so counting windows here would pass against no action
+at all."
+  (let (action)
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (_buffer &optional given &rest _) (setq action given)))
+              ((symbol-function 'herdr-dispatch-refresh) #'ignore))
+      (herdr-agents)
+      (should (equal '(display-buffer-full-frame) action))
+      (should (equal herdr-dispatch-display-action action)))
+    ;; And it is a knob, so the old splitting behaviour is one setq away.
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (_buffer &optional given &rest _) (setq action given)))
+              ((symbol-function 'herdr-dispatch-refresh) #'ignore))
+      (let ((herdr-dispatch-display-action nil))
+        (herdr-agents)
+        (should-not action)))))
+
+(ert-deftest herdr-requires-the-escape-hatch-rather-than-autoloading-it ()
+  "`herdr-call' is what makes deleting twenty-eight commands safe rather
+than lossy, so it must be there whenever this package is.
+
+It used to arrive with `herdr-transient', which put it on `:'.  With
+that file gone nothing pulled it in, and `M-x herdr-call' answered
+`void-function' in a session that had only required `herdr' — caught in
+a real frame, not by this suite, which loads every file anyway.  Asserted
+on the `require' rather than on `fboundp' for that reason: `fboundp'
+here is true whichever way the symbol arrived."
+  (should (memq 'herdr-call features))
+  (should (commandp 'herdr-call)))
+
+(ert-deftest herdr-command-map-is-the-only-menu ()
+  "`herdr-menu' and `herdr-transient' were both surfaces over the same
+commands this map and the dashboard already reach.  Neither survives,
+and `?' is unbound rather than repointed: `C-h' after the prefix lists
+these bindings already."
+  (should-not (fboundp 'herdr-menu))
+  (should-not (fboundp 'herdr-transient))
+  (should-not (lookup-key herdr-command-map "?")))
 
 ;;; Startup, shutdown and the protocol check
 

@@ -15,7 +15,7 @@ behaviour of the server that the herdr documentation does not state.
 
 ```bash
 make compile     # byte-compile. A warning stops the build.
-make test        # 504 tests. No herdr server is necessary.
+make test        # 482 tests. No herdr server is necessary.
 make test-live   # more tests. A herdr server is necessary.
 ```
 
@@ -61,7 +61,6 @@ faults:
 
 - A modeline that renders `*invalid*`.
 - A command that splits a window.
-- A transient entry that nobody added.
 
 Several faults passed a green suite. A person found them by driving a real Emacs under a PTY.
 

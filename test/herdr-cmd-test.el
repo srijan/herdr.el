@@ -59,9 +59,54 @@
   (let ((names (mapcar #'car herdr-cmd-methods)))
     (should (= (length names) (length (delete-dups (copy-sequence names)))))))
 
-(ert-deftest herdr-cmd-covers-the-curated-surface ()
-  "Guard against the registry quietly shrinking."
-  (should (>= (length herdr-cmd-methods) 27)))
+(ert-deftest herdr-cmd-is-the-set-it-means-to-be ()
+  "The registry is pinned rather than floored.
+
+It used to assert a minimum length, which is the right guard for a
+surface meant to grow and the wrong one for a surface deliberately cut
+back: a floor cannot notice a command being added, and adding one is now
+the change worth arguing about.  Every entry here is called by the
+dashboard or by `herdr-command-map'; anything else is `herdr-call'."
+  (should (equal '(herdr-pane-close
+                   herdr-pane-rename
+                   herdr-pane-focus
+                   herdr-pane-read
+                   herdr-workspace-create
+                   herdr-workspace-close
+                   herdr-workspace-focus
+                   herdr-workspace-rename
+                   herdr-worktree-create
+                   herdr-worktree-remove
+                   herdr-agent-prompt)
+                 (mapcar #'car herdr-cmd-methods))))
+
+(ert-deftest herdr-cmd-offers-no-surface-the-dashboard-does-not-use ()
+  "The commands cut, asserted absent rather than merely unbound.
+
+Layout commands (`pane.split', `pane.zoom', `pane.resize', `pane.swap')
+moved nothing under `agent-windows', where Emacs owns the layout.  Tab
+commands were already hidden under that backend.  `herdr-agent-read' and
+`herdr-agent-focus' were the same call as their pane equivalents with a
+different target type.  The adoption pair has been obsolete since herdr
+0.8.2.  Every one of them is still reachable through \\[herdr-call],
+which is what makes deleting them safe."
+  (dolist (command '(herdr-pane-split-right herdr-pane-split-down
+                     herdr-pane-zoom herdr-pane-resize herdr-pane-swap
+                     herdr-pane-send-text herdr-pane-run
+                     herdr-pane-wait-for-output
+                     herdr-tab-create herdr-tab-close herdr-tab-focus
+                     herdr-tab-rename
+                     herdr-worktree-list herdr-worktree-open
+                     herdr-agent-read herdr-agent-wait herdr-agent-focus
+                     herdr-agent-explain
+                     herdr-notification-show
+                     herdr-adopt-shell herdr-release-shell
+                     herdr-transient))
+    (should-not (fboundp command)))
+  (dolist (variable '(herdr-adopt-created-shells herdr-shell-agent-name))
+    (should-not (boundp variable)))
+  ;; The escape hatch that makes the rest of this test safe.
+  (should (commandp 'herdr-call)))
 
 (ert-deftest herdr-cmd-read-text-unwraps-the-read-envelope ()
   "pane.read and agent.read nest their text under a `read' object."
@@ -108,27 +153,6 @@ of the command silently going nowhere."
           (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
         (herdr-pane-focus "w1:p7")
         (should (equal "w1:p7" deferred))))))
-
-(ert-deftest herdr-agent-focus-selects-a-buffer ()
-  (let (selected)
-    (cl-letf (((symbol-function 'herdr-term-select-pane)
-               (lambda (pane) (setq selected pane)))
-              ((symbol-function 'herdr-term-select-focused) (lambda () nil)))
-      (herdr-test-with-server
-          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
-        (herdr-agent-focus "w1:p3")
-        (should (equal "w1:p3" selected))))))
-
-(ert-deftest herdr-tab-focus-follows-to-whatever-pane-the-server-picked ()
-  "Which pane a tab lands on is the server's choice, so it must be asked."
-  (let (asked)
-    (cl-letf (((symbol-function 'herdr-term-select-focused)
-               (lambda () (setq asked t)))
-              ((symbol-function 'herdr-cmd--current-pane-id) (lambda () nil)))
-      (herdr-test-with-server
-          (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
-        (herdr-tab-focus "w1:t2")
-        (should asked)))))
 
 (ert-deftest herdr-workspace-focus-follows-in-emacs ()
   (let (asked)
@@ -220,42 +244,6 @@ add a spurious row to herdr's own agents list."
       (herdr-cmd--follow-new-pane "w1:p9")
       (should-not adopted))))
 
-(ert-deftest herdr-pane-split-follows-the-pane-from-the-split-response ()
-  "The pane to show comes from `pane.split''s own answer, not a follow-up
-`pane.current': for a paneless client the latter is the server's global
-focus and can name a different pane entirely."
-  (let (followed)
-    (cl-letf (((symbol-function 'herdr-select-target-pane) (lambda (&rest _) "w1:p1"))
-              ((symbol-function 'herdr-cmd--follow-new-pane)
-               (lambda (pane) (setq followed pane))))
-      (herdr-test-with-server
-          (lambda (req)
-            (pcase (alist-get 'method req)
-              ("pane.split"
-               (cons (herdr-test-ok req '((type . "pane_info")
-                                          (pane . ((pane_id . "w1:p9"))))) nil))
-              ;; Would-be trap: consulting this instead is the old bug.
-              ("pane.current"
-               (cons (herdr-test-ok req '((type . "pane_current")
-                                          (pane . ((pane_id . "w1:pWRONG"))))) nil))
-              (_ (cons (herdr-test-ok req '((type . "ok"))) nil))))
-        (herdr-pane-split-right)
-        (should (equal "w1:p9" followed))))))
-
-(ert-deftest herdr-tab-create-follows-its-root-pane ()
-  "A new tab's pane is its `root_pane', carried in tab.create's answer."
-  (let (followed)
-    (cl-letf (((symbol-function 'herdr-cmd--follow-new-pane)
-               (lambda (pane) (setq followed pane))))
-      (herdr-test-with-server
-          (lambda (req)
-            (if (equal (alist-get 'method req) "tab.create")
-                (cons (herdr-test-ok req '((type . "tab_created")
-                                           (root_pane . ((pane_id . "w1:p5"))))) nil)
-              (cons (herdr-test-ok req '((type . "ok"))) nil)))
-        (herdr-tab-create "")
-        (should (equal "w1:p5" followed))))))
-
 ;;; What reached the server is the assertion
 
 ;; Both helpers below run against the fake server and assert on what it
@@ -309,21 +297,16 @@ is the very case this sentence describes."
             (inhibit-interaction t)
             (herdr-terminal-backend 'session)
             ;; Enough of a session for every picker to have something to
-            ;; offer: an agent pane, a bare shell, and an adopted one for
-            ;; `herdr-release-shell'.
+            ;; offer: one pane running an agent, one bare shell.
             (herdr-state--current
              (herdr-state-from-snapshot
-              `((workspaces . (((workspace_id . "w1") (label . "ws"))))
+              '((workspaces . (((workspace_id . "w1") (label . "ws"))))
                 (tabs . (((tab_id . "w1:t1") (workspace_id . "w1"))))
                 (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
                            (tab_id . "w1:t1") (agent . "claude")
                            (agent_status . "idle") (cwd . "/tmp"))
                           ((pane_id . "w1:p2") (workspace_id . "w1")
-                           (tab_id . "w1:t1") (cwd . "/tmp"))
-                          ((pane_id . "w1:p3") (workspace_id . "w1")
-                           (tab_id . "w1:t1")
-                           (agent . ,herdr-shell-agent-name)
-                           (cwd . "/tmp")))))))
+                           (tab_id . "w1:t1") (cwd . "/tmp")))))))
             wire)
         (ert-info ((format "%s -> %s" command method))
           (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "x"))
@@ -419,26 +402,6 @@ received are."
       (should (equal (if answer '("pane.close") nil) wire))
       (should (string-match-p "w1:p1" (or said ""))))))
 
-(ert-deftest herdr-tab-close-confirms-before-closing ()
-  "A tab takes its panes with it, and the dispatcher binds `k\\=' one
-keystroke from any tab line, so declining must reach no server at all —
-a test that only checked the message would pass on a close that asked
-and then closed regardless."
-  (dolist (answer '(t nil))
-    (let (said asked methods)
-      (cl-letf (((symbol-function 'y-or-n-p)
-                 (lambda (prompt) (setq asked prompt) answer))
-                ((symbol-function 'message)
-                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
-        (herdr-test-with-server
-            (lambda (req)
-              (push (alist-get 'method req) methods)
-              (cons (herdr-test-ok req '((type . "ok"))) nil))
-          (herdr-tab-close "w1:t1")
-          (should (string-match-p "w1:t1" (or asked "")))
-          (should (string-match-p "w1:t1" (or said "")))
-          (should (equal (if answer '("tab.close") nil) methods)))))))
-
 (ert-deftest herdr-workspace-close-closes-only-when-confirmed ()
   "A workspace takes every tab and pane in it, so declining must send
 nothing.  This used to assert only the message, and only for the yes
@@ -483,21 +446,6 @@ types it as a boolean."
 ;; a default — and that transform is where a silent regression hides, so
 ;; it is asserted against the payload the fake server actually receives.
 
-(ert-deftest herdr-pane-run-sends-a-trailing-newline ()
-  "There is no pane.run method: running a command is send_text plus the
-newline that submits it.  Drop the newline and the command sits at the
-prompt unentered."
-  (herdr-cmd-test--capturing-params params
-    (herdr-pane-run "make test" "w1:p1")
-    (should (equal "make test\n" (alist-get 'text params)))))
-
-(ert-deftest herdr-pane-send-text-sends-verbatim ()
-  "The counterpart to `herdr-pane-run': text goes as typed, with no
-newline, so it can fill a prompt without submitting it."
-  (herdr-cmd-test--capturing-params params
-    (herdr-pane-send-text "make test" "w1:p1")
-    (should (equal "make test" (alist-get 'text params)))))
-
 (ert-deftest herdr-worktree-create-omits-an-empty-base ()
   "An empty base means \"off the current ref\"; a blank string is a
 different request, and nil is dropped from the payload entirely."
@@ -514,14 +462,6 @@ directory's own name."
     (herdr-cmd-test--capturing-params params
       (herdr-workspace-create "/tmp/herdr-example/" nil)
       (should (equal "herdr-example" (alist-get 'label params))))))
-
-(ert-deftest herdr-notification-show-omits-an-empty-body ()
-  "A blank body is absence, not an empty line; only title and sound go."
-  (herdr-cmd-test--capturing-params params
-    (herdr-notification-show "Done" "")
-    (should (equal "Done" (alist-get 'title params)))
-    (should (null (alist-get 'body params)))
-    (should (equal "none" (alist-get 'sound params)))))
 
 ;;; Opening a terminal: the one create mechanism
 

@@ -2134,9 +2134,19 @@ these rows are children of it, not siblings of the workspaces above."
       (should (looking-at-p "\\s-*b (0)"))
       (should (= after-a (1- (point)))))))
 
-(ert-deftest herdr-dispatch-binds-question-mark-to-the-transient ()
-  (should (eq #'herdr-transient
-              (lookup-key herdr-dispatch-mode-map "?"))))
+(ert-deftest herdr-dispatch-binds-no-help-key ()
+  "`?' opened `herdr-transient', a third surface over commands this
+buffer and `herdr-command-map' already reach.  With the transient gone
+the key is unbound rather than repointed: Emacs answers the question
+already, and a second way to ask is a second thing to remember.
+
+Asserted as \"not one of ours\" rather than as nil.  `magit-section-mode'
+links `special-mode-map' into this map's parent chain the first time a
+dispatcher buffer is made, and `?' is `describe-mode' there — so the key
+answers nil in a fresh Emacs and `describe-mode' once anything in the
+suite has drawn the buffer.  Either is right; a herdr command is not."
+  (should (memq (lookup-key herdr-dispatch-mode-map "?") '(nil describe-mode)))
+  (should-not (fboundp 'herdr-transient)))
 
 ;;; Rename
 

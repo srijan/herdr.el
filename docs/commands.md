@@ -1,7 +1,11 @@
 # Commands
 
-herdr.el has 33 curated commands. Each curated command wraps one server method. The command
+herdr.el has 11 curated commands. Each curated command wraps one server method. The command
 `herdr-call` reaches all 91 methods of the server.
+
+The list is short on purpose. A command exists here only if the dashboard or `herdr-command-map`
+calls it. Everything else was deleted, because `herdr-call` reaches it. See
+[What was removed](#what-was-removed).
 
 Every command that acts on a pane uses this rule to find its target:
 
@@ -9,7 +13,7 @@ Every command that acts on a pane uses this rule to find its target:
 2. If the current buffer is not a herdr terminal, the command uses the pane that herdr focuses.
 3. If you give a prefix argument (`C-u`), the command asks you for the target.
 
-The transient menu shows the target before you act. The target is therefore never a guess.
+The dashboard shows the target on the row you act from. The target is therefore never a guess.
 
 ## Entry points
 
@@ -20,15 +24,14 @@ The transient menu shows the target before you act. The target is therefore neve
 | `herdr-stop` | Stop the event stream and remove the Emacs buffers. The server continues. |
 | `herdr-project` | Focus the workspace of the current project, or create it. |
 | `herdr-agents` | Open the dashboard. |
-| `herdr-transient` | Open the menu without the start sequence. |
 | `herdr-call` | Call any of the 91 server methods. |
 | `herdr-modeline-mode` | Show the agent counts in the modeline. |
 
 `herdr-stop` does not stop your agents. The herdr server is a daemon, and the agents belong to
 the server.
 
-`herdr-transient` does not run the start sequence. From a cold Emacs, the menu therefore opens
-with an empty cache. Run `herdr` first to make sure that the start sequence runs.
+`herdr-agents` does not run the start sequence. From a cold Emacs, the dashboard therefore opens
+with an empty cache. Run `herdr` instead. The key `C-c H s` runs `herdr` for this reason.
 
 ## The prefix keymap
 
@@ -47,9 +50,8 @@ yourself:
 | `k` | `herdr-pane-close` |
 | `w` | `herdr-workspace-focus` |
 | `p` | `herdr-project` |
-| `%` | `herdr-transient-worktree` |
+| `%` | `herdr-worktree-create` |
 | `g` | `herdr-state-resync` |
-| `?` | `herdr-transient` |
 
 The letters are the letters the dashboard uses. The target comes from a picker here, and from
 point in the dashboard.
@@ -76,37 +78,13 @@ terminal. See [Agents](#agents).
 
 | Command | Method | Function |
 |---|---|---|
-| `herdr-pane-split-right` | `pane.split` | Split the target pane to the right. |
-| `herdr-pane-split-down` | `pane.split` | Split the target pane downward. |
 | `herdr-pane-close` | `pane.close` | Close the target pane. |
-| `herdr-pane-zoom` | `pane.zoom` | Zoom the target pane, or remove the zoom. |
-| `herdr-pane-resize` | `pane.resize` | Resize the split around the target pane. |
-| `herdr-pane-swap` | `pane.swap` | Exchange the target pane with a neighbour. |
 | `herdr-pane-rename` | `pane.rename` | Give the target pane a new label. |
 | `herdr-pane-focus` | `pane.focus` | Focus the pane and select its buffer. |
 | `herdr-pane-read` | `pane.read` | Put the output of the pane into a buffer. |
-| `herdr-pane-send-text` | `pane.send_text` | Send text to the pane without a newline. |
-| `herdr-pane-run` | `pane.send_text` | Run a command in the pane. |
-| `herdr-pane-wait-for-output` | `pane.wait_for_output` | Wait for a pattern in the output. |
 
 `herdr-pane-read` accepts a source. The source `recent_unwrapped` removes the line wrapping of
 the terminal. Use that source when you want to search the result.
-
-`herdr-pane-wait-for-output` does not block Emacs. The command reports when the pattern appears.
-Use it for a task such as "tell me when the development server prints `Listening on`".
-
-## Tabs
-
-| Command | Method | Function |
-|---|---|---|
-| `herdr-tab-create` | `tab.create` | Create a tab. |
-| `herdr-tab-close` | `tab.close` | Close a tab. |
-| `herdr-tab-focus` | `tab.focus` | Focus a tab and follow it in Emacs. |
-| `herdr-tab-rename` | `tab.rename` | Give a tab a new label. |
-
-The `agent-windows` backend hides the tab commands. A tab has one visual form only, which is the
-tab bar of the TUI. Where nothing shows a tab, herdr.el offers nothing that is tab shaped. The
-command `herdr-call` still reaches the four methods.
 
 ## Workspaces
 
@@ -124,9 +102,7 @@ server. herdr.el shows workspaces under both backends.
 
 | Command | Method | Function |
 |---|---|---|
-| `herdr-worktree-list` | `worktree.list` | List the git worktrees for the current directory. |
 | `herdr-worktree-create` | `worktree.create` | Create a worktree and open it as a workspace. |
-| `herdr-worktree-open` | `worktree.open` | Open an existing worktree as a workspace. |
 | `herdr-worktree-remove` | `worktree.remove` | Remove a worktree workspace. |
 
 herdr has native support for git worktrees. `herdr-worktree-create` therefore takes a branch
@@ -140,29 +116,34 @@ server cannot find a repository that has no open workspace.
 | Command | Method | Function |
 |---|---|---|
 | `herdr-agent-prompt` | `agent.prompt` | Send a prompt to an agent. |
-| `herdr-agent-read` | `agent.read` | Put the output of an agent into a buffer. |
-| `herdr-agent-wait` | `agent.wait` | Report when an agent reaches a status. |
-| `herdr-agent-focus` | `agent.focus` | Focus an agent and select its buffer. |
-| `herdr-agent-explain` | `agent.explain` | Show how herdr detected the agent. |
 
 There is no command for `agent.start`. To run an agent, open a terminal with
 `herdr-new-terminal` and run the agent in it. herdr detects the agent and names the pane a few
 seconds later. This is the mechanism the herdr TUI uses, and it is now the only one here.
 
-`herdr-agent-wait` does not block Emacs.
+There is no command to read or focus an agent by name either. `herdr-pane-read` and
+`herdr-pane-focus` are the same calls with a pane as the target, and the dashboard names both on
+the row.
 
-## Shells and notifications
+## What was removed
 
-| Command | Method | Function |
-|---|---|---|
-| `herdr-adopt-shell` | `pane.report_agent` | Obsolete. Name an agent on a plain shell pane, so herdr watches it. |
-| `herdr-release-shell` | `pane.release_agent` | Obsolete. Undo that. |
-| `herdr-notification-show` | `notification.show` | Show a notification on the herdr side. |
+Twenty-eight commands and the transient menu were deleted. A command survives only if the
+dashboard or `herdr-command-map` calls it.
 
-The first two are obsolete: every pane is attachable, and herdr names the agent in a pane on its
-own. Naming one by hand still puts a long-running shell in herdr's sidebar and modeline; see
-[Troubleshooting](troubleshooting.md#a-pane-is-labelled-shell-but-is-running-an-agent) for the
-label it can leave behind.
+| Removed | Reason |
+|---|---|
+| `herdr-transient` and its six sub-menus, `herdr-menu` | A third surface over commands the dashboard and the prefix keymap already reach. |
+| `herdr-pane-split-right`, `herdr-pane-split-down`, `herdr-pane-zoom`, `herdr-pane-resize`, `herdr-pane-swap` | Layout of the TUI. The `agent-windows` backend gives the layout to Emacs. These commands then move nothing that you see. |
+| `herdr-tab-create`, `herdr-tab-close`, `herdr-tab-focus`, `herdr-tab-rename` | A tab has one visual form only, which is the tab bar of the TUI. The `agent-windows` backend already hid these commands. |
+| `herdr-pane-run`, `herdr-pane-send-text`, `herdr-pane-wait-for-output`, `herdr-agent-wait` | Scripting of the session. The herdr CLI and the agent skill both do this already. |
+| `herdr-agent-read`, `herdr-agent-focus` | The same call as the pane command, with a different type of target. |
+| `herdr-agent-explain` | A debugging aid for the detection of agents. |
+| `herdr-worktree-list`, `herdr-worktree-open` | The dashboard gets its own worktrees. `RET` on a worktree row opens it. |
+| `herdr-notification-show` | A notification on the herdr side, which nothing here needs. |
+| `herdr-adopt-shell`, `herdr-release-shell` | Obsolete since herdr 0.8.2, when every pane became attachable. |
+
+Nothing is out of reach. `M-x herdr-call` still calls each of these methods. It asks you for each
+parameter from the schema of the server.
 
 ## The escape hatch
 
@@ -170,5 +151,5 @@ label it can leave behind.
 names, the types and the enumerated values from the schema of the server. herdr.el therefore
 needs no generated menu of 91 entries, and no method is out of reach.
 
-The transient menu has `herdr-call` on the key `:`. magit puts its own raw command on the same
-key.
+`herdr-call` has no key. It is the surface of last resort, and it grew more necessary as the
+curated list got shorter: each of the 28 removed commands is one `M-x herdr-call` away.

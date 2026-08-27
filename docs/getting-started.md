@@ -111,7 +111,6 @@ on one row to create the workspace, or `n` on any checkout under it to open a te
 | Rename the item at point | `R` |
 | Close the item at point | `k` |
 | Refresh the dashboard | `g` |
-| Open the menu | `?` |
 
 ## Step 6: Install an agent integration
 
@@ -129,7 +128,7 @@ herdr integration status
 The first command writes a hook file into the configuration directory of the agent. For Claude,
 the file is `~/.claude/hooks/herdr-agent-state.sh`.
 
-The integration makes the modeline, the dashboard and the command `herdr-agent-wait` accurate.
+The integration makes the modeline and the dashboard accurate.
 
 ## Next steps
 

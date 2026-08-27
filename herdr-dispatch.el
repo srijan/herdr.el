@@ -29,16 +29,35 @@
 (require 'herdr-rpc)
 (require 'herdr-cmd)
 
-;; `herdr-transient' lives in herdr-transient.el, which autoloads
-;; `herdr-agents' (defined below).  Requiring it here rather than
-;; autoloading would close that into a load cycle, so `?' reaches it the
-;; same way `herdr-agents' reaches back.
-(declare-function herdr-transient "herdr-transient" ())
-(autoload 'herdr-transient "herdr-transient" nil t)
-
 (defcustom herdr-dispatch-buffer-name "*herdr-agents*"
   "Name of the dispatcher buffer."
   :type 'string
+  :group 'herdr)
+
+(defcustom herdr-dispatch-display-action '(display-buffer-full-frame)
+  "How the dispatcher buffer is shown, as `display-buffer\\=' ACTION.
+
+The dashboard is a whole-session view: one row per repository, its
+checkouts and its panes, with four columns to a pane row.  Half a frame
+truncates the columns that carry the news — the pane id and what the
+agent is working on — so the default takes the frame.
+
+Taking the frame deletes your other windows, and \\[quit-window] does not
+bring them back: it restores the buffer that was in this window, which
+is all `quit-restore\\=' records.  That is the same trade
+`herdr-display-action\\=' offers under `session\\=', and the reason both
+are options rather than behaviour.
+
+This is the dashboard\\='s knob.  `herdr-display-action\\=' is the
+terminals\\=', and they differ on purpose: a terminal is one buffer you
+are moving between and should not rearrange the frame, while the
+dashboard is a place you go, read, and leave.
+
+For the old behaviour, where the dashboard splits whatever window it
+finds:
+
+    (setq herdr-dispatch-display-action nil)"
+  :type 'sexp
   :group 'herdr)
 
 (defcustom herdr-dispatch-refresh-debounce 0.2
@@ -133,7 +152,6 @@ tells itself apart from a redraw of an empty session.")
     (define-key map "w" #'herdr-dispatch-create-workspace)
     (define-key map "n" #'herdr-dispatch-create-pane)
     (define-key map "%" #'herdr-dispatch-create-worktree)
-    (define-key map "?" #'herdr-transient)
     map)
   "Keymap for `herdr-dispatch-mode'.
 Lowercase letters are the read-only verbs; each acts on whatever the
@@ -1371,7 +1389,7 @@ what opening the dashboard already costs."
       (add-hook 'herdr-state-change-functions #'herdr-dispatch--refresh-hook)
       (add-hook 'herdr-state-change-functions #'herdr-dispatch--invalidate-worktrees))
     (herdr-dispatch-refresh t)
-    (pop-to-buffer buffer)))
+    (pop-to-buffer buffer herdr-dispatch-display-action)))
 
 (provide 'herdr-dispatch)
 ;;; herdr-dispatch.el ends here
