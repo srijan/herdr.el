@@ -121,7 +121,8 @@ This is a known gap in herdr.el, not a server problem or a misconfiguration.
 
 herdr names the agent in a pane on its own, a few seconds after it starts. The one case that
 never corrects itself is a pane that had an agent *reported* on it — by `herdr-adopt-shell`, or by
-a version of herdr.el that adopted automatically — while something was already running in it.
+an older version of herdr.el that reported one automatically — while something was already
+running in it.
 
 The label then stays put indefinitely. Measured on two panes, hours apart: `agent.explain`
 answered `claude` for both, with a matched detection rule and a live session id, while the pane

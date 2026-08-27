@@ -73,7 +73,7 @@ This entry covers the whole divergence from
   no longer needs an agent first. `n` creates a terminal as a fresh tab directly, and `t` is gone
   from the dashboard keymap; `herdr-tab-create` and the tab commands remain reachable from
   `herdr-transient-tab` for TUI users.
-- **Shell adoption no longer controls whether a pane is attachable.** Every pane already is.
+- **A reported agent no longer controls whether a pane is attachable.** Every pane already is.
   `herdr-adopt-shell` and `herdr-release-shell` still work, and still put a pane in herdr's own
   agent list — the modeline count, the agent picker and notifications — but nothing needs them
   for a shell pane to get an Emacs buffer.
@@ -85,7 +85,7 @@ This entry covers the whole divergence from
   the statuses, and `herdr-state-reconcile-panes` carries the rest.
 - **`herdr-promote-shell`, and the poll behind it.** herdr relabels a pane on its own when an
   agent starts in it, so both existed to force a relabel that already happens. The poll called
-  `agent.explain` on every adopted shell at every directory poll: 936 calls in one session, three
+  `agent.explain` on every reported shell at every directory poll: 936 calls in one session, three
   quarters of all the traffic that herdr.el sent. The one case that does not relabel itself is a
   report applied to a pane where an agent was already running -- see the troubleshooting guide.
   Kill the pane and start the agent again.

@@ -115,13 +115,12 @@ dead end.
 
 | Command | Method | Function |
 |---|---|---|
-| `herdr-adopt-shell` | `pane.report_agent` | Obsolete. Make herdr watch a plain shell pane as an agent. |
-| `herdr-release-shell` | `pane.release_agent` | Obsolete. Undo the report. |
+| `herdr-adopt-shell` | `pane.report_agent` | Obsolete. Name an agent on a plain shell pane, so herdr watches it. |
+| `herdr-release-shell` | `pane.release_agent` | Obsolete. Undo that. |
 | `herdr-notification-show` | `notification.show` | Show a notification on the herdr side. |
 
-The first two are obsolete: adoption is retired, every pane is attachable, and herdr names the
-agent in a pane on its own. See ["Adoption is retired"](../README.md#adoption-is-retired) for the
-one use `herdr-adopt-shell` still has, and
+The first two are obsolete: every pane is attachable, and herdr names the agent in a pane on its
+own. Naming one by hand still puts a long-running shell in herdr's sidebar and modeline; see
 [Troubleshooting](troubleshooting.md#a-pane-is-labelled-shell-but-is-running-an-agent) for the
 label it can leave behind.
 

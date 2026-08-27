@@ -248,25 +248,14 @@ herdr panes you create from Emacs (split, new tab, new workspace) are shown imme
 follows the new pane and attaches to it, the same as going to any other pane.
 
 herdr names the agent in a pane itself. Open a terminal pane, start Claude in it, and the row
-reads `claude` a few seconds later. Nothing needs reporting, and nothing needs adopting.
+reads `claude` a few seconds later. Nothing needs reporting.
 
-### Adoption is retired
-
-Adoption was how a plain shell pane used to be made attachable and given a name. Since herdr
-0.8.2 every pane is attachable already, so the concept is gone and its commands are obsolete:
-`herdr-adopt-shell` and `herdr-release-shell` still work, `herdr-adopt-created-shells` is a no-op
-kept so an old config does not error, and `herdr-promote-shell` and the poll behind it are
-deleted — they existed to force a relabel herdr does on its own, at a cost of 936 `agent.explain`
-calls in one session, three quarters of all the traffic herdr.el sent.
-
-`herdr-adopt-shell` still has one use: reporting an agent named `shell` on a long-running pane,
-such as a build, makes herdr itself watch it — a row in herdr's own sidebar, a place in the
-modeline count, and eligibility for notifications — and the report is server-side, so it survives
-an Emacs restart. It also takes the pane out of `herdr-agent-start`'s reach, since availability
-there means "has no agent at all".
-
-Reporting an agent on a pane where one is *already* running leaves a label that never corrects
-itself. See [Troubleshooting](docs/troubleshooting.md#a-pane-is-labelled-shell-but-is-running-an-agent).
+`pane.report_agent` can name an agent on a pane by hand, which puts a long-running shell — a
+build, say — in herdr's own sidebar and modeline, across an Emacs restart, since the report is
+server-side state. It also takes the pane out of `herdr-agent-start`'s reach, since availability
+there means "has no agent at all". Naming an agent on a pane that is already running one leaves a
+label that never corrects itself; see
+[Troubleshooting](docs/troubleshooting.md#a-pane-is-labelled-shell-but-is-running-an-agent).
 
 ## What we measured
 
@@ -287,14 +276,14 @@ survived as long as they did.
 | `events.subscribe` | The one long-lived call. Acks `subscription_started`, then streams. It also replays the server's whole event ring. See below. |
 | **`pane_updated` is output-coupled** | It does not coalesce (~~3 per-pane events produced only 1 `pane_updated`~~). It fires about 7.5/s carrying a full `PaneInfo`, `agent_status` included, but it is tied to title and output, so it stops firing exactly when an agent goes idle, which is the transition worth knowing about. Lag from the per-pane event reporting idle to the global stream reflecting it: 6.18s and 31.79s. This fork no longer subscribes to it at all. A second connection carrying per-pane `pane.agent_status_changed` covers the statuses, and `herdr-state-reconcile-panes` covers the rest. |
 | Throughput | Not a concern for either backend. A 12.2 MB pane dump reached Emacs as 17 KB (`session`) or 24 KB (`agent-windows`), completing in 0.2s. herdr's VT only emits visible-frame diffs. |
-| `agent attach` | Streams one pane full-screen, coexists with a session client, exclusive per pane, and refuses a pane with no agent (`agent_not_found`). ~~That refusal is what keeps adoption necessary.~~ Since 0.8.2 `herdr terminal attach` takes any pane instead, agent or not; this fork attaches through that, so adoption is no longer needed to make a pane attach. |
+| `agent attach` | Streams one pane full-screen, coexists with a session client, exclusive per pane, and refuses a pane with no agent (`agent_not_found`). ~~That refusal is what makes reporting an agent necessary.~~ Since 0.8.2 `herdr terminal attach` takes any pane instead, agent or not; this fork attaches through that, so nothing has to be reported to make a pane attach. |
 | Attach needs a window | The client needs a window when it starts and dies if that window is deleted. Being merely hidden is fine, so a buried terminal keeps running with its scrollback. A zero-sized PTY renders nothing. |
 | **Ghost panes come from replay** | ~~The retained `pane.created` is for whatever pane was made last, so subscribing resurrects it.~~ Replay is not one retained event, it is the whole ring, and the ordering defence below is weaker than it looked. The pane set is reconciled against `pane.list` after connecting and on a poll thereafter. Since this fork, workspaces and tabs are reconciled the same way against `workspace.list` and `tab.list`, which is what stopped ghost workspaces accumulating forever. |
-| **Detection outranks adoption** | Reporting an agent does not suppress detection; herdr's own docs now say the two operate independently. Measured: a pane reported as `shell` was relabelled `claude` about 3s after Claude started in it, over the reported label, unasked. ~~`pane.report_agent` takes lifecycle authority, so an adopted pane keeps its label.~~ That was true of an older herdr and is the premise the deleted `herdr-promote-shell` poll rested on. |
+| **Detection outranks a report** | Reporting an agent does not suppress detection; herdr's own docs now say the two operate independently. Measured: a pane reported as `shell` was relabelled `claude` about 3s after Claude started in it, over the reported label, unasked. ~~`pane.report_agent` takes lifecycle authority, so a reported pane keeps its label.~~ That was true of an older herdr and is the premise the deleted `herdr-promote-shell` poll rested on. |
 | Focus is shared | One focused pane per session, not per client. Navigating in Emacs moves the focus in any attached TUI too. |
 | OSC | Not forwarded. herdr's VT consumes OSC 7 and OSC 133. Beware the false positive: sending the escapes inline makes the shell echo the command text, which contains the same characters. |
 | cwd tracking | herdr tracks it itself, and `pane.cwd` follows a `cd` within about a second. But it publishes no event for it. A `cd` emits only `layout_updated` noise, so directory tracking has to poll, debounced off the event stream with a slow backstop timer. |
-| Shell panes | ~~`pane.report_agent` makes a plain shell pane attachable, which is how adoption works.~~ True before 0.8.2; since then attachability no longer depends on it, and `pane.report_agent` only affects sidebar labelling and `agent.start` availability. |
+| Shell panes | ~~`pane.report_agent` makes a plain shell pane attachable.~~ True before 0.8.2; since then attachability no longer depends on it, and `pane.report_agent` only affects sidebar labelling and `agent.start` availability. |
 | `pane.read` shape | Text is nested under a `read` object, not a top-level field. |
 | Rename and move events are flat | They carry no nested record. `workspace_renamed` is `{workspace_id, label}`, `tab_renamed` adds `workspace_id`, the two move events send `{id, insert_index, <array of fresh records>}`, and `pane_agent_detected` is `{pane_id, workspace_id, agent?, final_status?, released?}`. Reading a `workspace`, `tab` or `pane` object out of any of them, as this package did, silently drops the event. |
 | Terminal titles animate | Claude runs a spinner glyph and a second counter inside the title, so `terminal_title_stripped` changes several times a second: 662 of 662 `pane_updated` events differed in it, against 11 that differed in `agent_status`. It is a volatile field, not a stable label, and must not be treated as one when diffing panes. |
@@ -339,7 +328,6 @@ Worth knowing about:
 - `herdr-agent-wait` and `herdr-pane-wait-for-output` run asynchronously, so Emacs stays
   responsive. "Tell me when the dev server prints `Listening on`" is one command.
 - `herdr-project` focuses or creates the herdr workspace for the current `project.el` project.
-- `herdr-adopt-shell` and `herdr-release-shell` are covered above.
 
 Terminal buffers track their pane's working directory (`herdr-term-track-directory`), so
 `find-file` and `compile` from a herdr buffer start in the right place.
@@ -377,7 +365,7 @@ One consequence of attaching being lazy: a pane an agent creates gets no buffer 
 `agent-windows` on its own, since only a creation Emacs itself initiated follows the new pane and
 attaches to it. An agent splitting a pane to run a build should not seize an Emacs window. It is
 visible in the picker, and going to it attaches directly — every pane already accepts
-`herdr terminal attach`, so there is nothing to adopt first. If the agent starts a helper agent
+`herdr terminal attach`, so nothing has to be reported first. If the agent starts a helper agent
 there, it appears in the agents list and modeline immediately, same as any other detected agent.
 
 ## Completion

@@ -831,19 +831,13 @@ an existing workspace stays anyway: the row was built from a state that
 could be one poll tick behind by the time RET lands, and creating a
 second workspace for a directory that already has one is the exact bug
 `herdr-state-workspace-for-directory\\=' exists to prevent — the same
-guard `herdr-project\\=' makes before it creates."
-  (let* ((root (herdr-dispatch--require 'herdr-known-project
-                                        "a known project"))
-         (existing (herdr-state-workspace-for-directory
-                    (herdr-state-current) root)))
-    (if existing
-        (herdr-rpc-call "workspace.focus"
-                        `((workspace_id . ,(alist-get 'workspace_id existing))))
-      (herdr-rpc-call "workspace.create"
-                      `((cwd . ,root)
-                        (label . ,(file-name-nondirectory
-                                   (directory-file-name root))))))
-    (herdr-term-display)))
+guard `herdr-project\\=' makes before it creates.  Both share
+`herdr-cmd-open-workspace-for\\=', which makes that guard, focuses what
+it creates, and goes there under either terminal backend."
+  (let ((root (herdr-dispatch--require 'herdr-known-project
+                                       "a known project")))
+    (herdr-cmd-open-workspace-for
+     root (file-name-nondirectory (directory-file-name root)))))
 
 ;;; The read-only verbs
 
