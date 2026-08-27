@@ -63,7 +63,7 @@
 
 ;;; Buffer naming: name first, workspace fallback
 
-(ert-deftest herdr-term-agent-buffer-name-prefers-the-agent-name ()
+(ert-deftest herdr-term-buffer-name-prefers-the-agent-name ()
   "A name set through `agent.rename' is used verbatim, kind and workspace
 notwithstanding — it is the one thing someone chose to call this pane."
   (let* ((state (herdr-state-from-snapshot
@@ -74,9 +74,9 @@ notwithstanding — it is the one thing someone chose to call this pane."
                                (name . "emacs-herdr")))))))
          (pane (herdr-state-pane state "w7:p5")))
     (should (equal "*herdr: emacs-herdr*"
-                   (herdr-term-agent-buffer-name state pane)))))
+                   (herdr-term-buffer-name state pane)))))
 
-(ert-deftest herdr-term-agent-buffer-name-uses-the-pane-label ()
+(ert-deftest herdr-term-buffer-name-uses-the-pane-label ()
   "A pane carrying a `label' — what `pane.rename' writes, and what a
 plugin pane is seated with — is named by it rather than by KIND@WORKSPACE.
 This is how the Lantern chat reads as `*herdr: Lantern*'."
@@ -88,9 +88,9 @@ This is how the Lantern chat reads as `*herdr: Lantern*'."
                               (workspace_id . "w16")))))))
          (pane (herdr-state-pane state "w16:p2")))
     (should (equal "*herdr: Lantern*"
-                   (herdr-term-agent-buffer-name state pane)))))
+                   (herdr-term-buffer-name state pane)))))
 
-(ert-deftest herdr-term-agent-buffer-name-prefers-the-agent-name-over-the-label ()
+(ert-deftest herdr-term-buffer-name-prefers-the-agent-name-over-the-label ()
   "`agent.rename' outranks `pane.rename'.  Below it rather than above so
 nobody who renames agents today sees their buffers change."
   (let* ((state (herdr-state-from-snapshot
@@ -101,9 +101,9 @@ nobody who renames agents today sees their buffers change."
                                (name . "lantern-chat")))))))
          (pane (herdr-state-pane state "w16:p2")))
     (should (equal "*herdr: lantern-chat*"
-                   (herdr-term-agent-buffer-name state pane)))))
+                   (herdr-term-buffer-name state pane)))))
 
-(ert-deftest herdr-term-agent-buffer-name-falls-back-to-kind-at-workspace ()
+(ert-deftest herdr-term-buffer-name-falls-back-to-kind-at-workspace ()
   "An unnamed agent reads as KIND@WORKSPACE, not an opaque pane id."
   (let* ((state (herdr-state-from-snapshot
                  '((workspaces . (((workspace_id . "wG") (label . "srijan.ch"))))
@@ -111,9 +111,9 @@ nobody who renames agents today sees their buffers change."
                               (workspace_id . "wG")))))))
          (pane (herdr-state-pane state "wG:p3")))
     (should (equal "*herdr: claude@srijan.ch*"
-                   (herdr-term-agent-buffer-name state pane)))))
+                   (herdr-term-buffer-name state pane)))))
 
-(ert-deftest herdr-term-agent-buffer-name-reads-a-plain-shell-naturally ()
+(ert-deftest herdr-term-buffer-name-reads-a-plain-shell-naturally ()
   "A plain pane carries no `agent' field at all — `herdr terminal attach'
 needs no detected agent — so the kind fallback of `shell' is what makes
 it read as `shell@WORKSPACE' rather than `agent@WORKSPACE'."
@@ -123,9 +123,9 @@ it read as `shell@WORKSPACE' rather than `agent@WORKSPACE'."
                               (workspace_id . "w7")))))))
          (pane (herdr-state-pane state "w7:p9")))
     (should (equal "*herdr: shell@.emacs.d*"
-                   (herdr-term-agent-buffer-name state pane)))))
+                   (herdr-term-buffer-name state pane)))))
 
-(ert-deftest herdr-term-agent-buffer-name-falls-back-to-the-workspace-id ()
+(ert-deftest herdr-term-buffer-name-falls-back-to-the-workspace-id ()
   "A workspace missing from STATE altogether — so its label is unknowable
 — still yields a readable name, not a bare `KIND@'."
   (let* ((state (herdr-state-from-snapshot
@@ -133,15 +133,15 @@ it read as `shell@WORKSPACE' rather than `agent@WORKSPACE'."
                               (workspace_id . "w9")))))))
          (pane (herdr-state-pane state "w9:p1")))
     (should (equal "*herdr: claude@w9*"
-                   (herdr-term-agent-buffer-name state pane)))))
+                   (herdr-term-buffer-name state pane)))))
 
-(ert-deftest herdr-term-agent-buffer-name-has-a-sensible-floor ()
+(ert-deftest herdr-term-buffer-name-has-a-sensible-floor ()
   "Neither a kind nor a workspace must not produce `*herdr: @*'."
   (should (equal "*herdr: shell*"
-                 (herdr-term-agent-buffer-name
+                 (herdr-term-buffer-name
                   (herdr-state-empty) '((pane_id . "p1"))))))
 
-(ert-deftest herdr-term-agent-buffer-name-collides-for-two-unnamed-siblings ()
+(ert-deftest herdr-term-buffer-name-collides-for-two-unnamed-siblings ()
   "This collision is the point, not a bug in this function: two unnamed
 same-kind panes in one workspace are expected to compute the same wanted
 name here.  Uniquifying it is `herdr-term--attach-1's job, tested below,
@@ -154,12 +154,12 @@ not this pure naming function's."
                               (workspace_id . "w7")))))))
          (one (herdr-state-pane state "w7:p2"))
          (two (herdr-state-pane state "w7:p5")))
-    (should (equal (herdr-term-agent-buffer-name state one)
-                   (herdr-term-agent-buffer-name state two)))))
+    (should (equal (herdr-term-buffer-name state one)
+                   (herdr-term-buffer-name state two)))))
 
-(ert-deftest herdr-term-unique-agent-buffer-name-avoids-a-collision ()
+(ert-deftest herdr-term-unique-buffer-name-avoids-a-collision ()
   "The hazard: `get-buffer-create' on a colliding wanted name returns a
-different pane's existing buffer.  `herdr-term--unique-agent-buffer-name'
+different pane's existing buffer.  `herdr-term--unique-buffer-name'
 is what `herdr-term--attach-1' creates buffers under instead, precisely
 to make that impossible."
   (let* ((existing (generate-new-buffer "*herdr: claude@.emacs.d*"))
@@ -169,7 +169,7 @@ to make that impossible."
                               (workspace_id . "w7")))))))
          (pane (herdr-state-pane state "w7:p5")))
     (unwind-protect
-        (let* ((name (herdr-term--unique-agent-buffer-name state pane))
+        (let* ((name (herdr-term--unique-buffer-name state pane))
                (created (get-buffer-create name)))
           (unwind-protect
               (progn
@@ -222,7 +222,7 @@ to make that impossible."
          (herdr-term-track-directory t)
          (one (generate-new-buffer " *pane1*"))
          (two (generate-new-buffer " *pane2*"))
-         (herdr-term--agent-buffers (list (cons "w1:p1" one) (cons "w1:p2" two)))
+         (herdr-term--buffers (list (cons "w1:p1" one) (cons "w1:p2" two)))
          (herdr-state--current
           (herdr-state-from-snapshot
            '((panes . (((pane_id . "w1:p1") (agent . "claude") (cwd . "/tmp"))
@@ -237,7 +237,7 @@ to make that impossible."
 (ert-deftest herdr-term-sync-directories-respects-the-off-switch ()
   (let* ((herdr-term-track-directory nil)
          (buffer (get-buffer-create "*herdr-off-switch*"))
-         (herdr-term--agent-buffers (list (cons "w1:p1" buffer)))
+         (herdr-term--buffers (list (cons "w1:p1" buffer)))
          (herdr-state--current
           (herdr-state-from-snapshot
            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))))))
@@ -255,7 +255,7 @@ to make that impossible."
 still valid — so the name has to be corrected in place."
   (let* ((herdr-terminal-backend 'agent-windows)
          (buffer (generate-new-buffer "*herdr: shell@.emacs.d*"))
-         (herdr-term--agent-buffers (list (cons "w1:p1" buffer)))
+         (herdr-term--buffers (list (cons "w1:p1" buffer)))
          (herdr-state--current
           (herdr-state-from-snapshot
            '((workspaces . (((workspace_id . "w1") (label . ".emacs.d"))))
@@ -270,7 +270,7 @@ still valid — so the name has to be corrected in place."
 (ert-deftest herdr-term-leaves-a-correctly-named-buffer-alone ()
   (let* ((herdr-terminal-backend 'agent-windows)
          (buffer (generate-new-buffer "*herdr: claude@.emacs.d*"))
-         (herdr-term--agent-buffers (list (cons "w1:p1" buffer)))
+         (herdr-term--buffers (list (cons "w1:p1" buffer)))
          (herdr-state--current
           (herdr-state-from-snapshot
            '((workspaces . (((workspace_id . "w1") (label . ".emacs.d"))))
@@ -296,11 +296,11 @@ from every `herdr-term--on-state-change' would be a rename loop hiding
 behind an unchanging buffer list."
   (let* ((herdr-terminal-backend 'agent-windows)
          ;; `generate-new-buffer' uniquifies on creation exactly like
-         ;; `herdr-term--unique-agent-buffer-name' does, so the second
+         ;; `herdr-term--unique-buffer-name' does, so the second
          ;; buffer starts life as `...<2>' here without any special-casing.
          (first (generate-new-buffer "*herdr: claude@.emacs.d*"))
          (second (generate-new-buffer "*herdr: claude@.emacs.d*"))
-         (herdr-term--agent-buffers (list (cons "w7:p2" first)
+         (herdr-term--buffers (list (cons "w7:p2" first)
                                           (cons "w7:p5" second)))
          (herdr-state--current
           (herdr-state-from-snapshot
@@ -329,7 +329,7 @@ behind an unchanging buffer list."
 business, not a side effect of navigation."
   (let* ((herdr-terminal-backend 'agent-windows)
          (target (generate-new-buffer " *target*"))
-         (herdr-term--agent-buffers (list (cons "w1:p1" target)))
+         (herdr-term--buffers (list (cons "w1:p1" target)))
          (herdr-state--current
           (herdr-state-from-snapshot
            '((panes . (((pane_id . "w1:p1") (agent . "claude"))))))))
@@ -471,14 +471,14 @@ already attached."
          (herdr-term--directory-debounce-timer nil)
          (one (generate-new-buffer " *agent-one*"))
          (two (generate-new-buffer " *agent-two*"))
-         (herdr-term--agent-buffers (list (cons "w1:p1" one)
+         (herdr-term--buffers (list (cons "w1:p1" one)
                                           (cons "w1:p2" two))))
     (unwind-protect
         (progn
           (herdr-term-teardown)
           (should-not (buffer-live-p one))
           (should-not (buffer-live-p two))
-          (should-not herdr-term--agent-buffers))
+          (should-not herdr-term--buffers))
       (when (buffer-live-p one) (kill-buffer one))
       (when (buffer-live-p two) (kill-buffer two)))))
 

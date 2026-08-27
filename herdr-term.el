@@ -90,7 +90,7 @@ Nil only when PANE names no workspace to begin with."
                               (herdr-state-workspaces state)))
         workspace-id)))
 
-(defun herdr-term-agent-buffer-name (state pane)
+(defun herdr-term-buffer-name (state pane)
   "Return the wanted buffer name for PANE, read against STATE.
 
 Names first, workspace fallback.  A name set through `agent.rename\\='
@@ -123,16 +123,16 @@ responsible for uniquifying — see `herdr-term--attach-1\\='."
             (or name label
                 (if workspace (format "%s@%s" kind workspace) kind)))))
 
-(defun herdr-term--unique-agent-buffer-name (state pane)
-  "Return a unique buffer name for PANE, from `herdr-term-agent-buffer-name'.
+(defun herdr-term--unique-buffer-name (state pane)
+  "Return a unique buffer name for PANE, from `herdr-term-buffer-name'.
 STATE is read against, same as that function.
 
-`herdr-term-agent-buffer-name\\=' is not guaranteed unique — two unnamed
+`herdr-term-buffer-name\\=' is not guaranteed unique — two unnamed
 panes of the same kind in the same workspace compute the same wanted
 name — and `get-buffer-create\\=' on a colliding name returns a different
 pane\\='s existing buffer rather than a fresh one.  Uniquify before
 creating, not after."
-  (generate-new-buffer-name (herdr-term-agent-buffer-name state pane)))
+  (generate-new-buffer-name (herdr-term-buffer-name state pane)))
 
 (defun herdr-term--buffer-name-sans-uniquify-suffix (name)
   "Return NAME with a trailing `<N>\\=' uniquifying suffix stripped, if any.
@@ -229,14 +229,14 @@ can hang on an unusable PTY until the timeout gives up."
 
 ;;; Buffer bookkeeping
 
-(defvar herdr-term--agent-buffers nil
+(defvar herdr-term--buffers nil
   "Alist of (PANE-ID . BUFFER) for the `agent-windows' backend.")
 
-(defun herdr-term--live-agent-buffers ()
-  "Return `herdr-term--agent-buffers' with dead buffers dropped."
-  (setq herdr-term--agent-buffers
+(defun herdr-term--live-buffers ()
+  "Return `herdr-term--buffers' with dead buffers dropped."
+  (setq herdr-term--buffers
         (seq-filter (lambda (cell) (buffer-live-p (cdr cell)))
-                    herdr-term--agent-buffers)))
+                    herdr-term--buffers)))
 
 (defun herdr-term-select-pane (pane-id)
   "Show PANE-ID, attaching to it first if it is not attached yet.
@@ -273,12 +273,12 @@ moved as a side effect of the command that just ran."
 
 (defun herdr-term-buffer-for-pane (pane-id)
   "Return the buffer showing PANE-ID, if one is attached."
-  (cdr (assoc pane-id (herdr-term--live-agent-buffers))))
+  (cdr (assoc pane-id (herdr-term--live-buffers))))
 
 (defun herdr-term-pane-for-buffer (&optional buffer)
   "Return the pane id BUFFER is showing, or nil if it is not a herdr terminal."
   (let* ((buffer (or buffer (current-buffer)))
-         (id (car (rassq buffer (herdr-term--live-agent-buffers)))))
+         (id (car (rassq buffer (herdr-term--live-buffers)))))
     ;; Ignore a buffer whose pane has since gone away.
     (when (and id (herdr-state-pane (herdr-state-current) id))
       id)))
@@ -297,13 +297,13 @@ steals the first one's terminal."
 (defun herdr-term--attach-1 (state pane pane-id)
   "Create and start a ghostel buffer attached to PANE, named from STATE.
 
-Created under `herdr-term--unique-agent-buffer-name\\=' rather than the
+Created under `herdr-term--unique-buffer-name\\=' rather than the
 plain wanted name: that name is not guaranteed unique, and a collision
 would hand this pane's client a buffer `get-buffer-create\\=' found
 already live for a different pane, attaching two panes into one
 terminal."
   (let ((buffer (get-buffer-create
-                 (herdr-term--unique-agent-buffer-name state pane))))
+                 (herdr-term--unique-buffer-name state pane))))
     (with-current-buffer buffer (ghostel-mode))
     ;; The buffer needs a window when the client starts: attaching without
     ;; displaying, or with a window that is deleted straight afterwards,
@@ -325,7 +325,7 @@ terminal."
          (setq buffer nil))))
     (when buffer
       (herdr-term--set-directory buffer pane)
-      (push (cons pane-id buffer) herdr-term--agent-buffers))
+      (push (cons pane-id buffer) herdr-term--buffers))
     buffer))
 
 (defun herdr-term--rename-stale-buffers ()
@@ -343,9 +343,9 @@ collision lasts — that is not staleness, and recomputing the bare
 `rename-buffer\\=' hand the same suffix right back, forever, from inside
 the state-change hook."
   (let ((state (herdr-state-current)))
-    (dolist (cell (herdr-term--live-agent-buffers))
+    (dolist (cell (herdr-term--live-buffers))
       (when-let* ((pane (herdr-state-pane state (car cell)))
-                  (wanted (herdr-term-agent-buffer-name state pane))
+                  (wanted (herdr-term-buffer-name state pane))
                   ((not (equal wanted
                                (herdr-term--buffer-name-sans-uniquify-suffix
                                 (buffer-name (cdr cell)))))))
@@ -353,7 +353,7 @@ the state-change hook."
           ;; Unique suffix rather than an error if the name is taken.
           (rename-buffer wanted t))))))
 
-(defun herdr-term--sync-agent-windows ()
+(defun herdr-term--sync-buffers ()
   "Reap buffers whose pane is gone and correct stale names.
 
 Deliberately does not attach.  Attaching requires displaying the buffer
@@ -361,11 +361,11 @@ and keeping it displayed, so attaching on every `pane_agent_detected\='
 would take a window each time an agent appears.  `herdr-term-select-pane\='
 attaches on demand instead."
   (let* ((plan (herdr-term-reconcile (herdr-state-current)
-                                     (herdr-term--live-agent-buffers))))
+                                     (herdr-term--live-buffers))))
     (dolist (buffer (cdr plan))
       (when (buffer-live-p buffer) (kill-buffer buffer)))
     (herdr-term--rename-stale-buffers)
-    (herdr-term--live-agent-buffers)))
+    (herdr-term--live-buffers)))
 
 ;;; Directory tracking
 
@@ -488,13 +488,13 @@ is changing directories."
   "Point every terminal buffer at its pane's current directory."
   (when herdr-term-track-directory
     (let ((state (herdr-state-current)))
-      (dolist (cell (herdr-term--live-agent-buffers))
+      (dolist (cell (herdr-term--live-buffers))
         (when-let* ((pane (herdr-state-pane state (car cell))))
           (herdr-term--set-directory (cdr cell) pane))))))
 
 (defun herdr-term--on-state-change (_kind _data)
   "Resync terminal buffers after a cache change."
-  (herdr-term--sync-agent-windows)
+  (herdr-term--sync-buffers)
   (herdr-term--sync-directories)
   (herdr-term--schedule-directory-poll))
 
@@ -510,7 +510,7 @@ is changing directories."
         (progn
           ;; The bootstrap client was only there to start the daemon.
           (when (buffer-live-p bootstrap) (kill-buffer bootstrap))
-          (herdr-term--sync-agent-windows))
+          (herdr-term--sync-buffers))
       (herdr-term--sync-directories)
       (herdr-term--start-directory-timer))))
 
@@ -518,9 +518,9 @@ is changing directories."
   "Kill the terminal buffers.  The herdr server is left running."
   (remove-hook 'herdr-state-change-functions #'herdr-term--on-state-change)
   (herdr-term--stop-directory-timer)
-  (dolist (cell (herdr-term--live-agent-buffers))
+  (dolist (cell (herdr-term--live-buffers))
     (kill-buffer (cdr cell)))
-  (setq herdr-term--agent-buffers nil))
+  (setq herdr-term--buffers nil))
 
 (provide 'herdr-term)
 ;;; herdr-term.el ends here
