@@ -84,8 +84,7 @@ findable by the name it is known by as well as by what it is doing."
   (let ((marginalia-annotators nil))
     (herdr-select--register-marginalia)
     (herdr-select--register-marginalia)
-    ;; Two categories, not three: the tab picker went with the tab
-    ;; commands, so nothing offers a `herdr-tab' candidate any more.
+    ;; Two, not three: the tab picker went with the tab commands.
     (should (= 2 (length marginalia-annotators)))))
 
 ;;; Consult source
@@ -220,8 +219,7 @@ follow Emacs."
 ;;; Choosing where a new terminal goes
 
 (ert-deftest herdr-select-place-offers-open-workspaces-and-unopened-roots ()
-  "The two kinds of candidate the dashboard already draws: an open
-workspace by id, and a project with no workspace open by path."
+  "An open workspace by id, a project with no workspace open by path."
   (let (offered)
     (let ((herdr-state--current
            (herdr-state-from-snapshot
@@ -240,11 +238,8 @@ workspace by id, and a project with no workspace open by path."
         (should (equal '("w1" "/tmp/elsewhere/") offered))))))
 
 (ert-deftest herdr-select-place-works-without-project-el ()
-  "project.el is guarded with `fboundp' here the way it is everywhere
-else in this package, so its absence costs the directory half of the
-list rather than the command.  The function is unbound and restored
-rather than stubbed: `fboundp' is what the guard asks, and a stub that
-answers calls cannot make it answer nil."
+  "Unbound and restored rather than stubbed: `fboundp\\=' is what the guard
+asks, and a stub that answers calls cannot make it answer nil."
   (let ((offered nil)
         (saved (when (fboundp 'project-known-project-roots)
                  (symbol-function 'project-known-project-roots))))
@@ -262,8 +257,7 @@ answers calls cannot make it answer nil."
       (when saved (fset 'project-known-project-roots saved)))))
 
 (ert-deftest herdr-select-place-annotates-an-unopened-root-as-not-open ()
-  "A directory has no workspace annotation to give, and saying so is
-what tells the two kinds of candidate apart in the picker."
+  "What tells the two kinds of candidate apart in the picker."
   (let ((herdr-state--current
          (herdr-state-from-snapshot
           '((workspaces . (((workspace_id . "w1") (label . "ws")
@@ -273,8 +267,8 @@ what tells the two kinds of candidate apart in the picker."
                             (herdr-select--place-annotation "/tmp/elsewhere/")))))
 
 (ert-deftest herdr-select-offers-no-agent-start-picker ()
-  "`agent.start' is gone, and with it the picker that existed only to
-keep the choice away from a pane the server would refuse."
+  "It existed only to keep the choice away from a pane the server would
+refuse."
   (should-not (fboundp 'herdr-select-available-shell))
   (should-not (boundp 'herdr-select-create-new-shell)))
 

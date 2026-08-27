@@ -31,13 +31,8 @@
 (require 'herdr-term)
 (require 'herdr-cmd)
 (require 'herdr-modeline)
-;; Required rather than left to its autoload cookie.  `herdr-call' is the
-;; escape hatch every deleted command now relies on — twenty-eight of
-;; them, reachable only through it — so "is it loaded?" must not depend
-;; on a package manager having generated an autoload file.  It used to
-;; arrive with `herdr-transient', which put it on `:'; nothing pulls it
-;; in since that file went, and `M-x herdr-call' answered
-;; `void-function' in a session that had only required this one.
+;; Required, not autoloaded: `herdr-call' is the escape hatch every
+;; deleted command relies on, and it used to arrive with `herdr-transient'.
 (require 'herdr-call)
 
 (declare-function project-root "project" (project))
@@ -99,13 +94,8 @@ The herdr server keeps running; agents are unaffected."
 ;;;###autoload
 (defun herdr ()
   "Start herdr if needed and open the dispatcher.
-
-The one entry point that guarantees the start sequence has run:
-`herdr-start\\=' brings up the server, the terminals and the event
-stream, so the dashboard is drawn from a cache with something in it
-rather than from a cold one.  `herdr-agents\\=' on its own does not,
-which is why `s\\=' in `herdr-command-map\\=' is bound here rather than
-there."
+The one entry point that runs the start sequence first, which is why
+`s\\=' in `herdr-command-map\\=' is bound here and not to `herdr-agents\\='."
   (interactive)
   (herdr-start)
   (herdr-term-display)
@@ -122,30 +112,13 @@ there."
     (define-key map "%" #'herdr-worktree-create)
     (define-key map "g" #'herdr-state-resync)
     map)
-  "Prefix keymap for herdr, meant to be bound to one key of your own.
+  "Prefix keymap for herdr, bound to a key of your own choosing.
 
     (define-key global-map (kbd \"C-c H\") herdr-command-map)
 
-Bound by you rather than by this package, the way `project-prefix-map\\='
-is: a package that seizes a `C-c' binding takes it from the user, and
-which key is spare is the user\\='s question.
-
-The letters are the dashboard\\='s letters.  `n\\=' opens a terminal and
-`k\\=' closes one here, exactly as they do on a row in `*herdr-agents*\\=';
-the difference is only where the target comes from, a picker here and
-point there.  `s\\=' is the status buffer, the one entry point that
-guarantees the start sequence has run — see `herdr\\='.
-
-There is no help key.  `C-h\\=' after the prefix lists these bindings,
-and `C-h m\\=' in `*herdr-agents*\\=' describes that buffer\\='s own.  Emacs
-answers both questions already; a third way to ask was one more thing to
-remember.
-
-`%\\=' creates a worktree rather than opening a menu of four worktree
-commands.  Listing them needed no command — the dashboard draws every
-worktree it knows about — opening one is `RET\\=' on its row, and removing
-one is `k\\=' there.  Creating is the only one of the four with nowhere
-else to be.")
+The letters are the dashboard\\='s letters; the target comes from a picker
+here and from point there.  No help key: `C-h\\=' after the prefix lists
+these bindings.")
 
 (provide 'herdr)
 ;;; herdr.el ends here

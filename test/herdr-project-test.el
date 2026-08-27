@@ -113,9 +113,7 @@ workspace, not make one for the subdirectory it happened to be in."
     (should (equal "w1" (alist-get 'workspace_id params)))))
 
 (ert-deftest herdr-opens-the-dashboard-after-running-the-start-sequence ()
-  "`herdr' is the one entry point that guarantees the startup has run,
-which is why `s' in `herdr-command-map' is bound to it rather than to
-`herdr-agents'."
+  "`herdr\\=' runs the start sequence; `herdr-agents\\=' does not."
   (should (commandp 'herdr))
   (let (opened started)
     (cl-letf (((symbol-function 'herdr-start) (lambda () (setq started t)))
@@ -129,9 +127,7 @@ which is why `s' in `herdr-command-map' is bound to it rather than to
 ;;; The prefix keymap
 
 (ert-deftest herdr-command-map-binds-the-verbs-the-dashboard-uses ()
-  "The letters are the dashboard's letters, so one set is learnt rather
-than two.  The difference is only where the target comes from: a picker
-here, point there."
+  "The letters are the dashboard\\='s letters, so there is one set to learn."
   (should (keymapp herdr-command-map))
   (dolist (entry '(("s" . herdr)
                    ("f" . herdr-pane-focus)
@@ -145,15 +141,9 @@ here, point there."
     (should (commandp (cdr entry)))))
 
 (ert-deftest herdr-dispatch-takes-the-frame-rather-than-splitting-it ()
-  "The dashboard is a whole-session view with four columns to a pane row.
-Half a frame truncates the two that carry the news, the pane id and what
-the agent is working on, so `herdr-agents' passes its own action rather
-than letting `pop-to-buffer' split whatever window it finds.
-
-Asserted on the action reaching `pop-to-buffer', not on the resulting
-window count: a batch Emacs has one window and `display-buffer-full-frame'
-is a no-op in it, so counting windows here would pass against no action
-at all."
+  "Asserted on the action passed to `pop-to-buffer\\=', not on the window
+count: batch has one window, where `display-buffer-full-frame\\=' is a
+no-op."
   (let (action)
     (cl-letf (((symbol-function 'pop-to-buffer)
                (lambda (_buffer &optional given &rest _) (setq action given)))
@@ -170,23 +160,15 @@ at all."
         (should-not action)))))
 
 (ert-deftest herdr-requires-the-escape-hatch-rather-than-autoloading-it ()
-  "`herdr-call' is what makes deleting twenty-eight commands safe rather
-than lossy, so it must be there whenever this package is.
-
-It used to arrive with `herdr-transient', which put it on `:'.  With
-that file gone nothing pulled it in, and `M-x herdr-call' answered
-`void-function' in a session that had only required `herdr' — caught in
-a real frame, not by this suite, which loads every file anyway.  Asserted
-on the `require' rather than on `fboundp' for that reason: `fboundp'
-here is true whichever way the symbol arrived."
+  "`herdr-call\\=' used to arrive with `herdr-transient\\=' and answered
+`void-function\\=' once that went.  Asserted on the `require\\=', because
+`fboundp\\=' is true here whichever way the symbol arrived."
   (should (memq 'herdr-call features))
   (should (commandp 'herdr-call)))
 
 (ert-deftest herdr-command-map-is-the-only-menu ()
-  "`herdr-menu' and `herdr-transient' were both surfaces over the same
-commands this map and the dashboard already reach.  Neither survives,
-and `?' is unbound rather than repointed: `C-h' after the prefix lists
-these bindings already."
+  "`herdr-menu\\=' and `herdr-transient\\=' were surfaces over commands this
+map and the dashboard already reach."
   (should-not (fboundp 'herdr-menu))
   (should-not (fboundp 'herdr-transient))
   (should-not (lookup-key herdr-command-map "?")))

@@ -323,20 +323,7 @@ as N full-width tabs beats N slivers of one tab."
                      (focus . t)))))
 
 (defun herdr-cmd-pane-in-directory (directory)
-  "Return a pane for a new terminal in DIRECTORY.
-
-A workspace already open at DIRECTORY is used as it is, and the pane is
-a fresh tab in it.  Otherwise the workspace is created, and the pane
-returned is its root pane — a new workspace comes with a pane carrying
-nothing, so asking `tab.create\\=' for another would leave an empty tab
-behind on every first terminal.
-
-Shared by `herdr-new-terminal\\=' and the dispatcher\\='s create verb,
-which asked the same question of the same server and then differed only
-in which file they lived in.  Keeping it here also keeps
-`herdr-dispatch.el\\=' out of the business of deciding what a directory
-means, which is the split `herdr-cmd-open-workspace-for\\=' already
-makes for going to a project."
+  "Return a pane for a new terminal in DIRECTORY, opening a workspace if needed."
   (if-let* ((open (herdr-state-workspace-for-directory
                    (herdr-state-current) directory)))
       (herdr-cmd--new-tab-pane (alist-get 'workspace_id open))
@@ -348,19 +335,7 @@ makes for going to a project."
                        (focus . t))))))
 
 (defun herdr-new-terminal (&optional place)
-  "Open a terminal in PLACE and go to it.
-
-PLACE is a workspace id, or a directory — a worktree, or a project you
-have not opened yet.  Interactively it is read from
-`herdr-select-place\\=', which offers both.
-
-This is the one way to make a terminal.  herdr itself has no second
-mechanism: a new tab opens a shell, and an agent is whatever you then
-run in it, which herdr names by detection a few seconds later.  This
-package used to carry `agent.start\\=' beside it as a second, differently
-shaped door to the same place — one that demanded a name and a kind up
-front and could only take a pane with no agent on it — and two doors is
-what the herdr TUI itself does not have."
+  "Open a terminal in PLACE, a workspace id or a directory, and go to it."
   (interactive)
   (let ((place (or place (herdr-select-place))))
     (herdr-cmd--follow-new-pane

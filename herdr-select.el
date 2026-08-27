@@ -40,9 +40,6 @@
 (declare-function herdr-pane-close "herdr-cmd" (&optional pane-id))
 (declare-function herdr-agent-prompt "herdr-cmd" (text &optional target))
 
-;; project.el is optional here, the same way it is in `herdr.el' and
-;; `herdr-dispatch.el': `herdr-select-place' guards it with `fboundp'
-;; and offers open workspaces alone when it is absent.
 (declare-function project-known-project-roots "project" ())
 
 (defun herdr-select--status-glyph (status)
@@ -120,23 +117,9 @@ than one extra round trip, and the cache can drift."
     "  not open yet"))
 
 (defun herdr-select-place (&optional prompt)
-  "Read where to open a terminal: an open workspace, or a directory.
-
-An open workspace is offered by id, and gets a tab.  A directory with no
-workspace open is offered by path, and is opened as a workspace first.
-
-Directories come from `project-known-project-roots\\=', guarded with
-`fboundp\\=' the way the rest of the package guards project.el, and the
-ones already open as a workspace are dropped: they are in the list once
-already, under the id the verbs act on.
-
-A worktree appears here only when project.el knows it as a project in
-its own right.  Worktrees are not asked for: `worktree.list\\=' needs a
-directory inside a repository that is already open, so a picker built
-from it would cost one round trip per open workspace to offer what the
-dashboard offers for free.  \\[herdr-dispatch-create-pane] on the
-worktree row is the way to a worktree the server knows about and
-project.el does not."
+  "Read where to open a terminal: an open workspace id, or a project directory.
+PROMPT overrides the default.  A directory already open as a workspace is
+dropped, being in the list once already under the id the verbs act on."
   (herdr-state-refresh)
   (let* ((state (herdr-state-current))
          (workspaces (mapcar (lambda (workspace)

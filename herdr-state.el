@@ -140,10 +140,7 @@ first line of defence.")
             (herdr-state-panes state)))
 
 (defun herdr-state-workspace (state id)
-  "Return the workspace in STATE whose id is ID, or nil.
-The workspace counterpart of `herdr-state-pane\\=', and the way a caller
-holding one string tells a workspace id from a directory: only one of
-the two is in the cache under that name."
+  "Return the workspace in STATE whose id is ID, or nil."
   (seq-find (lambda (workspace) (equal id (alist-get 'workspace_id workspace)))
             (herdr-state-workspaces state)))
 

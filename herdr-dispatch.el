@@ -34,28 +34,9 @@
   :group 'herdr)
 
 (defcustom herdr-dispatch-display-action '(display-buffer-full-frame)
-  "How the dispatcher buffer is shown, as `display-buffer\\=' ACTION.
-
-The dashboard is a whole-session view: one row per repository, its
-checkouts and its panes, with four columns to a pane row.  Half a frame
-truncates the columns that carry the news — the pane id and what the
-agent is working on — so the default takes the frame.
-
+  "How the dispatcher buffer is shown, as a `display-buffer\\=' ACTION.
 Taking the frame deletes your other windows, and \\[quit-window] does not
-bring them back: it restores the buffer that was in this window, which
-is all `quit-restore\\=' records.  That is the same trade
-`herdr-display-action\\=' offers under `session\\=', and the reason both
-are options rather than behaviour.
-
-This is the dashboard\\='s knob.  `herdr-display-action\\=' is the
-terminals\\=', and they differ on purpose: a terminal is one buffer you
-are moving between and should not rearrange the frame, while the
-dashboard is a place you go, read, and leave.
-
-For the old behaviour, where the dashboard splits whatever window it
-finds:
-
-    (setq herdr-dispatch-display-action nil)"
+bring them back.  Nil splits instead."
   :type 'sexp
   :group 'herdr)
 
@@ -985,15 +966,8 @@ the same reason and with more at stake; see
 
 (herdr-dispatch-defverb herdr-dispatch-create-workspace ()
   "Create a workspace, prompting for its directory.
-
-A workspace has no parent section to inherit from, so unlike every other
-verb here this one asks.  The prompt defaults to the directory of the
-workspace at point, which is where a sibling checkout usually lives.
-
-The label is left to herdr, which names a workspace after its directory.
-Presetting one was a `--label\\=' argument on a transient this buffer no
-longer has, and `herdr-pane-rename\\=' — `R\\=' on the row — is the
-answer for a name you want to choose."
+The prompt defaults to the directory of the workspace at point.  The
+label is left to herdr, which names a workspace after its directory."
   (let* ((default (or (when-let* ((id (herdr-dispatch--value-at-point
                                        'herdr-workspace)))
                         (herdr-state-workspace-directory
@@ -1004,26 +978,9 @@ answer for a name you want to choose."
 
 (defun herdr-dispatch--pane-for-directory-at-point ()
   "Return a pane for a new terminal in the directory the row at point names.
-
-A `herdr-worktree\\=' row — a worktree, or the `main\\=' row standing for a
-repository\\='s own checkout — and a `herdr-known-project\\=' row both name
-a directory rather than a workspace.
-\\[herdr-dispatch-create-pane] had no answer for either:
-`herdr-dispatch--workspace-target\\=' resolves a workspace or nothing, and
-nothing means `tab.create\\=' falls back to whatever workspace the SERVER
-has focused.  So `n\\=' on an inactive project quietly opened a terminal
-somewhere else entirely — the one outcome worse than refusing, because
-nothing on screen said where it went.
-
-The directory row wins over any enclosing workspace, and that ordering
-is the point rather than an accident: a worktree row inside an open
-repository has that repository as its enclosing workspace, and a
-terminal opened there would land in the repository the user was pointing
-past.
-
-What the directory then means is `herdr-cmd-pane-in-directory\\='\\='s
-answer, shared with \\[herdr-new-terminal] so the two cannot disagree
-about whether a directory needs a workspace opening first."
+A directory row — a worktree, the `main\\=' row, an inactive project —
+wins over any enclosing workspace, which would be the repository the user
+was pointing past."
   (when-let* ((directory (or (herdr-dispatch--value-at-point 'herdr-worktree)
                              (herdr-dispatch--value-at-point 'herdr-known-project))))
     (herdr-cmd-pane-in-directory directory)))
@@ -1031,13 +988,7 @@ about whether a directory needs a workspace opening first."
 (defun herdr-dispatch--workspace-target ()
   "Return the workspace id point resolves to, or nil.
 A pane row resolves through its own record; a workspace heading is
-itself; anywhere else answers nil.
-
-Nil used to be handed to `tab.create', which reads it as \"whichever
-workspace the server has focused\" — so a verb aimed at a heading acted
-somewhere else entirely.  `herdr-dispatch--workspace-target-pane' is
-where that nil is now refused, and this stays a plain question with a
-plain answer."
+itself.  Nil is refused by `herdr-dispatch--workspace-target-pane\\='."
   (or (herdr-dispatch--value-at-point 'herdr-workspace)
       (when-let* ((pane-id (herdr-dispatch--value-at-point 'herdr-pane))
                   (pane (herdr-state-pane (herdr-state-current) pane-id)))
@@ -1045,10 +996,8 @@ plain answer."
 
 (defun herdr-dispatch--workspace-target-pane ()
   "Return a fresh tab\\='s pane in the workspace at point, or refuse.
-Split from `herdr-dispatch-create-pane\\=' so the refusal sits next to
-the nil it is refusing: `herdr-cmd--new-tab-pane\\=' treats a nil
-workspace as \"whichever the server has focused\", which is the one
-answer this buffer must never give silently."
+`herdr-cmd--new-tab-pane\\=' reads a nil workspace as \"whichever the
+server has focused\", which this buffer must never answer silently."
   (let ((workspace (herdr-dispatch--workspace-target)))
     (unless workspace
       (user-error "herdr: nothing at point names a workspace to open a terminal in"))
@@ -1056,28 +1005,9 @@ answer this buffer must never give silently."
 
 (herdr-dispatch-defverb herdr-dispatch-create-pane ()
   "Open a terminal, taking its place from point.
-
-Most specific first.  A row naming a directory rather than
-a workspace — a worktree, the `main\\=' row, an inactive project —
-resolves through `herdr-dispatch--pane-for-directory-at-point\\=', which
-opens that directory as a workspace if nothing is open there yet.
-Anywhere else a fresh tab is created in the workspace at point, so `n\\='
-has an answer everywhere in the buffer.
-
-A row that resolves to neither is refused rather than sent to the
-server\\='s focused workspace.  The `Inactive (N)\\=' heading and the
-dashboard\\='s own header line name no place at all, and a nil
-`workspace_id\\=' makes `tab.create\\=' pick one for you — so the terminal
-opened somewhere the user was not pointing, with nothing on screen
-saying where.  Every other verb already refuses both headings; see
-`herdr-dispatch--refuse-heading\\='.
-
-This is the only create verb for a place to run something.  There was a
-second, `a\\=', which asked for an agent kind and a name and then called
-`agent.start\\=' — a door herdr\\='s own TUI does not have, where a new tab
-opens a shell and the agent is whatever you run in it.  herdr names that
-agent by detection a few seconds later, so the two doors differed in
-what they demanded up front and in nothing else."
+A directory row wins; otherwise a fresh tab in the workspace at point.
+A row naming neither is refused rather than sent to the server\\='s
+focused workspace."
   (when (herdr-dispatch--type-at-point 'herdr-known-projects)
     (herdr-dispatch--refuse-heading
      "the inactive-projects group is not a place to open a terminal"))
@@ -1087,18 +1017,9 @@ what they demanded up front and in nothing else."
 
 (herdr-dispatch-defverb herdr-dispatch-create-worktree ()
   "Create a git worktree from the workspace at point.
-
-Calls `herdr-rpc-call\\=' directly rather than through
-`herdr-worktree-create\\=', which derives its `cwd\\=' from the calling
-buffer's `default-directory\\=' — here that would be `*herdr-agents*\\=',
-not the workspace at point, matching the treatment already given to
-`herdr-dispatch-open-worktree\\='.
-
-The base ref is a prompt, and empty means the current HEAD.  It used to
-be `--base\\=' on a transient, which was the last thing in this package
-that needed `transient\\=' at all — and an argument you had to remember
-to set before pressing the key reads worse than a prompt that appears
-exactly when the answer is wanted."
+Calls `worktree.create\\=' directly: `herdr-worktree-create\\=' would take
+its `cwd\\=' from `*herdr-agents*\\=' rather than the workspace at point.
+An empty base ref means the current HEAD and is omitted from the call."
   (let* ((workspace (herdr-dispatch--require 'herdr-workspace "a workspace"))
          (branch (read-string "New worktree branch: "))
          (base (read-string

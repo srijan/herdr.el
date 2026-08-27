@@ -34,26 +34,21 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
   (seq-filter (lambda (node) (eq type (nth 0 node))) nodes))
 
 (defun herdr-tree-test--worktree-rows (children)
-  "Return the worktree nodes among CHILDREN, a workspace node's children.
-Selected by type rather than by position.  A workspace draws its `main'
-group only when it has worktrees, so \"everything after the first
-child\" stopped naming the worktrees the moment the group became
-conditional — it named the second pane onwards instead, and every
-should-not on this helper passed for the wrong reason."
+  "Return the worktree nodes among CHILDREN, a workspace node\\='s children.
+By type, not position: the `main\\=' group is conditional now, so
+\"everything after the first child\" named the second pane onwards and
+every should-not on this helper passed for the wrong reason."
   (seq-filter (lambda (node)
                 (memq (nth 0 node) '(herdr-worktree herdr-workspace)))
               children))
 
 (defun herdr-tree-test--main-group (children)
-  "Return the `main' group among CHILDREN, or nil when there is none.
-A workspace draws one only when it has worktrees to tell its panes
-apart from; see `herdr-tree--main-node'."
+  "Return the `main\\=' group among CHILDREN, or nil when there is none."
   (car (herdr-tree-test--nodes-of-type 'herdr-panes children)))
 
 (defun herdr-tree-test--pane-nodes (workspace)
-  "Return the pane nodes of WORKSPACE, a node from `herdr-tree-build'.
-Panes are the workspace's own children, unless it has worktrees — then
-they sit one level in, inside its `main' group."
+  "Return the pane nodes of WORKSPACE, a node from `herdr-tree-build\\='.
+Its own children, unless it has worktrees — then inside the `main\\=' group."
   (let ((children (nth 3 workspace)))
     (if-let* ((group (herdr-tree-test--main-group children)))
         (nth 3 group)

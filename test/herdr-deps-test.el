@@ -24,17 +24,10 @@ made it findable under `emacs -Q'."
   (should (featurep 'herdr-dispatch)))
 
 (ert-deftest herdr-no-longer-declares-transient ()
-  "`transient' was declared for one thing: the dashboard's `c' create
-menu, a transient prefix offering the same three verbs as `w', `n' and
-`%' plus three arguments.  Two of the three only skipped a prompt; the
-third, `--base', is a prompt now.
-
-Declared, not needed — and the difference matters enough to say here.
-magit-section requires `transient' itself, and Emacs has shipped one
-since 28.1, so it is loaded in any session that draws the dashboard.
-What changed is that no file here names it, which is why this asserts
-the headers rather than `locate-library' or `featurep': both would
-answer yes for reasons that have nothing to do with this package."
+  "Declared, not needed: magit-section requires `transient\\=' itself and
+Emacs ships one since 28.1, so `locate-library\\=' and `featurep\\=' both
+answer yes for reasons unrelated to this package.  The headers are the
+only honest assertion."
   (dolist (file '("herdr.el" "herdr-dispatch.el"))
     (with-temp-buffer
       (insert-file-contents file nil 0 2000)

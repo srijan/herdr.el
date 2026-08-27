@@ -60,13 +60,8 @@
     (should (= (length names) (length (delete-dups (copy-sequence names)))))))
 
 (ert-deftest herdr-cmd-is-the-set-it-means-to-be ()
-  "The registry is pinned rather than floored.
-
-It used to assert a minimum length, which is the right guard for a
-surface meant to grow and the wrong one for a surface deliberately cut
-back: a floor cannot notice a command being added, and adding one is now
-the change worth arguing about.  Every entry here is called by the
-dashboard or by `herdr-command-map'; anything else is `herdr-call'."
+  "The registry is pinned, not floored: adding a command is the change
+worth arguing about now."
   (should (equal '(herdr-pane-close
                    herdr-pane-rename
                    herdr-pane-focus
@@ -81,15 +76,9 @@ dashboard or by `herdr-command-map'; anything else is `herdr-call'."
                  (mapcar #'car herdr-cmd-methods))))
 
 (ert-deftest herdr-cmd-offers-no-surface-the-dashboard-does-not-use ()
-  "The commands cut, asserted absent rather than merely unbound.
-
-Layout commands (`pane.split', `pane.zoom', `pane.resize', `pane.swap')
-moved nothing under `agent-windows', where Emacs owns the layout.  Tab
-commands were already hidden under that backend.  `herdr-agent-read' and
-`herdr-agent-focus' were the same call as their pane equivalents with a
-different target type.  The adoption pair has been obsolete since herdr
-0.8.2.  Every one of them is still reachable through \\[herdr-call],
-which is what makes deleting them safe."
+  "The cut commands, asserted absent rather than merely unbound.
+Each is still reachable through \\[herdr-call], which is what made
+deleting them safe."
   (dolist (command '(herdr-pane-split-right herdr-pane-split-down
                      herdr-pane-zoom herdr-pane-resize herdr-pane-swap
                      herdr-pane-send-text herdr-pane-run
@@ -466,9 +455,8 @@ directory's own name."
 ;;; Opening a terminal: the one create mechanism
 
 (ert-deftest herdr-cmd-pane-in-directory-opens-a-workspace-when-none-is-there ()
-  "A directory nothing is open in becomes a workspace, and the pane
-returned is that workspace\='s root pane.  Asking `tab.create' for
-another would leave an empty tab behind on every first terminal."
+  "The pane returned is the new workspace\\='s root pane; asking
+`tab.create\\=' for another would leave an empty tab behind."
   (let ((calls nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
                (lambda (method params)
@@ -500,9 +488,8 @@ another would leave an empty tab behind on every first terminal."
                        (reverse calls)))))))
 
 (ert-deftest herdr-new-terminal-adds-a-tab-when-given-a-workspace-id ()
-  "The two kinds of place `herdr-select-place' offers are told apart by
-the cache: a string the cache holds as a workspace is a workspace, and
-anything else is a directory."
+  "A string the cache holds as a workspace is a workspace; anything else
+is a directory."
   (let ((calls nil)
         (followed nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
@@ -522,8 +509,8 @@ anything else is a directory."
         (should (equal "w9:p2" followed))))))
 
 (ert-deftest herdr-new-terminal-opens-a-directory-that-is-not-a-workspace ()
-  "A directory the cache does not hold as a workspace id goes through
-`herdr-cmd-pane-in-directory', which opens it first."
+  "A directory goes through `herdr-cmd-pane-in-directory\\=', which opens
+it first."
   (let ((calls nil)
         (followed nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)

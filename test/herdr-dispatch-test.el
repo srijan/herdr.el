@@ -483,10 +483,8 @@ this a test of a redraw again rather than a test of the skip."
     (goto-char (point-min))
     (search-forward "w1:p2")
     (let ((ident (magit-section-ident (magit-current-section))))
-      ;; No `herdr-panes' level: the fixture workspace has no worktrees,
-      ;; so its panes hang off the workspace row itself.  Asserted rather
-      ;; than derived, because the ident is what point is restored
-      ;; through and a change to the tree's shape changes it.
+      ;; No `herdr-panes' level: the fixture has no worktrees.  The
+      ;; ident is what point is restored through, so pin it.
       (should (equal '((herdr-pane . "w1:p2")
                        (herdr-workspace . "w1") (herdr-root))
                      ident))
@@ -2135,16 +2133,9 @@ these rows are children of it, not siblings of the workspaces above."
       (should (= after-a (1- (point)))))))
 
 (ert-deftest herdr-dispatch-binds-no-help-key ()
-  "`?' opened `herdr-transient', a third surface over commands this
-buffer and `herdr-command-map' already reach.  With the transient gone
-the key is unbound rather than repointed: Emacs answers the question
-already, and a second way to ask is a second thing to remember.
-
-Asserted as \"not one of ours\" rather than as nil.  `magit-section-mode'
-links `special-mode-map' into this map's parent chain the first time a
-dispatcher buffer is made, and `?' is `describe-mode' there — so the key
-answers nil in a fresh Emacs and `describe-mode' once anything in the
-suite has drawn the buffer.  Either is right; a herdr command is not."
+  "Not nil but \"not one of ours\": `magit-section-mode\\=' links
+`special-mode-map\\=' into the parent chain once a dispatcher buffer
+exists, and `?\\=' is `describe-mode\\=' there."
   (should (memq (lookup-key herdr-dispatch-mode-map "?") '(nil describe-mode)))
   (should-not (fboundp 'herdr-transient)))
 
@@ -2500,15 +2491,9 @@ consult the pane's own `workspace_id\\=' rather than assume nesting."
       (should (equal "w9" (herdr-dispatch--workspace-target))))))
 
 (ert-deftest herdr-dispatch-create-worktree-omits-an-empty-base ()
-  "An empty base means \"off the current ref\"; `herdr-worktree-create's
-own contract (see herdr-cmd-test.el) is that a blank string must not
-reach the server as one.  `herdr-dispatch-create-worktree' calls
-`herdr-rpc-call\\=' directly rather than through that command, so the
-same contract has to be reasserted here rather than inherited.
-
-The base used to come from a `--base\\=' transient argument and now comes
-from the second prompt, which is the shape that makes RET the answer for
-the ordinary case."
+  "A blank base must not reach the server as an empty string.  This verb
+calls `herdr-rpc-call\\=' directly, so the contract is reasserted rather
+than inherited from `herdr-worktree-create\\='."
   (let ((params nil)
         (prompts nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
@@ -2549,14 +2534,7 @@ than the current HEAD."
         (should (equal "v1.4" (alist-get 'base params)))))))
 
 (ert-deftest herdr-dispatch-create-workspace-prompts-from-the-row-at-point ()
-  "A workspace has no parent section to inherit from, so this verb asks —
-and the default it offers is the directory of the workspace at point,
-where a sibling checkout usually lives.
-
-It used to take `--directory\\=' and `--label\\=' from a transient
-instead.  Both only skipped a prompt, and the label skipped one that was
-never asked: herdr names a workspace after its directory when none is
-given."
+  "The default offered is the directory of the workspace at point."
   (let ((called nil)
         (default nil))
     (cl-letf (((symbol-function 'herdr-workspace-create)
@@ -2621,9 +2599,7 @@ Real state rather than mocked accessors, for the reason given in
        ,@body)))
 
 (ert-deftest herdr-dispatch-create-pane-creates-a-tab-in-the-workspace-of-the-pane ()
-  "A pane row resolves through its own record to its workspace, so `n'
-on any pane opens a terminal beside it rather than wherever the server
-happens to be focused."
+  "A pane row resolves through its own record to its workspace."
   (let ((workspace-id nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
                (lambda (_method params)
@@ -2636,9 +2612,7 @@ happens to be focused."
         (should (equal "w1" workspace-id))))))
 
 (ert-deftest herdr-dispatch-create-pane-follows-the-pane-it-creates ()
-  "The whole conversation, on the wire.  `tab.create' carries `focus',
-and the created pane is followed — a terminal that opens somewhere you
-cannot see reads as a no-op."
+  "A terminal that opens somewhere you cannot see reads as a no-op."
   (let ((methods nil)
         (followed nil))
     (cl-letf (((symbol-function 'herdr-cmd--follow-new-pane)
@@ -2662,14 +2636,10 @@ cannot see reads as a no-op."
 ;;; `n' on a row that names a directory rather than a workspace
 
 (ert-deftest herdr-dispatch-create-pane-opens-a-known-project-first ()
-  "The defect this closes: `herdr-dispatch--workspace-target' answers nil
-on a row that names a directory, and a nil `workspace_id' makes
-`tab.create' fall back to whatever workspace the SERVER has focused.  So
-`n' on an inactive project quietly opened a terminal in some other
-repository, with nothing on screen saying where it went.
-
-Nothing is open at the directory here, so the workspace is created and
-its root pane — not a second tab in it — is what gets followed."
+  "A nil `workspace_id\\=' makes `tab.create\\=' fall back to whatever the
+server has focused, so `n\\=' here used to open a terminal in some other
+repository.  Nothing is open at this directory, so its root pane is what
+gets followed."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
     (let ((herdr-state--current (herdr-state-empty))
           (calls nil)
@@ -2689,11 +2659,8 @@ its root pane — not a second tab in it — is what gets followed."
       (should (equal "w7:p1" followed)))))
 
 (ert-deftest herdr-dispatch-create-pane-reuses-a-workspace-already-open-there ()
-  "The row is built only for a root with no workspace open, but the
-render can be one poll tick behind by the time `n' lands.  Creating a
-second workspace for a directory that already has one is the bug
-`herdr-state-workspace-for-directory' exists to prevent, so the answer
-is a tab in the workspace that is already there."
+  "The row can be a poll tick stale; creating a second workspace for the
+same directory is what `herdr-state-workspace-for-directory\\=' prevents."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
     (let ((herdr-state--current
            (herdr-state-from-snapshot
@@ -2714,9 +2681,8 @@ is a tab in the workspace that is already there."
                      (reverse calls))))))
 
 (ert-deftest herdr-dispatch-create-pane-prefers-a-worktree-row-to-its-repository ()
-  "A worktree row inside an open repository has that repository as its
-enclosing workspace.  Walking up would open the terminal in the
-repository the user was pointing past, so the directory row wins."
+  "Walking up would open the terminal in the repository the user was
+pointing past."
   (herdr-dispatch-test-with-buffer
       '((herdr-workspace "w1" "herdr.el (2)"
          ((herdr-panes "w1" "main (1)" ((herdr-pane "w1:p1" "claude" nil)))
@@ -2739,16 +2705,9 @@ repository the user was pointing past, so the directory row wins."
                      (alist-get 'cwd (cdr (car (reverse calls)))))))))
 
 (ert-deftest herdr-dispatch-create-pane-refuses-a-heading-that-names-no-place ()
-  "The last hole of the same shape.  `herdr-dispatch--workspace-target'
-answers nil on a row that resolves to no workspace, and a nil
-`workspace_id' makes `tab.create' fall back to whatever workspace the
-server has focused.  Point on the `Inactive (N)' heading, or on the
-dashboard's own header line, therefore opened a terminal in some other
-repository with nothing on screen saying where it went — the same defect
-the directory rows had, in the two places that name no directory either.
-
-Every other verb already refuses both headings.  This one has to as
-well, or the refusal is a property of which verb you happened to press."
+  "The `Inactive (N)\\=' heading and the header line name no place, and a
+nil `workspace_id\\=' would send the terminal to the focused workspace.
+Every other verb already refuses both."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
     (dolist (target '("Inactive (2)" :header))
       (if (eq target :header)
@@ -2788,26 +2747,16 @@ heading is that id directly."
     (should (commandp verb))))
 
 (ert-deftest herdr-dispatch-binds-no-create-menu ()
-  "`c' opened `herdr-dispatch-create', a transient offering the same
-three verbs `w', `n' and `%' offer directly, plus three arguments.
-`--directory' and `--label' only skipped a prompt.  `--base' was the one
-capability, and it is the second prompt of
-`herdr-dispatch-create-worktree' now.
-
-It was also the last transient prefix in the package, so deleting it
-dropped `transient' as a dependency — which is the reason to assert the
-symbol is gone rather than merely unbound."
+  "`c\\=' offered the same verbs as `w\\=', `n\\=' and `%\\=' plus three
+arguments, and was the last transient prefix in the package."
   (should-not (lookup-key herdr-dispatch-mode-map "c"))
   (should-not (fboundp 'herdr-dispatch-create))
   (should-not (fboundp 'herdr-dispatch--args))
   (should-not (fboundp 'herdr-dispatch--arg)))
 
 (ert-deftest herdr-dispatch-offers-no-second-way-to-create-a-place-to-run-in ()
-  "`a' started an agent through `agent.start', asking for a kind and a
-name that herdr\='s own TUI never asks for: there a new tab opens a
-shell, and the agent is whatever you run in it.  Two doors to one place
-is what this buffer no longer has, so both the key and the command are
-gone rather than merely unbound."
+  "`a\\=' called `agent.start\\=', asking for a kind and a name that herdr\\='s
+own TUI never asks for."
   (should-not (lookup-key herdr-dispatch-mode-map "a"))
   (should-not (fboundp 'herdr-dispatch-create-agent))
   (should-not (fboundp 'herdr-agent-start)))
