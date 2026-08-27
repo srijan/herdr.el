@@ -571,10 +571,13 @@ two lives in the cache that builds WORKTREES rather than here."
 (defun herdr-tree--main-node (workspace-id panes)
   "Return the `main (N)\\=' node holding PANES, the panes of WORKSPACE-ID.
 
-Drawn only when the workspace has worktrees to sit beside; a workspace
-without them has nothing its panes could be confused with, and a heading
-there would cost every workspace in the session a level to disambiguate
-a thing that is not ambiguous.
+Drawn for every workspace, worktrees or not.  Appearing only where it
+was strictly needed to tell panes from worktrees would have made the
+group a signal that the workspace has worktrees, moving every pane in
+the session one level in or out as worktrees came and went — and it
+would have left the workspaces without them with no `main\\=' row to put
+point on, which is where \\[herdr-dispatch-create-agent] wants to be
+aimed.
 
 `main\\=' is git's word for the checkout the worktrees hang off, which is
 exactly what these panes are running in.  It names the worktree, not a
@@ -592,8 +595,8 @@ the worktree branch column width, threaded the same way to
 `herdr-tree--worktree-nodes\\='.  NESTED is passed straight through to it;
 see there for what it does.
 
-A workspace with worktrees holds its own panes in a `main (N)\\=' group and
-its worktrees beside it, one node each:
+A workspace holds its own panes in a `main (N)\\=' group and its
+worktrees beside it, one node each:
 
     herdr.el (3)
       main (2)
@@ -602,15 +605,19 @@ its worktrees beside it, one node each:
       project-el (1)
         claude
 
-A workspace without worktrees holds its panes directly, since there is
-then nothing to tell them apart from.
+The count in parentheses is the repository's checkouts — its own, plus
+one per worktree — not its panes.  Those moved down to `main (N)\\=' when
+that group appeared, and leaving the same number on both rows would have
+said the pane count twice while the question the row is now in a
+position to answer went unasked: how many checkouts of this repository
+the dashboard is showing.  `repo (1)\\=' is a repository with no
+worktrees, which is the ordinary case and reads as one.
 
-The pane count rides in parentheses on the label — `repo (3)\\=' — rather
-than as a `3 panes\\=' column of its own.  That is magit's idiom for the
-same thing (`Unstaged changes (1)\\='), and it is the shape that reads as
-a container: a heading that owns a countable number of children, told
-apart at a glance from the leaf rows that own none.  The worktrees
-heading is counted the same way for the same reason.
+Parentheses on the label rather than a column of its own because that is
+magit's idiom for the same thing (`Unstaged changes (1)\\='), and it is
+the shape that reads as a container: a heading that owns a countable
+number of children, told apart at a glance from the leaf rows that own
+none.
 
 The directory is abbreviated with `abbreviate-file-name\\=' — the `~/\\='
 a known-project row already shows for free, since
@@ -626,15 +633,37 @@ a known-project row already shows for free, since
            (format "%-28s %-30s %s"
                    (format "%s (%s)"
                            (or (alist-get 'label workspace) id)
-                           (or (alist-get 'pane_count workspace) 0))
+                           (1+ (length worktree-nodes)))
                    (herdr-tree--faced
                     (abbreviate-file-name
                      (or (herdr-state-workspace-directory state id) ""))
                     'font-lock-comment-face)
                    (herdr-tree--rollup (alist-get 'agent_status workspace))))
-          (if worktree-nodes
-              (cons (herdr-tree--main-node id panes) worktree-nodes)
-            panes))))
+          (cons (herdr-tree--main-node id panes) worktree-nodes))))
+
+(defun herdr-tree--main-checkout-node (root worktrees width)
+  "Return the `main\\=' row for ROOT, or nil when ROOT is not a checkout.
+
+An inactive project row has no `main (N)\\=' group — it has no panes to
+put in one — so without this the repository\\='s own checkout was the one
+directory in the listing with no row of its own.  Every worktree could
+be pointed at and acted on; the checkout they hang off could not, even
+though it is the one most likely to be wanted.
+
+Named `main\\=' rather than by its branch, which is the same word the
+group under an open workspace uses and means the same thing: the
+checkout the worktrees hang off.  Its branch is not shown, because a
+repository\\='s own branch may be called anything and the row is not
+making a claim about it.
+
+Nil unless the reply\\='s main checkout is ROOT itself.  A root that is a
+linked worktree of some other repository has a main checkout elsewhere,
+and drawing that other repository\\='s checkout as a row under this one
+would describe it as something it is not."
+  (when-let* ((main (herdr-tree--main-checkout root worktrees))
+              ((equal (herdr-tree--as-directory main)
+                      (herdr-tree--as-directory root))))
+    (herdr-tree--worktree-node `((path . ,main) (branch . "main")) width)))
 
 (defun herdr-tree--known-project-worktree-nodes (root worktrees width)
   "Return a node per worktree of ROOT in WORKTREES, or nil when it has none.
@@ -645,6 +674,16 @@ A list rather than a `worktrees (N)\\=' container, for the reason
 to hold apart: an inactive project row has no panes, so its worktrees
 were the only thing under it and the heading grouped them against
 nothing.
+
+The repository\\='s own checkout leads the list, as a `main\\=' row; see
+`herdr-tree--main-checkout-node\\=' for why it is drawn here and not
+under an open workspace.  A repository with no worktrees at all is
+therefore one `main\\=' row rather than nothing: the row is where
+\\[herdr-dispatch-create-agent] is aimed, and a repository does not stop
+having a checkout for having no worktrees.
+
+Nil still means the reply has not landed.  That is absence of knowledge,
+and it is the one case where drawing nothing is right.
 
 Two things are dropped, as in `herdr-tree--worktree-nodes\\=', but the
 second question is asked by path rather than by workspace id.
@@ -659,16 +698,18 @@ heading, described as one of its own children.
 open workspace, and it cannot be reused here: it compares
 `open_workspace_id\\=', and ROOT, being unopened, has no workspace id to
 compare against.  Its path is the identity ROOT does have."
-  (when-let* ((entry (assoc root worktrees))
-              (found (seq-filter
-                      (lambda (worktree)
-                        (and (herdr-tree-linked-worktree-p worktree)
-                             (not (equal (herdr-tree--as-directory
-                                          (alist-get 'path worktree))
-                                         (herdr-tree--as-directory root)))))
-                      (cdr entry))))
-    (mapcar (lambda (worktree) (herdr-tree--worktree-node worktree width))
-            found)))
+  (when-let* ((entry (assoc root worktrees)))
+    (let ((rows (mapcar (lambda (worktree)
+                          (herdr-tree--worktree-node worktree width))
+                        (seq-filter
+                         (lambda (worktree)
+                           (and (herdr-tree-linked-worktree-p worktree)
+                                (not (equal (herdr-tree--as-directory
+                                             (alist-get 'path worktree))
+                                            (herdr-tree--as-directory root)))))
+                         (cdr entry))))
+          (main (herdr-tree--main-checkout-node root worktrees width)))
+      (if main (cons main rows) rows))))
 
 (defun herdr-tree--known-project-node (root worktrees worktree-width)
   "Return the node for ROOT, a known project with no workspace open.
@@ -678,21 +719,27 @@ own worktrees section — ROOT's own repository is asked about exactly the
 same way, just keyed by ROOT itself rather than a workspace id.
 WORKTREE-WIDTH is the worktree branch column width, threaded the same way.
 
-Always \"(0)\": a real workspace cannot reach zero panes and survive —
-closing a workspace's last pane closes the workspace itself with it,
-verified against a running server — so the count doubles as the signal
-that this row is not actually open, the same way
-`herdr-tree--worktree-node\\=' marks an unopened worktree with `open as
-WORKSPACE-ID\\=' rather than leaving it looking identical to one that is.
-Dimmed with `shadow\\=' for the same reason: nothing here is running."
+The count is the repository's checkouts, the same number an open
+workspace's row carries and counted the same way: its own checkout plus
+one per worktree.  It used to be a constant \"(0)\" — a real workspace
+cannot reach zero panes and survive, so a zero pane count was itself the
+signal that this row is not open — but a number that is always the same
+is a number nobody reads, and the row says \"not running\" twice over
+without it: it is dimmed with `shadow\\=', and `herdr-tree--worktree-node\\='
+marks an unopened worktree with `open as WORKSPACE-ID\\=' the same way.
+
+Zero still happens and still means something, just something else: no
+checkouts are known.  Either the reply has not landed yet, or the
+directory is not a git repository at all."
   (let ((worktree-nodes (herdr-tree--known-project-worktree-nodes
                          root worktrees worktree-width)))
     (list 'herdr-known-project root
           (herdr-tree--faced
            (string-trim-right
             (format "%-28s %s"
-                    (format "%s (0)"
-                            (file-name-nondirectory (directory-file-name root)))
+                    (format "%s (%s)"
+                            (file-name-nondirectory (directory-file-name root))
+                            (length worktree-nodes))
                     root))
            'shadow)
           worktree-nodes)))

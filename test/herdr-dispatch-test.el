@@ -483,8 +483,8 @@ this a test of a redraw again rather than a test of the skip."
     (goto-char (point-min))
     (search-forward "w1:p2")
     (let ((ident (magit-section-ident (magit-current-section))))
-      (should (equal '((herdr-pane . "w1:p2") (herdr-workspace . "w1")
-                       (herdr-root))
+      (should (equal '((herdr-pane . "w1:p2") (herdr-panes . "w1")
+                       (herdr-workspace . "w1") (herdr-root))
                      ident))
       (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
       (should (equal 1 (herdr-dispatch-test-counting-rebuilds
@@ -1093,7 +1093,6 @@ to redraw."
       (herdr-dispatch-test-with-async
         (herdr-dispatch-refresh t)
         (should-not (string-match-p "feat/x" (buffer-string)))
-        (should-not (string-match-p "main (" (buffer-string)))
         (herdr-dispatch-test--reply
          0 '((worktrees . (((path . "/tmp/web-feat")
                             (is_linked_worktree . t)
