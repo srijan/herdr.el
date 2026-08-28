@@ -94,8 +94,7 @@ findable by the name it is known by as well as by what it is doing."
 Listing every pane put plain shells in `consult-buffer' that had no
 buffer at all: they appeared in the list and selecting one left you
 where you were."
-  (let ((herdr-terminal-backend 'agent-windows)
-        (live (generate-new-buffer " *pane-with-buffer*")))
+  (let ((live (generate-new-buffer " *pane-with-buffer*")))
     (unwind-protect
         (let ((herdr-term--buffers (list (cons "w1:p1" live)))
               (herdr-state--current
@@ -133,8 +132,7 @@ down to `herdr-rpc-background-timeout'."
 
 (ert-deftest herdr-select-consult-visit-switches-and-focuses ()
   "Selecting must both move Emacs and move herdr's focus."
-  (let ((herdr-terminal-backend 'agent-windows)
-        (target (generate-new-buffer " *target*"))
+  (let ((target (generate-new-buffer " *target*"))
         focused)
     (unwind-protect
         (let ((herdr-term--buffers (list (cons "w1:p1" target))))
@@ -154,8 +152,7 @@ down to `herdr-rpc-background-timeout'."
   "Acting from inside one agent's buffer used to target whichever pane
 you last went to, because herdr's focus is server-side and does not
 follow Emacs."
-  (let* ((herdr-terminal-backend 'agent-windows)
-         (mine (generate-new-buffer " *pane-b*"))
+  (let* ((mine (generate-new-buffer " *pane-b*"))
          (herdr-term--buffers (list (cons "w1:pB" mine)))
          (herdr-state--current
           (herdr-state-from-snapshot
@@ -169,8 +166,7 @@ follow Emacs."
 
 (ert-deftest herdr-select-target-falls-back-to-herdr-focus ()
   "Outside a herdr buffer there is no local answer, so use the server's."
-  (let* ((herdr-terminal-backend 'agent-windows)
-         (herdr-term--buffers nil)
+  (let* ((herdr-term--buffers nil)
          (herdr-state--current
           (herdr-state-from-snapshot
            '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))
@@ -179,8 +175,7 @@ follow Emacs."
       (should (equal "w1:pA" (herdr-select-target-pane))))))
 
 (ert-deftest herdr-select-target-ignores-a-buffer-whose-pane-is-gone ()
-  (let* ((herdr-terminal-backend 'agent-windows)
-         (orphan (generate-new-buffer " *orphan*"))
+  (let* ((orphan (generate-new-buffer " *orphan*"))
          (herdr-term--buffers (list (cons "w1:gone" orphan)))
          (herdr-state--current
           (herdr-state-from-snapshot

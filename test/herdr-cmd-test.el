@@ -120,7 +120,7 @@ deleting them safe."
 ;;; Focus must move Emacs, not just the server
 
 (ert-deftest herdr-pane-focus-selects-the-buffer-for-that-pane ()
-  "Focusing is server-side; under `agent-windows' nothing repaints, so
+  "Focusing is server-side and nothing repaints, so
 Emacs has to be moved to match or the command looks like a no-op."
   (let (selected)
     (cl-letf (((symbol-function 'herdr-term-select-pane)
@@ -194,12 +194,10 @@ with `pane'."
       (should (eq t (alist-get 'focus (alist-get 'params sent)))))))
 
 (ert-deftest herdr-cmd-follow-new-pane-selects-or-waits ()
-  "Under `agent-windows', when select cannot show the pane yet — the
-cache has not caught up with creation, announced on the event stream —
-the retry chain is armed instead of anything that would report an agent
-on the pane."
-  (let ((herdr-terminal-backend 'agent-windows)
-        deferred reported)
+  "When select cannot show the pane yet, because the cache has not
+caught up with a creation announced on the event stream, the retry chain
+is armed."
+  (let (deferred reported)
     (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) nil))
               ((symbol-function 'herdr-cmd--select-pane-when-ready)
                (lambda (pane) (setq deferred pane)))
@@ -214,24 +212,13 @@ on the pane."
   "The retry chain is armed exactly when the immediate select comes up
 empty; a pane already in the cache must not also be handed to it."
   (dolist (select-succeeds '(nil t))
-    (let ((herdr-terminal-backend 'agent-windows)
-          deferred)
+    (let (deferred)
       (cl-letf (((symbol-function 'herdr-term-select-pane)
                  (lambda (_) select-succeeds))
                 ((symbol-function 'herdr-cmd--select-pane-when-ready)
                  (lambda (pane) (setq deferred pane))))
         (herdr-cmd--follow-new-pane "w1:p9")
         (should (equal (unless select-succeeds "w1:p9") deferred))))))
-
-(ert-deftest herdr-cmd-created-pane-is-left-alone-under-session ()
-  "The session backend shows every pane already; adopting would only
-add a spurious row to herdr's own agents list."
-  (let ((herdr-terminal-backend 'session)
-        (herdr-adopt-created-shells t)
-        adopted)
-    (cl-letf (((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p))))
-      (herdr-cmd--follow-new-pane "w1:p9")
-      (should-not adopted))))
 
 ;;; What reached the server is the assertion
 
@@ -284,13 +271,11 @@ is the very case this sentence describes."
       (let ((command (nth 0 entry))
             (method (nth 1 entry))
             (inhibit-interaction t)
-            (herdr-terminal-backend 'session)
             ;; Enough of a session for every picker to have something to
             ;; offer: one pane running an agent, one bare shell.
             (herdr-state--current
              (herdr-state-from-snapshot
               '((workspaces . (((workspace_id . "w1") (label . "ws"))))
-                (tabs . (((tab_id . "w1:t1") (workspace_id . "w1"))))
                 (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
                            (tab_id . "w1:t1") (agent . "claude")
                            (agent_status . "idle") (cwd . "/tmp"))
@@ -447,10 +432,9 @@ different request, and nil is dropped from the payload entirely."
 (ert-deftest herdr-workspace-create-defaults-the-label-to-the-directory ()
   "An unnamed workspace should still read as something, so it borrows the
 directory's own name."
-  (let ((herdr-terminal-backend 'session))
-    (herdr-cmd-test--capturing-params params
-      (herdr-workspace-create "/tmp/herdr-example/" nil)
-      (should (equal "herdr-example" (alist-get 'label params))))))
+  (herdr-cmd-test--capturing-params params
+    (herdr-workspace-create "/tmp/herdr-example/" nil)
+    (should (equal "herdr-example" (alist-get 'label params)))))
 
 ;;; Opening a terminal: the one create mechanism
 

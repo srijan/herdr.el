@@ -357,7 +357,6 @@ last line would satisfy a test that only looked at the text."
 
 (defconst herdr-dispatch-test--snapshot
   '((workspaces . (((workspace_id . "w1") (label . "web") (pane_count . 2))))
-    (tabs . (((tab_id . "w1:t1") (workspace_id . "w1") (label . "main"))))
     (panes . (((pane_id . "w1:p1") (agent . "claude")
                (agent_status . "blocked")
                (workspace_id . "w1") (tab_id . "w1:t1"))
@@ -1053,18 +1052,6 @@ looks wrong."
     (search-forward "herdr.el")
     (should-error (herdr-dispatch-read) :type 'user-error)))
 
-(defun herdr-dispatch-test--focus-from (text)
-  "Return the calls `herdr-dispatch-focus' makes from the line holding TEXT.
-The following commands are recorded alongside `herdr-rpc-call' so that
-reaching the server through one of them is distinguishable from calling
-it directly — they issue the same request, and only the recorder tells
-them apart."
-  (goto-char (point-min))
-  (search-forward text)
-  (herdr-dispatch-test-with-recorders
-      (herdr-rpc-call herdr-pane-focus herdr-workspace-focus)
-    (herdr-dispatch-focus)))
-
 (ert-deftest herdr-dispatch-verbs-report-rather-than-raise ()
   "Every verb goes through the protection, not just the ones tested above."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
@@ -1101,8 +1088,6 @@ Emacs buffer here, and `RET' makes the same call and takes you there."
   '((workspaces . (((workspace_id . "w1") (label . "web") (pane_count . 1))
                    ((workspace_id . "w2") (label . "api") (pane_count . 1))
                    ((workspace_id . "w3") (label . "empty") (pane_count . 0))))
-    (tabs . (((tab_id . "w1:t1") (workspace_id . "w1") (label . "main"))
-             ((tab_id . "w2:t1") (workspace_id . "w2") (label . "main"))))
     (panes . (((pane_id . "w1:p1") (agent . "claude") (agent_status . "idle")
                (workspace_id . "w1") (tab_id . "w1:t1") (cwd . "/tmp/web"))
               ((pane_id . "w2:p1") (agent . "claude") (agent_status . "idle")
@@ -2167,7 +2152,7 @@ the test that would catch losing the check."
     (search-forward "other-project (0)")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
-                       (herdr-pane-rename herdr-tab-rename
+                       (herdr-pane-rename
                                           herdr-workspace-rename)
                      (should-error (herdr-dispatch-rename)
                                    :type 'user-error))))))
@@ -2177,7 +2162,7 @@ the test that would catch losing the check."
     (search-forward "other-project (0)")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
-                       (herdr-pane-close herdr-tab-close herdr-workspace-close
+                       (herdr-pane-close herdr-workspace-close
                                          herdr-worktree-remove herdr-rpc-call)
                      (should-error (herdr-dispatch-close)
                                    :type 'user-error))))))
@@ -2193,7 +2178,7 @@ the test that would catch losing the check."
     (search-forward "Inactive (2)")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
-                       (herdr-pane-close herdr-tab-close herdr-workspace-close
+                       (herdr-pane-close herdr-workspace-close
                                          herdr-worktree-remove herdr-rpc-call)
                      (should-error (herdr-dispatch-close)
                                    :type 'user-error))))))
@@ -2203,7 +2188,7 @@ the test that would catch losing the check."
     (search-forward "Inactive (2)")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
-                       (herdr-pane-rename herdr-tab-rename
+                       (herdr-pane-rename
                                           herdr-workspace-rename)
                      (should-error (herdr-dispatch-rename)
                                    :type 'user-error))))))
@@ -2213,7 +2198,7 @@ the test that would catch losing the check."
     (search-forward "Inactive (2)")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
-                       (herdr-pane-focus herdr-tab-focus herdr-workspace-focus
+                       (herdr-pane-focus herdr-workspace-focus
                                          herdr-rpc-call)
                      (should-error (herdr-dispatch-visit)
                                    :type 'user-error))))))
@@ -2270,7 +2255,7 @@ workspace first from one that checks the pane first."
                    (cl-letf (((symbol-function 'read-string)
                               (lambda (&rest _) "new")))
                      (herdr-dispatch-test-with-recorders
-                         (herdr-pane-rename herdr-tab-rename
+                         (herdr-pane-rename
                                             herdr-workspace-rename)
                        (herdr-dispatch-rename)))))))
 
@@ -2283,7 +2268,7 @@ from, a different object under a name the user never aimed at."
     (search-forward "open as w2")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
-                       (herdr-pane-rename herdr-tab-rename
+                       (herdr-pane-rename
                                           herdr-workspace-rename)
                      (should-error (herdr-dispatch-rename)
                                    :type 'user-error))))))
@@ -2299,7 +2284,7 @@ from, a different object under a name the user never aimed at."
     (search-forward "w2:p1")
     (should (equal '((herdr-pane-close "w2:p1"))
                    (herdr-dispatch-test-with-recorders
-                       (herdr-pane-close herdr-tab-close herdr-workspace-close
+                       (herdr-pane-close herdr-workspace-close
                                          herdr-worktree-remove)
                      (herdr-dispatch-close))))))
 
@@ -2308,7 +2293,7 @@ from, a different object under a name the user never aimed at."
     (search-forward "api")
     (should (equal '((herdr-workspace-close "w2"))
                    (herdr-dispatch-test-with-recorders
-                       (herdr-pane-close herdr-tab-close herdr-workspace-close
+                       (herdr-pane-close herdr-workspace-close
                                          herdr-worktree-remove)
                      (herdr-dispatch-close))))))
 
@@ -2334,7 +2319,7 @@ worktree open as `w2\\='."
       (search-forward "open as w2")
       (should (equal '((herdr-worktree-remove "w2"))
                      (herdr-dispatch-test-with-recorders
-                         (herdr-pane-close herdr-tab-close herdr-workspace-close
+                         (herdr-pane-close herdr-workspace-close
                                            herdr-worktree-remove)
                        (herdr-dispatch-close)))))))
 
@@ -2352,7 +2337,7 @@ nothing may reach the server on the way out."
       (search-forward "open as w2")
       (should (equal nil
                      (herdr-dispatch-test-with-recorders
-                         (herdr-pane-close herdr-tab-close herdr-workspace-close
+                         (herdr-pane-close herdr-workspace-close
                                            herdr-worktree-remove herdr-rpc-call)
                        (should-error (herdr-dispatch-close)
                                      :type 'user-error)))))))
@@ -2381,7 +2366,7 @@ how the bug survived the previous fix."
       (search-forward "open as w2")
       (should (equal nil
                      (herdr-dispatch-test-with-recorders
-                         (herdr-pane-close herdr-tab-close herdr-workspace-close
+                         (herdr-pane-close herdr-workspace-close
                                            herdr-worktree-remove herdr-rpc-call)
                        (should-error (herdr-dispatch-close)
                                      :type 'user-error)))))))
@@ -2403,7 +2388,7 @@ worktree, and it is also this section's own workspace."
       (search-forward "open as w2")
       (should (equal nil
                      (herdr-dispatch-test-with-recorders
-                         (herdr-pane-close herdr-tab-close herdr-workspace-close
+                         (herdr-pane-close herdr-workspace-close
                                            herdr-worktree-remove herdr-rpc-call)
                        (should-error (herdr-dispatch-close)
                                      :type 'user-error)))))))
@@ -2444,7 +2429,7 @@ be harmless."
     (search-forward "main 2")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
-                       (herdr-pane-close herdr-tab-close herdr-workspace-close
+                       (herdr-pane-close herdr-workspace-close
                                          herdr-worktree-remove herdr-rpc-call)
                      (should-error (herdr-dispatch-close)
                                    :type 'user-error))))))
@@ -2458,7 +2443,7 @@ the workspace a name the user had aimed at a group of its panes."
                    (cl-letf (((symbol-function 'read-string)
                               (lambda (&rest _) "new")))
                      (herdr-dispatch-test-with-recorders
-                         (herdr-pane-rename herdr-tab-rename
+                         (herdr-pane-rename
                                             herdr-workspace-rename)
                        (should-error (herdr-dispatch-rename)
                                      :type 'user-error)))))))
@@ -2475,7 +2460,7 @@ message points at TAB, which is the heading's one real action."
     (search-forward "main 2")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
-                       (herdr-pane-focus herdr-tab-focus herdr-workspace-focus
+                       (herdr-pane-focus herdr-workspace-focus
                                          herdr-rpc-call)
                      (should-error (herdr-dispatch-visit)
                                    :type 'user-error))))
@@ -2642,15 +2627,12 @@ than the current HEAD."
 Every heading encloses no `herdr-tab\\=' section — `herdr-tree-build\\='
 never nests a pane under one — which is the case the split-target chain
 used to dead-end on for a single-tab workspace like `w1\\='.  Its panes
-are, in order, one running a real agent, one adopted as a shell, and one
+are, in order, one running a real agent, one plain shell, and one
 with no agent.")
 
 (defconst herdr-dispatch-test--start-snapshot
   '((workspaces . (((workspace_id . "w1") (label . "herdr.el"))
                    ((workspace_id . "w2") (label . "api"))))
-    (tabs . (((tab_id . "w1:t1") (workspace_id . "w1"))
-             ((tab_id . "w2:t1") (workspace_id . "w2"))
-             ((tab_id . "w2:t2") (workspace_id . "w2"))))
     (panes . (((pane_id . "w1:p1") (workspace_id . "w1") (tab_id . "w1:t1")
                (agent . "claude") (agent_status . "working"))
               ;; Adopted: no agent is running in it, but `pane.report_agent'

@@ -2,7 +2,7 @@
 
 ;;; Commentary:
 
-;; Reconciliation is the whole of the `agent-windows' backend's
+;; Reconciliation is the whole of the buffer bookkeeping's
 ;; correctness: which agents need a buffer, and which buffers outlived
 ;; their pane.  It is a pure function so it can be tested without
 ;; ghostel, a PTY, or a server.
@@ -191,8 +191,8 @@ to make that impossible."
 
 ;;; Directory tracking
 
-(ert-deftest herdr-term-reconcile-creates-a-buffer-for-an-adopted-shell ()
-  "An adopted shell is attachable, so it must get a buffer."
+(ert-deftest herdr-term-reconcile-creates-a-buffer-for-a-plain-shell ()
+  "Every pane attaches, so a shell pane must get a buffer like any other."
   (let* ((state (herdr-term-test--state
                  (herdr-term-test--pane "w1:p1" "claude")
                  (herdr-term-test--pane "w1:p2" "shell")))
@@ -215,11 +215,10 @@ to make that impossible."
                                '((cwd . "/no/such/place/anywhere")))
     (should (equal "/" default-directory))))
 
-;;; Directory sync differs per backend
+;;; Directory sync
 
-(ert-deftest herdr-term-sync-directories-is-per-buffer-under-agent-windows ()
-  (let* ((herdr-terminal-backend 'agent-windows)
-         (herdr-term-track-directory t)
+(ert-deftest herdr-term-sync-directories-is-per-buffer ()
+  (let* ((herdr-term-track-directory t)
          (one (generate-new-buffer " *pane1*"))
          (two (generate-new-buffer " *pane2*"))
          (herdr-term--buffers (list (cons "w1:p1" one) (cons "w1:p2" two)))
@@ -250,11 +249,10 @@ to make that impossible."
 
 ;;; Buffers must follow their pane's identity
 
-(ert-deftest herdr-term-renames-a-buffer-whose-pane-was-promoted ()
-  "A shell adopted and later promoted keeps its buffer — attachment is
-still valid — so the name has to be corrected in place."
-  (let* ((herdr-terminal-backend 'agent-windows)
-         (buffer (generate-new-buffer "*herdr: shell@.emacs.d*"))
+(ert-deftest herdr-term-renames-a-buffer-whose-pane-gained-an-agent ()
+  "A shell pane that herdr later names as an agent keeps its buffer,
+since the attachment is still valid, so the name is corrected in place."
+  (let* ((buffer (generate-new-buffer "*herdr: shell@.emacs.d*"))
          (herdr-term--buffers (list (cons "w1:p1" buffer)))
          (herdr-state--current
           (herdr-state-from-snapshot
@@ -268,8 +266,7 @@ still valid — so the name has to be corrected in place."
       (kill-buffer buffer))))
 
 (ert-deftest herdr-term-leaves-a-correctly-named-buffer-alone ()
-  (let* ((herdr-terminal-backend 'agent-windows)
-         (buffer (generate-new-buffer "*herdr: claude@.emacs.d*"))
+  (let* ((buffer (generate-new-buffer "*herdr: claude@.emacs.d*"))
          (herdr-term--buffers (list (cons "w1:p1" buffer)))
          (herdr-state--current
           (herdr-state-from-snapshot
@@ -294,8 +291,7 @@ that way.  What must not happen is `rename-buffer' being called at all
 for a buffer that already carries an acceptable name — repeating that
 from every `herdr-term--on-state-change' would be a rename loop hiding
 behind an unchanging buffer list."
-  (let* ((herdr-terminal-backend 'agent-windows)
-         ;; `generate-new-buffer' uniquifies on creation exactly like
+  (let* (;; `generate-new-buffer' uniquifies on creation exactly like
          ;; `herdr-term--unique-buffer-name' does, so the second
          ;; buffer starts life as `...<2>' here without any special-casing.
          (first (generate-new-buffer "*herdr: claude@.emacs.d*"))
@@ -327,8 +323,7 @@ behind an unchanging buffer list."
 (ert-deftest herdr-term-select-pane-does-not-split-the-frame ()
   "Going to a pane reuses the current window; splitting is the user's
 business, not a side effect of navigation."
-  (let* ((herdr-terminal-backend 'agent-windows)
-         (target (generate-new-buffer " *target*"))
+  (let* ((target (generate-new-buffer " *target*"))
          (herdr-term--buffers (list (cons "w1:p1" target)))
          (herdr-state--current
           (herdr-state-from-snapshot
@@ -361,15 +356,14 @@ business, not a side effect of navigation."
   (should (equal '((display-buffer-reuse-window display-buffer-same-window))
                  (default-value 'herdr-display-action))))
 
-;;; Bootstrap must give ghostel a displayed window under both backends
+;;; Bootstrap must give ghostel a displayed window
 
-(ert-deftest herdr-term-bootstrap-server-shows-the-buffer-under-agent-windows ()
+(ert-deftest herdr-term-bootstrap-server-shows-the-buffer ()
   "ghostel sizes its PTY from a displayed window and paints nothing into
-a zero-sized one.  Skipping the show for `agent-windows', on the belief
-that the bootstrap client is discarded right after, could leave first
-startup there stuck with an unusable PTY."
-  (let ((herdr-terminal-backend 'agent-windows)
-        shown quit)
+a zero-sized one.  Skipping the show, on the belief that the bootstrap
+client is discarded right after, would leave first startup stuck with an
+unusable PTY."
+  (let (shown quit)
     (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
               ((symbol-function 'ghostel-exec) #'ignore)
               ((symbol-function 'herdr-server-live-p) (lambda () t))
@@ -461,12 +455,11 @@ not be handed to `cancel-timer', which signals on one."
 
 ;;; Teardown must actually tear down
 
-(ert-deftest herdr-term-teardown-under-agent-windows-kills-every-buffer ()
-  "One buffer per agent, and the table has to be emptied with them —
-a stale entry names a dead buffer that reconciliation would count as
+(ert-deftest herdr-term-teardown-kills-every-buffer ()
+  "One buffer per pane, and the table has to be emptied with them.  A
+stale entry names a dead buffer that reconciliation would count as
 already attached."
-  (let* ((herdr-terminal-backend 'agent-windows)
-         (herdr-state-change-functions (list #'herdr-term--on-state-change))
+  (let* ((herdr-state-change-functions (list #'herdr-term--on-state-change))
          (herdr-term--directory-timer nil)
          (herdr-term--directory-debounce-timer nil)
          (one (generate-new-buffer " *agent-one*"))

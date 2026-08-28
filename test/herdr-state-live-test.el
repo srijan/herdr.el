@@ -90,7 +90,7 @@ into its main loop every 100ms for as long as it lives, and
 `pane.agent_status_changed' has nothing to say about a pane running no
 agent, so the watch set is `herdr-state-agents', not every pane.
 Buffers are a separate, wider slice: `herdr-term-reconcile' fronts
-every pane in `herdr-state-attachable' with one, agent or not, since
+every pane with one, agent or not, since
 `herdr terminal attach' needs no reported agent.  A plain shell can
 therefore have a buffer without ever appearing on this connection."
   (let ((herdr-state--current
@@ -227,13 +227,13 @@ kind nothing dispatches on, because the comparison must not care."
         (cancel-timer herdr-state--resubscribe-timer)))))
 
 (ert-deftest herdr-state-watched-set-drift-rebuilds-connection-b ()
-  "B rebuilds when the attachable set drifts from what it subscribed —
+  "B rebuilds when the agent pane set drifts from what it subscribed:
 whatever event moved it.
 
 This used to dispatch on event kind, which was right while B named
 every pane: only pane lifecycle could change the list, and
 `pane_agent_detected' rebuilding it was a teardown bought for nothing.
-B naming the attachable panes inverts that — an agent detected on or
+B naming the agent panes inverts that: an agent detected on or
 released from an existing pane changes exactly what B should watch, and
 a kind list curated for the old rule missed both.  Comparing sets
 cannot go stale that way.  Order must not matter: a reconcile can
@@ -289,9 +289,6 @@ reconcile alone cannot account for a fresh label."
                 req '((snapshot . ((focused_pane_id . "w1:p1")
                                    (panes . [((pane_id . "w1:p1")
                                               (cwd . "/tmp"))])
-                                   (tabs . [((tab_id . "w1:t1")
-                                             (workspace_id . "w1")
-                                             (label . "fresh"))])
                                    (workspaces . [((workspace_id . "w1")
                                                    (label . "fresh"))])))))
                nil))
@@ -308,7 +305,6 @@ reconcile alone cannot account for a fresh label."
   "Return a cache whose every label says \"stale\"."
   (herdr-state-from-snapshot
    '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))
-     (tabs . (((tab_id . "w1:t1") (workspace_id . "w1") (label . "stale"))))
      (workspaces . (((workspace_id . "w1") (label . "stale")))))))
 
 (defun herdr-state-live-test--label (accessor id-key id)
@@ -460,7 +456,7 @@ for nothing."
     (should (equal '("w1:p1") (herdr-state-pane-ids herdr-state--current)))))
 
 (ert-deftest herdr-state-reconcile-refreshes-a-changed-agent-label ()
-  "An adopted shell herdr has relabelled must not keep its old label.
+  "A shell pane herdr has relabelled must not keep its old label.
 Detection runs independently of the reported agent and takes the pane
 over a few seconds after a real agent starts in it, so the label moves
 without any event we act on.  Refreshing only cwd left the cache
@@ -602,11 +598,6 @@ event."
     (cons (herdr-test-ok req `((type . "workspace_list")
                                (workspaces . ,workspaces)))
           nil)))
-
-(defun herdr-state-live-test--tab-list-server (tabs)
-  "Return a responder answering `tab.list' with TABS."
-  (lambda (req)
-    (cons (herdr-test-ok req `((type . "tab_list") (tabs . ,tabs))) nil)))
 
 (ert-deftest herdr-state-reconcile-workspaces-drops-ghosts ()
   (herdr-test-with-server
