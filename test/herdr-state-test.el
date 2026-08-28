@@ -20,7 +20,6 @@
      (focused_workspace_id . "w1")
      (panes . (,(herdr-state-test--pane "w1:p1" "claude" "idle")
                ,(herdr-state-test--pane "w1:p2")))
-     (tabs . (((tab_id . "w1:t1") (label . "1") (workspace_id . "w1"))))
      (workspaces . (((workspace_id . "w1") (label . "web")))))))
 
 ;;; Snapshot hydration
@@ -229,7 +228,6 @@ went on showing the old name."
   (herdr-state-from-snapshot
    `((focused_workspace_id . "w1")
      (panes . ())
-     (tabs . ())
      (workspaces . (((workspace_id . "w1") (label . "one"))
                     ((workspace_id . "w2") (label . "two"))
                     ((workspace_id . "w3") (label . "three"))

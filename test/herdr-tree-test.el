@@ -14,10 +14,6 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
     '((workspaces . (((workspace_id . "w1") (label . "herdr.el")
                       (pane_count . 3) (tab_count . 2)
                       (agent_status . "blocked"))))
-      (tabs . (((tab_id . "w1:t1") (workspace_id . "w1") (label . "agents")
-                (pane_count . 2) (agent_status . "blocked"))
-               ((tab_id . "w1:t2") (workspace_id . "w1") (label . "checks")
-                (pane_count . 1) (agent_status . "idle"))))
       (panes . (((pane_id . "w1:p1") (workspace_id . "w1") (tab_id . "w1:t1")
                  (agent . "claude") (agent_status . "working")
                  (cwd . "/tmp/herdr.el")
@@ -124,8 +120,6 @@ no `herdr-tab' node anywhere in the shape."
   (let ((state (herdr-state-from-snapshot
                 '((workspaces . (((workspace_id . "w1") (label . "solo")
                                   (pane_count . 1) (tab_count . 1))))
-                  (tabs . (((tab_id . "w1:t1") (workspace_id . "w1")
-                            (label . "1") (pane_count . 1))))
                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
                              (tab_id . "w1:t1") (agent . "claude"))))))))
     (should (equal '((herdr-workspace (herdr-pane)))
@@ -472,7 +466,6 @@ no tabs."
   (let ((state (herdr-state-from-snapshot
                 '((workspaces . (((workspace_id . "w1") (label . "repo")
                                   (pane_count . 1))))
-                  (tabs . nil)
                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
                              (tab_id . "w1:t1") (agent . "claude")
                              (agent_status . "blocked"))))))))
