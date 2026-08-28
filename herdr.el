@@ -88,8 +88,7 @@ The herdr server keeps running; agents are unaffected."
                     (when-let* ((project (project-current nil)))
                       (expand-file-name (project-root project))))
                   default-directory)))
-    (herdr-cmd-open-workspace-for
-     root (file-name-nondirectory (directory-file-name root)))))
+    (herdr-cmd-open-workspace-for root)))
 
 ;;;###autoload
 (defun herdr ()

@@ -272,38 +272,41 @@ name to a worktree with its own herdr workspace."
 
 ;;; Opening a place to run something
 
-(defun herdr-cmd-open-workspace-for (root label)
-  "Focus the workspace at ROOT, creating it as LABEL if absent, and go there.
+(defun herdr-cmd--workspace-label (directory)
+  "Return the label a workspace created at DIRECTORY takes."
+  (file-name-nondirectory (directory-file-name directory)))
 
-Shared by `herdr-project\\=' and the dispatcher's verb for an inactive
-project row, which asked the same question of the same server and then
-differed only in which file they lived in.
+(defun herdr-cmd--create-workspace-pane (directory)
+  "Create a focused workspace at DIRECTORY and return its root pane\='s id.
+`focus\=' rides on the create: without it the workspace is made but not
+focused, and anything that then asks the server \"where am I?\" answers
+with the pane the user was on before.  The reply names the new
+workspace\='s root pane, so callers go there directly rather than asking."
+  (herdr-cmd--created-pane-id
+   (herdr-rpc-call "workspace.create"
+                   `((cwd . ,(expand-file-name directory))
+                     (label . ,(herdr-cmd--workspace-label directory))
+                     (focus . t)))))
 
-Two things here were wrong in both of them for as long as they were
-separate.
+(defun herdr-cmd-open-workspace-for (root)
+  "Focus the workspace at ROOT, creating it if absent, and go there.
 
-The create carried no `focus\\=', so the new workspace was made but not
-focused, and anything that then asked the server \"where am I?\" answered
-with the pane the user had been on before.  The reply names the new
-workspace\\='s root pane, so this goes there directly rather than asking.
+Shared by `herdr-project\=', the dispatcher\='s verb for an inactive
+project row, and RET on that row\='s `main\=' checkout.  All three ask the
+same question of the same server.
 
-And both ended on `herdr-term-display\\=', which returned nil under this
-backend, so they did what was asked of the server and then moved nothing
-in Emacs.  `herdr-term-select-pane\\=' and `herdr-term-select-focused\\='
-are what every other \"take me there\" path here uses."
+The create half is `herdr-cmd--create-workspace-pane\=', which
+`herdr-cmd-pane-in-directory\=' also calls: with nothing open at ROOT
+there is no difference between going there and opening a terminal
+there, and writing the call twice is how the two drifted apart before."
   (if-let* ((existing (herdr-state-workspace-for-directory
                        (herdr-state-current) root)))
       (progn
         (herdr-rpc-call "workspace.focus"
                         `((workspace_id . ,(alist-get 'workspace_id existing))))
         (herdr-term-select-focused))
-    (let ((pane (herdr-cmd--created-pane-id
-                 (herdr-rpc-call "workspace.create"
-                                 `((cwd . ,(expand-file-name root))
-                                   (label . ,label)
-                                   (focus . t))))))
-      (or (and pane (herdr-term-select-pane pane))
-          (herdr-term-select-focused)))))
+    (or (herdr-cmd--follow-new-pane (herdr-cmd--create-workspace-pane root))
+        (herdr-term-select-focused))))
 
 (defun herdr-cmd--new-tab-pane (&optional workspace-id cwd)
   "Create a tab and return its root pane's id.
@@ -322,12 +325,7 @@ as N full-width tabs beats N slivers of one tab."
   (if-let* ((open (herdr-state-workspace-for-directory
                    (herdr-state-current) directory)))
       (herdr-cmd--new-tab-pane (alist-get 'workspace_id open))
-    (herdr-cmd--created-pane-id
-     (herdr-rpc-call "workspace.create"
-                     `((cwd . ,(expand-file-name directory))
-                       (label . ,(file-name-nondirectory
-                                  (directory-file-name directory)))
-                       (focus . t))))))
+    (herdr-cmd--create-workspace-pane directory)))
 
 (defun herdr-new-terminal (&optional place)
   "Open a terminal in PLACE, a workspace id or a directory, and go to it."
