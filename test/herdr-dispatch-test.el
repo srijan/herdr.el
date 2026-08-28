@@ -2627,7 +2627,7 @@ than the current HEAD."
 Every heading encloses no `herdr-tab\\=' section — `herdr-tree-build\\='
 never nests a pane under one — which is the case the split-target chain
 used to dead-end on for a single-tab workspace like `w1\\='.  Its panes
-are, in order, one running a real agent, one adopted as a shell, and one
+are, in order, one running a real agent, one plain shell, and one
 with no agent.")
 
 (defconst herdr-dispatch-test--start-snapshot

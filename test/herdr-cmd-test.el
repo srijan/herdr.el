@@ -120,7 +120,7 @@ deleting them safe."
 ;;; Focus must move Emacs, not just the server
 
 (ert-deftest herdr-pane-focus-selects-the-buffer-for-that-pane ()
-  "Focusing is server-side; under `agent-windows' nothing repaints, so
+  "Focusing is server-side and nothing repaints, so
 Emacs has to be moved to match or the command looks like a no-op."
   (let (selected)
     (cl-letf (((symbol-function 'herdr-term-select-pane)
@@ -194,10 +194,9 @@ with `pane'."
       (should (eq t (alist-get 'focus (alist-get 'params sent)))))))
 
 (ert-deftest herdr-cmd-follow-new-pane-selects-or-waits ()
-  "Under `agent-windows', when select cannot show the pane yet — the
-cache has not caught up with creation, announced on the event stream —
-the retry chain is armed instead of anything that would report an agent
-on the pane."
+  "When select cannot show the pane yet, because the cache has not
+caught up with a creation announced on the event stream, the retry chain
+is armed."
   (let (deferred reported)
     (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) nil))
               ((symbol-function 'herdr-cmd--select-pane-when-ready)
