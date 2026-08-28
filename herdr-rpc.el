@@ -11,16 +11,13 @@
 
 ;; Transport for herdr's local socket API.
 ;;
-;; The protocol is newline-delimited JSON over a unix domain socket, and
-;; it is one request per connection: the server writes a single response
-;; and then closes.  There is therefore no request multiplexing and no
-;; response correlation to do — the connection itself is the correlation.
-;; Every call opens a fresh socket, which is cheap enough that pooling
-;; would only add failure modes.
+;; Newline-delimited JSON over a unix domain socket, one request per
+;; connection: the server writes a single response and closes.  Nothing
+;; to multiplex and nothing to correlate.
 ;;
-;; `events.subscribe' is the sole exception; it holds the connection open
-;; and streams.  Callers that need it use `herdr-rpc-connect' and manage
-;; the process themselves.  See `herdr-state'.
+;; `events.subscribe' is the sole exception.  It holds the connection
+;; open and streams; callers use `herdr-rpc-connect' and manage the
+;; process themselves.  See `herdr-state'.
 
 ;;; Code:
 
@@ -50,14 +47,8 @@
 
 (defcustom herdr-rpc-background-timeout 2.0
   "Seconds a background synchronous RPC may block the editor.
-
-`herdr-rpc-timeout' bounds a call the user asked for, where ten frozen
-seconds against a wedged server is at least attributable.  A timer-
-driven poll or a liveness ping was not asked for, and the same ten
-seconds there is an Emacs that stops dead for no visible reason — with
-the 5s directory backstop it re-froze faster than it thawed.  Paths
-that run on timers bind `herdr-rpc-timeout' down to this value; a
-server too slow to answer forfeits that refresh, not the UI."
+Every path that runs on a timer must bind `herdr-rpc-timeout' down to
+this.  A server too slow to answer forfeits that refresh, not the UI."
   :type 'number
   :group 'herdr)
 
@@ -84,12 +75,9 @@ server too slow to answer forfeits that refresh, not the UI."
 
 (defun herdr-rpc--params-object (params)
   "Convert PARAMS, an alist, into a hash table suitable for serializing.
-
-Entries whose value is nil are dropped rather than sent as JSON null:
-herdr's optional parameters want absence, and several of them reject an
-explicit null.  Callers that genuinely mean false pass `:false'.  Using
-a hash table also guarantees that empty params serialize as {} rather
-than the null that an empty alist would produce."
+Nil values are dropped rather than sent as null, which several optional
+parameters reject; pass `:false' to mean false.  A hash table, so empty
+params serialize as {} rather than null."
   (let ((table (make-hash-table :test 'equal)))
     (dolist (cell params)
       (when (cdr cell)
@@ -98,11 +86,8 @@ than the null that an empty alist would produce."
 
 (defun herdr-rpc-array (items)
   "Return ITEMS as a vector, which is how JSON arrays must be built.
-
-`json-serialize' cannot tell a list of alists from a single alist — both
-are lists of conses — so a list of objects is either misread as one
-object or rejected outright.  Vectors are unambiguous.  Every array-typed
-parameter must go through here."
+Every array-typed parameter must go through here: `json-serialize'
+cannot tell a list of alists from a single alist."
   (vconcat items))
 
 (defun herdr-rpc-encode (id method params)
@@ -156,12 +141,10 @@ timeout."
         (progn
           (process-send-string proc (herdr-rpc-encode (herdr-rpc--next-id)
                                                       method params))
-          ;; A full line is the completion signal; the EOF the server
-          ;; sends after responding is only a fallback.  Waiting for EOF
-          ;; alone once livelocked Emacs: with close sentinels starved
-          ;; under nested timer handlers, every call burned its whole
-          ;; deadline spinning on a socket whose answer had already
-          ;; arrived, and polls re-fired faster than they finished.
+          ;; A full line is the completion signal.  The EOF the server
+          ;; sends after responding is only a fallback: waiting on EOF
+          ;; alone livelocks when close sentinels are starved under
+          ;; nested timer handlers.
           (let ((deadline (+ (float-time) herdr-rpc-timeout)))
             (while (and (not closed)
                         (not (and chunks (string-search "\n" (car chunks))))
@@ -179,31 +162,13 @@ timeout."
 
 (defun herdr-rpc-call-async (method params callback &optional timeout)
   "Call METHOD with PARAMS, invoking CALLBACK when the response arrives.
-CALLBACK receives (RESULT ERROR).  Exactly one is non-nil; ERROR is the
-server's error alist, with keys `code' and `message'.  Returns the
-process, which may be deleted to abandon the call.
+CALLBACK receives (RESULT ERROR), exactly one of them non-nil, and is
+called exactly once.  Returns the process, which may be deleted to
+abandon the call.  Nil TIMEOUT waits indefinitely.
 
-TIMEOUT is in seconds and is optional.  Nil, the default, waits
-indefinitely — the behaviour every caller had before TIMEOUT existed.
-When non-nil, a timer is armed for TIMEOUT seconds; if it fires before a
-reply has arrived, the process is deleted and CALLBACK is invoked once
-with an error alist whose `code' is \"timeout\".  A reply that arrives
-first cancels the timer, and deleting the process afterwards must not
-produce a second callback — both paths go through the same `fired' guard
-that already gives the sentinel path its exactly-once behaviour.
-
-A `process-send-string' failure — the peer closes between connect and
-send, the same race `herdr-state.el' documents — goes through that same
-guard rather than escaping as a signal: escaping left an armed TIMEOUT
-free to fire CALLBACK a second time later, which is the double-delivery
-this function's own contract forbids.  Callers therefore see the send
-failure as an ordinary CALLBACK error, not a signal from this function.
-
-Used for methods that block server-side — `agent.wait' and
-`pane.wait_for_output' — so that Emacs stays responsive.  Those two
-callers deliberately pass no TIMEOUT: they bind the wait server-side via
-`timeout_ms', and a client-side TIMEOUT here would race that bound
-rather than back it up."
+Every path fires CALLBACK through the same `fired' guard, including a
+`process-send-string' failure.  Letting that one escape as a signal
+instead leaves an armed TIMEOUT free to deliver a second callback."
   (let* ((chunks nil)
          (fired nil)
          (timer nil)

@@ -9,17 +9,15 @@
 
 ;;; Commentary:
 
-;; Pickers for panes, agents, workspaces and tabs, built on plain
-;; `completing-read' over the state cache rather than any bespoke UI.
+;; Pickers for panes, agents and workspaces, on plain `completing-read'
+;; over the state cache.
 ;;
-;; Candidates are ids, which are short and unique but say nothing; the
-;; readable part — label, agent, status, directory — is supplied as an
-;; annotation.  With `marginalia' that renders as aligned columns, and
-;; with `orderless' it makes "web claude blocked" a working query, since
-;; completion styles match against the annotation too.
+;; Candidates are ids, which say nothing; the readable part is an
+;; annotation.  Completion styles match against it too, so with
+;; `orderless' "web claude blocked" is a working query.
 ;;
-;; `embark' and `consult' integration is registered only when those
-;; packages are present.  Neither is a dependency.
+;; `embark' and `consult' integration registers only when those packages
+;; are present.  Neither is a dependency.
 
 ;;; Code:
 
@@ -30,10 +28,7 @@
 (require 'herdr-tree)
 
 ;; The embark map below binds commands from `herdr-cmd', which requires
-;; this file — so they are declared rather than required.  These used to
-;; compile clean only by accident: `herdr-agents' required `herdr-cmd'
-;; and happened to be byte-compiled first, which loaded it into the
-;; compilation session for every later file.
+;; this file, so they are declared rather than required.
 (declare-function herdr-pane-focus "herdr-cmd" (&optional pane-id))
 (declare-function herdr-pane-read "herdr-cmd"
                   (&optional pane-id source lines))
@@ -151,14 +146,10 @@ Never prompts, so it is safe to call while rendering a menu."
   "Return the pane to act on, preferring the one you are looking at.
 PROMPT is passed through to `herdr-select-pane' on the paths that prompt.
 
-In order: a prefix argument always prompts; otherwise the pane of the
-current buffer if it is a herdr terminal; otherwise the pane herdr has
-focused; otherwise a prompt.
-
-The buffer comes first because it is the more local answer.  herdr\\='s
-focus is server-side and only moves when something explicitly moves it,
-so acting from inside one agent\\='s buffer used to target whichever pane
-you last went to — which could be a different agent entirely."
+In order: a prefix argument always prompts, then the pane of the current
+buffer if it is a herdr terminal, then the pane herdr has focused, then
+a prompt.  The buffer comes first because herdr\\='s focus is server-side
+and moves only when something moves it."
   (cond
    (current-prefix-arg (herdr-select-pane prompt))
    ((herdr-select-current-target))
@@ -166,15 +157,11 @@ you last went to — which could be a different agent entirely."
 
 ;;; Optional integrations, registered only when the package is loaded
 
-;; These are conveniences, not requirements: the completion tables above
-;; already carry an `annotation-function', and marginalia falls back to
-;; it for any category it does not know.  Registering the categories
-;; only buys marginalia's column alignment.
-;;
-;; So every hook here is guarded by `boundp'.  These are third-party
-;; variables on their own release schedules — `marginalia-annotator-registry'
-;; was renamed to `marginalia-annotators', which broke startup — and a
-;; cosmetic integration must never be able to do that.
+;; Cosmetic only: the completion tables already carry an
+;; `annotation-function', and this just buys marginalia's column
+;; alignment.  Every hook is `boundp'-guarded because these are
+;; third-party variables that get renamed, and a cosmetic integration
+;; must never be able to break startup.
 
 (defconst herdr-select-annotators
   '((herdr-pane      herdr-select--annotate-pane)
@@ -235,17 +222,11 @@ where you were.  Those panes stay reachable from the dashboard and from
     :category herdr-pane
     :annotate ,#'herdr-select--annotate-pane
     :action ,#'herdr-select--consult-visit
-    ;; Reconcile at the call site, not inside the query: the query stays
-    ;; a pure function of the cache and so remains testable without a
-    ;; server.
-    ;;
-    ;; This runs on every `consult-buffer', a path the user attributes
-    ;; to buffer switching rather than to herdr — so the reconcile is
-    ;; bound to the background timeout, the same guard
-    ;; `herdr-server-live-p' and `herdr-term--poll-directories' use for
-    ;; every other unattributed call.  A wedged server then forfeits one
-    ;; refresh of the pane list instead of freezing `consult-buffer' for
-    ;; the full `herdr-rpc-timeout'.
+    ;; Reconcile at the call site, so the query stays a pure function of
+    ;; the cache and testable without a server.  Bound to the background
+    ;; timeout: this runs on every `consult-buffer', which nobody
+    ;; attributes to herdr, so a wedged server must forfeit a refresh
+    ;; rather than freeze buffer switching.
     :items ,(lambda ()
               (let ((herdr-rpc-timeout (min herdr-rpc-timeout
                                             herdr-rpc-background-timeout)))

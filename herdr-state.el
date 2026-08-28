@@ -14,32 +14,22 @@
 ;; the cache instead of issuing its own RPC, so the modeline, the agents
 ;; buffer and the pickers all cost nothing to refresh.
 ;;
-;; Two event connections, for a measured reason.  Connection A carries
-;; the global subscriptions, which need no pane id and are never rebuilt.
-;; Connection B carries per-pane `pane.agent_status_changed'
-;; subscriptions for the agent panes and is rebuilt whenever that
-;; set changes.
+;; Two event connections.  A carries the global subscriptions, needs no
+;; pane id, and is never rebuilt.  B carries per-pane
+;; `pane.agent_status_changed' for the agent panes and is rebuilt when
+;; that set changes.
 ;;
-;; Connection B is the status channel, and it is prompt by
-;; construction: the server backs each per-pane subscription with a
-;; matching-event scan plus a 100ms snapshot compare of the pane's
-;; status and reported metadata (herdr 0.8.2, api/subscriptions.rs), so
-;; a transition reaches B within a tick even when its event was lost.
-;; The compare reads the hook-reported metadata title, not the terminal
-;; title, so B stays quiet while an agent merely animates its spinner.
+;; B is the status channel and is prompt by construction: the server
+;; backs each per-pane subscription with a 100ms snapshot compare, so a
+;; transition arrives within a tick even if its event was lost.
 ;;
-;; Connection A deliberately does not subscribe to `pane.updated'.
-;; That event fires on every stripped-terminal-title change — a busy
-;; agent animates its title about 7.5 times a second — and carries a
-;; full PaneInfo each time.  The server delivers at most one event per
-;; subscribed type per 100ms poll tick (herdr 0.8.2, api/server.rs), so
-;; one busy agent nearly saturates the type's channel and two put it
-;; permanently behind; the 6.18s and 31.79s status lags once measured
-;; on A against B are that backlog.  Everything `pane.updated' carries
-;; arrives elsewhere: status and agent identity through B, lifecycle
-;; through `pane.created'/`pane.closed'/`pane.agent_detected', and the
-;; volatile fields — terminal title, cwd — through
-;; `herdr-state-reconcile-panes' at poll cadence.
+;; A must not subscribe to `pane.updated'.  It fires on every terminal
+;; title change, roughly 7.5 times a second per busy agent, and the
+;; server delivers at most one event per type per 100ms tick: one agent
+;; nearly saturates the channel and two put it permanently behind.
+;; Everything it carries arrives elsewhere anyway — status through B,
+;; lifecycle through the `pane.*' events, volatile fields through
+;; `herdr-state-reconcile-panes'.
 ;;
 ;; Events missed during a disconnect cannot be replayed, so every
 ;; reconnect is followed by a full resync rather than an attempt to
@@ -319,21 +309,14 @@ events use dots, so both spellings appear here deliberately."
        next)
 
       ("pane_agent_detected"
-       ;; Flat, unlike the three pane events above that this used to
-       ;; share a branch with: `pane_id', `workspace_id', the detected
-       ;; `agent', and — when herdr is announcing a release rather than a
-       ;; detection — `released' with the `final_status' the agent ended
-       ;; on.  There is no PaneInfo here, so reading one found nil and
-       ;; the branch did nothing at all.
+       ;; Flat: `pane_id', `workspace_id', `agent', and on a release
+       ;; `released' with `final_status'.  No PaneInfo, so reading one
+       ;; finds nil and the branch does nothing.
        ;;
-       ;; `released' decides the label, not `agent'.  The schema allows
-       ;; `agent' to be present alongside `released', and it would be a
-       ;; reasonable thing to send — naming which agent went away.  A
-       ;; release is also the one case that must clear the label, or the
-       ;; pane is counted in the modeline, offered by the agent picker
-       ;; and notified about for the rest of the session.  Keying off
-       ;; `released' is right under either reading; keying off `agent'
-       ;; alone is right under only one of them.
+       ;; Key off `released', not `agent'.  The schema allows `agent'
+       ;; alongside `released' to name which agent went away, and a
+       ;; release must clear the label or the pane is counted in the
+       ;; modeline for the rest of the session.
        (let ((released (alist-get 'released data)))
          (herdr-state--merge-pane
           state (alist-get 'pane_id data)
@@ -387,18 +370,13 @@ events use dots, so both spellings appear here deliberately."
            next)))
 
       ("workspace_moved"
-       ;; `workspace_id' and `insert_index' — `workspace.move's own two
-       ;; parameters, echoed back — plus `workspaces', which carries
-       ;; WorkspaceInfo and is folded in first so labels and counts stay
-       ;; current across the move.  Both decode as lists, since events
-       ;; are parsed with `:array-type \\='list'; the `append' below is
-       ;; then a defensive copy rather than a vector-to-list coercion.
+       ;; `workspace.move's own parameters echoed back, plus
+       ;; `workspaces', folded in first so labels stay current.
        ;;
-       ;; Placement follows `insert_index' rather than the order of the
-       ;; `workspaces' array: the index is the number the caller passed
-       ;; and so cannot be misread, whereas whether that array is the
-       ;; whole new ordering or only the workspaces it touched is not
-       ;; something the schema says.
+       ;; Place by `insert_index', not by the order of the `workspaces'
+       ;; array: the index cannot be misread, whereas the schema does
+       ;; not say whether that array is the whole new ordering or only
+       ;; the workspaces it touched.
        (let ((workspaces (herdr-state-workspaces state)))
          (dolist (workspace (append (alist-get 'workspaces data) nil))
            (setq workspaces
@@ -796,37 +774,18 @@ without changing what B should watch."
   '(agent agent_status cwd foreground_cwd workspace_id tab_id label)
   "Pane fields worth reacting to when reconciling against `pane.list\\='.
 
-`label\\=' is on the list because it is the one pane field a person or a
-plugin sets deliberately — `pane.rename\\=' writes it, and a plugin pane
-is seated carrying its `[[panes]].title\\=' as one.  It moves only when
-somebody moves it, so it costs nothing to watch, and leaving it off
-meant a rename reached the cache silently and did not appear on any
-surface until an unrelated change happened to redraw them.
+Excludes the volatile ones: revision, scroll and the terminal title.
+The title especially, however stable it looks — an agent animates a
+spinner and a second counter inside it, so it changes several times a
+second and every poll would declare a change.  `label\\=' is included
+because only a person or a plugin sets it.
 
-Deliberately excludes the volatile ones — revision, scroll and the
-terminal title — which change constantly and would make every poll look
-like a change.
+A record differing only in excluded fields is still refreshed, silently,
+without running the change hook; see `herdr-state-reconcile-panes\\='.
 
-The title belongs on that list however much it looks like a stable
-label.  Claude animates a spinner glyph and an elapsed-second counter
-inside it, so it changes several times a second while an agent works:
-of 662 `pane_updated\\=' events measured in one window, 662 differed in
-the title and 11 differed in `agent_status\\='.  Including it here meant
-every reconcile poll declared a change, replaced every pane record and
-re-ran the directory sync, which is the whole cost the list exists to
-avoid.
-
-With `pane.updated\\=' no longer subscribed, the reconcile is also how
-volatile fields reach the cache at all: a record that differs only in
-them is refreshed silently — written without running the change hook —
-so titles are at most one poll interval stale while the hook keeps its
-significant-change cadence.  See `herdr-state-reconcile-panes\\='.
-
-`revision\\=' could look like a cheap staleness guard for all of this,
-but upstream bumps it only for presentation metadata — the stripped
-terminal title and metadata tokens — never for `agent_status\\=' (herdr
-0.8.2, terminal/state.rs).  It cannot order status updates and must not
-be used to.")
+`revision\\=' is not a staleness guard.  herdr bumps it for presentation
+metadata only, never for `agent_status\\=' (0.8.2, terminal/state.rs), so
+it cannot order status updates.")
 
 (defun herdr-state--pane-differs-p (known fresh)
   "Return non-nil when FRESH differs from KNOWN in a field worth noticing."
@@ -837,49 +796,23 @@ be used to.")
 (defun herdr-state-reconcile-panes ()
   "Make the cached pane set match the server, and refresh directories.
 
-Two problems this solves, both of which leave the cache wrong in ways
-the event stream cannot correct on its own.
+The event stream cannot keep the cache right on its own.  A `cd\\=' is
+never announced, and a fresh `events.subscribe\\=' replays the server's
+event ring, so a `pane_created\\=' for a long-closed pane arrives as
+news.  One `pane.list\\=' is authoritative and answers both.
 
-Directory changes are never announced: herdr tracks cwd accurately, but
-a `cd\\=' produces no `pane_updated\\=', only unrelated `layout_updated\\='
-traffic.
+Returns non-nil when anything significant changed.  A record drifting
+only in volatile fields is refreshed without running the change hook, so
+titles stay current without every poll becoming a redraw.
 
-Worse, panes can linger.  A fresh `events.subscribe\\=' replays what
-remains of the server's event ring, so a `pane_created\\=' for a pane
-closed long ago is delivered as though it were news — verified against
-0.8.0, where a pane created and closed minutes earlier came back on
-every fresh subscription.  The matching `pane_closed\\=' replays too and
-happens to arrive after it, but only because replayed types drain in
-subscription-list order and `pane.created\\=' precedes `pane.closed\\=' in
-`herdr-state-global-subscriptions\\='.  Nothing enforces that, and the
-ghosts it would otherwise leave show up in every picker and cannot be
-navigated to.
+Also the liveness watchdog.  A quiet subscription and a wedged server
+look identical, and this is the only periodic RPC, so its failure is the
+one signal the socket stopped answering; it schedules a reconnect.
 
-One `pane.list\\=' answers both: it is the authoritative set, so panes
-missing from it are dropped, panes new to us are added, and directories
-are refreshed in the same pass.  Returns non-nil when anything
-significant changed.  A record that drifted only in volatile fields —
-the terminal title, scroll, revision — is refreshed without running the
-change hook or counting as a change: with `pane.updated\\=' unsubscribed
-this pass is what keeps titles current, and announcing every animated
-title made each poll a full redraw, which is the churn dropping the
-subscription bought back.
-
-This is also the liveness watchdog for the event streams.  The server
-sends nothing on a quiet subscription, so a wedged server leaves both
-connections open and silent forever — indistinguishable from a calm
-session.  The poll that calls this is the one periodic RPC, and its
-failure is the one signal that the socket stopped answering while the
-streams still look alive; scheduling a reconnect on it closes the gap,
-and the backoff in `herdr-state--schedule-reconnect\\=' keeps a
-struggling server from being hammered.
-
-The cached ids are captured BEFORE the call: `herdr-rpc-call\\='s wait
+Capture the cached ids BEFORE the call.  `herdr-rpc-call\\='s wait
 services the event-stream filters, so the cache can gain a pane while
-the reply is in flight — and a reply built before that pane existed
-cannot pronounce it stale.  Judging staleness against the pre-call set
-means a pane that arrived mid-wait is never evicted, nor its buffer
-killed by the reap listening on the change hook."
+the reply is in flight, and a reply built before that pane existed
+cannot pronounce it stale."
   (let ((known-ids (herdr-state-pane-ids herdr-state--current)))
     (when-let* ((panes (condition-case nil
                            (alist-get 'panes (herdr-rpc-call "pane.list"))

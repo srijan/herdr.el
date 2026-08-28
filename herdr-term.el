@@ -15,19 +15,12 @@
 ;; there is no geometry to synchronise.  Panes outlive Emacs because the
 ;; server is a daemon.
 ;;
-;; Measurements that informed this, taken against herdr 0.7.5:
+;; Two constraints shape the code here.  Attachment is exclusive per
+;; pane, so a second attach needs `--takeover' and this asks first.  And
+;; the client paints nothing into a zero-sized PTY, so a buffer must be
+;; displayed before its process starts.
 ;;
-;; - Throughput is not a concern.  A 12.2 MB pane dump reached Emacs as
-;;   24 KB; herdr's VT only emits visible-frame diffs, so it rate-limits
-;;   by construction.
-;; - Attachment goes through `herdr terminal attach', which takes any
-;;   pane's raw stream, agent or plain shell alike.  Reconciliation
-;;   therefore considers every pane.
-;; - Attachment is exclusive per pane, so a second attach needs
-;;   `--takeover'.  We ask first rather than stealing.
-;; - The client paints nothing into a zero-sized PTY.  ghostel sizes its
-;;   terminal from the displayed window, so buffers are displayed before
-;;   the process starts.
+;; Measured throughput and attach behaviour are in docs/protocol.md.
 
 ;;; Code:
 
@@ -42,16 +35,9 @@
 (defcustom herdr-display-action
   '((display-buffer-reuse-window display-buffer-same-window))
   "How herdr buffers are shown, for every path that shows one.
-
-One knob, honoured everywhere: starting herdr, going to a pane, and
-attaching all route through it, so the same buffer cannot appear two
-different ways depending on which command got you there.
-
-The default reuses the current window.  Rearranging the frame is the
-user\='s business, through `C-x 2\=', `C-x 3\=' and
-`display-buffer-alist\='.  Navigating should not do it on your behalf.
-
-To take the whole frame instead:
+Starting herdr, going to a pane and attaching all route through this, so
+one buffer cannot appear two ways depending on the command.  The default
+reuses the current window and leaves the frame alone.
 
     (setq herdr-display-action \='(display-buffer-full-frame))"
   :type 'sexp
@@ -85,26 +71,12 @@ Nil only when PANE names no workspace to begin with."
 
 (defun herdr-term-buffer-name (state pane)
   "Return the wanted buffer name for PANE, read against STATE.
+In order: a name set through `agent.rename\\=', then the pane\\='s own
+`label\\=', then KIND@WORKSPACE, then a bare \"shell\".
 
-Names first, workspace fallback.  A name set through `agent.rename\\='
-\(`herdr-state-agent-name\\=') is used verbatim, since it is the one thing
-someone chose to call this agent.  Failing that, the pane\\='s own
-`label\\=' — what `pane.rename\\=' writes (`herdr-pane-rename\\='), and what
-a plugin pane is seated carrying from its manifest title, which is how
-the Lantern chat comes through as `*herdr: Lantern*\\='.  Below the
-agent name rather than above it so nobody who renames agents today sees
-their buffers change.
-
-An unlabelled pane instead reads as KIND@WORKSPACE, built from its agent
-kind and `herdr-term--workspace-label\\='.  A pane with no detected agent
-falls back to \"shell\", since `herdr terminal attach' needs no agent and
-a plain shell pane is the common case — so it reads as `shell@WORKSPACE\\='
-rather than `agent@WORKSPACE\\='.  A pane with neither a kind nor a
-workspace falls back to a bare \"shell\" rather than an empty `*herdr: @*\\='.
-
-Not unique: two unnamed panes of the same kind in the same workspace
-compute the same name here.  Callers that create a buffer from it are
-responsible for uniquifying — see `herdr-term--attach-1\\='."
+Not unique.  Two unnamed panes of the same kind in one workspace compute
+the same name, so callers that create a buffer must uniquify first; see
+`herdr-term--unique-buffer-name\\='."
   (let* ((pane-id (alist-get 'pane_id pane))
          (name (and pane-id (herdr-state-agent-name state pane-id)))
          (label (alist-get 'label pane))
@@ -118,23 +90,14 @@ responsible for uniquifying — see `herdr-term--attach-1\\='."
 
 (defun herdr-term--unique-buffer-name (state pane)
   "Return a unique buffer name for PANE, from `herdr-term-buffer-name'.
-STATE is read against, same as that function.
-
-`herdr-term-buffer-name\\=' is not guaranteed unique — two unnamed
-panes of the same kind in the same workspace compute the same wanted
-name — and `get-buffer-create\\=' on a colliding name returns a different
-pane\\='s existing buffer rather than a fresh one.  Uniquify before
-creating, not after."
+Uniquify before creating, not after: `get-buffer-create\\=' on a colliding
+name hands back another pane\\='s buffer rather than a fresh one."
   (generate-new-buffer-name (herdr-term-buffer-name state pane)))
 
 (defun herdr-term--buffer-name-sans-uniquify-suffix (name)
   "Return NAME with a trailing `<N>\\=' uniquifying suffix stripped, if any.
-
-`generate-new-buffer-name\\=' and `rename-buffer\\=' both add this suffix
-when the wanted name collides with another live buffer.  Comparing a
-buffer\\='s actual name against a freshly computed wanted name without
-stripping this would treat such a buffer as permanently stale — see
-`herdr-term--rename-stale-buffers\\='."
+Without this, a buffer that collided on creation compares unequal to its
+own wanted name forever; see `herdr-term--rename-stale-buffers\\='."
   (if (string-match "<[0-9]+>\\'" name)
       (substring name 0 (match-beginning 0))
     name))
@@ -374,22 +337,15 @@ there is nothing to subscribe to.  See `herdr-term-directory-interval'."
 
 (defcustom herdr-term-directory-interval 5.0
   "Seconds between backstop working-directory polls, or nil to disable.
-
-Directories are normally refreshed off the event stream: a `cd' emits no
-`pane_updated', but it does emit `layout_updated', which is enough of a
-hint to go and look.  That refresh is debounced by
-`herdr-term-directory-debounce'.
-
-This timer is only a backstop for a directory change that produces no
-events at all.  Each poll is a single `pane.list' over a unix socket and
-runs only while herdr terminal buffers exist."
+Directories normally refresh off `layout_updated', debounced by
+`herdr-term-directory-debounce'.  This timer only covers a change that
+produces no events at all."
   :type '(choice number (const :tag "Never poll" nil))
   :group 'herdr)
 
 (defcustom herdr-term-directory-debounce 0.4
   "Seconds to coalesce directory refreshes triggered by events.
-A single `cd' produced two dozen `layout_updated' events, so refreshing
-on each one would mean two dozen round trips for one directory change."
+One `cd' emits dozens of `layout_updated' events."
   :type 'number
   :group 'herdr)
 
@@ -398,32 +354,23 @@ on each one would mean two dozen round trips for one directory change."
 
 (defvar herdr-term--poll-in-progress nil
   "Non-nil while a directory poll's RPC is in flight.
-The RPC wait runs due timers, and the poll's worst case used to exceed
-its own interval — so the next poll could fire re-entrantly inside the
-previous one's wait and stack blocking calls.  Let-bound rather than
-set, so a signal anywhere in the poll clears it for free.")
+The RPC wait runs due timers, so without this the next poll fires
+re-entrantly inside the previous one's wait.  Let-bound, not set, so a
+signal anywhere in the poll clears it.")
 
 (defun herdr-term--poll-directories ()
   "Refresh pane directories, then point buffers at them.
-
-Also the one place `herdr-state-reconcile-workspaces' gets called from:
-a workspace has no event that reliably announces its own removal, and
-unlike panes it had no periodic repair at all until this — a closed
-workspace whose `workspace.closed' was missed (a disconnect window, a
-ring-replay gap) stayed a ghost in the dispatcher and every picker for
-the rest of the session.  Directory sync stays scoped to the pane
-reconcile; a workspace changing affects no `default-directory'."
-  ;; Guarded only on the stream being up.  Requiring a herdr buffer to
-  ;; exist would disable the poll entirely until you visit a pane, and
-  ;; with it the pruning of panes the server no longer has.  Pruning
-  ;; matters most when no buffers are open, because that is when the
-  ;; pickers are used.
+Also the one caller of `herdr-state-reconcile-workspaces': no event
+reliably announces a workspace's removal, so a missed `workspace.closed'
+would leave a ghost for the rest of the session."
+  ;; Guarded on the stream only, not on a herdr buffer existing: pruning
+  ;; panes the server no longer has matters most when no buffers are
+  ;; open, because that is when the pickers are used.
   ;;
-  ;; The background timeout is what keeps this poll survivable: it fires
-  ;; every `herdr-term-directory-interval' whether or not the server is
-  ;; well, and at the full `herdr-rpc-timeout' (10s against a 5s
-  ;; interval) a wedged server turned the backstop into a near-continuous
-  ;; main-thread freeze — the editor re-froze faster than it thawed.
+  ;; The background timeout is what keeps this survivable.  This fires on
+  ;; a 5s interval whether or not the server is well, and at the full 10s
+  ;; `herdr-rpc-timeout' a wedged server makes the backstop a
+  ;; continuous main-thread freeze.
   (when (and (herdr-state-running-p)
              (not herdr-term--poll-in-progress))
     (let ((herdr-term--poll-in-progress t)
