@@ -9,21 +9,16 @@
 
 ;;; Commentary:
 
-;; herdr ships a complete JSON Schema for its socket API, which this
-;; package loads at runtime rather than generating code from.
+;; herdr ships a complete JSON Schema for its socket API, loaded at
+;; runtime rather than generated from.
 ;;
-;; That buys two things.  `herdr-call' can offer every method the server
-;; knows about, prompting for each parameter according to its declared
-;; type, without anyone hand-writing 89 wrappers.  And the drift test can
-;; assert that the wrappers we *did* hand-write still name methods and
-;; parameters the server recognises, so a herdr upgrade surfaces as a
-;; failing test instead of a runtime error.
+;; It buys `herdr-call' every method without a hand-written wrapper, and
+;; it buys the drift test: a herdr upgrade that renames a method the
+;; curated commands use surfaces as a failing test, not a runtime error.
 ;;
-;; The schema is held for the session and invalidated by server version.
-;; There is no disk cache: `herdr api schema --json' prints the schema
-;; bundled in the binary without consulting the server, measured at 7ms,
-;; and nothing calls in here until you run `herdr-call' by hand.  A cache
-;; saving that is a 250K file and a staleness question for no gain.
+;; Held for the session, invalidated by server version.  No disk cache:
+;; `herdr api schema --json' prints the schema bundled in the binary
+;; without consulting the server, measured at 7ms.
 
 ;;; Code:
 
@@ -227,13 +222,9 @@ Returns a value ready to hand to `herdr-rpc-call', or nil to omit it."
        (let ((raw (read-string (format "%s (JSON): " name))))
          (if (string-empty-p raw) nil (herdr-rpc-decode raw))))
       ('array
-       ;; `herdr-rpc-decode' parses a JSON array as a Lisp list — right
-       ;; for the alists nested inside an object parameter, wrong here:
-       ;; `herdr-rpc-array' is what turns a list into the vector
-       ;; `json-serialize' requires for an array-typed parameter, and
-       ;; skipping it made every array parameter (`agent.send_keys'
-       ;; `keys', for instance) fail encoding before any request went
-       ;; out.
+       ;; `herdr-rpc-decode' gives a list, which an array-typed
+       ;; parameter cannot be: it must go through `herdr-rpc-array' or
+       ;; `json-serialize' fails before the request goes out.
        (let ((raw (read-string (format "%s (JSON): " name))))
          (if (string-empty-p raw) nil
            (herdr-rpc-array (herdr-rpc-decode raw)))))

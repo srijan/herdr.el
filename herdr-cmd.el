@@ -9,16 +9,13 @@
 
 ;;; Commentary:
 
-;; Hand-written wrappers for the methods worth a keybinding.  herdr
-;; exposes 89; generating all of them would produce a menu nobody can
-;; read and prompts that cannot know a pane id should default to the
-;; focused pane.  Everything not wrapped here stays reachable through
-;; `herdr-call'.
+;; Hand-written wrappers for the methods worth a keybinding.  A
+;; generated wrapper cannot know that a pane id should default to the
+;; focused pane, which is most of what these are for.  Everything not
+;; wrapped here stays reachable through `herdr-call'.
 ;;
-;; `herdr-cmd-methods' records what each command calls so the drift test
-;; can check the whole set against the server's live schema.  When herdr
-;; renames or removes something, that test fails instead of a user
-;; discovering it as a runtime error.
+;; `herdr-cmd-methods' records what each command calls, so the drift test
+;; can check the set against the server's live schema.
 
 ;;; Code:
 
@@ -59,26 +56,19 @@ answer with `root_pane'.  Either shape names the pane just made."
 
 (defun herdr-cmd--follow-new-pane (pane-id)
   "Show PANE-ID, the pane a create command just made.
-PANE-ID comes from the creating call's own response rather than a
-follow-up `pane.current': herdr.el reaches the socket as a paneless
-client, for which `pane.current' answers with the server's global focus.
-The cache may not hold the pane yet — creation was announced on the
-event stream — so a miss waits for reconciliation instead of failing."
+PANE-ID must come from the creating call's own response: herdr.el is a
+paneless client, so `pane.current' answers with the server's global
+focus instead.  A cache miss waits for reconciliation rather than
+failing, since creation was announced on the event stream."
   (when pane-id
     (unless (herdr-term-select-pane pane-id)
       (herdr-cmd--select-pane-when-ready pane-id))))
 
 (defun herdr-cmd--select-pane-when-ready (pane-id)
   "Select PANE-ID's buffer as soon as reconciliation has built it.
-
-Gated on `herdr-state-generation', captured at the first attempt: this
-chain keeps no handle anywhere for `herdr-stop' to cancel, so a
-`herdr-stop' followed by a quick restart while a chain is still
-retrying would otherwise go on selecting buffers for a session it no
-longer belongs to — possibly a different pane's, if ids are reused.
-Checking the generation on every attempt cannot cancel an already-armed
-timer, but it makes each attempt after a restart a no-op instead of an
-action, which is what matters."
+Gated on `herdr-state-generation', captured at the first attempt.  The
+chain keeps no handle for `herdr-stop' to cancel, so without the gate a
+stop-and-restart leaves it selecting buffers for the old session."
   (let ((generation (herdr-state-generation)))
     (letrec ((attempts 0)
              (check
@@ -290,15 +280,11 @@ workspace\='s root pane, so callers go there directly rather than asking."
 
 (defun herdr-cmd-open-workspace-for (root)
   "Focus the workspace at ROOT, creating it if absent, and go there.
-
-Shared by `herdr-project\=', the dispatcher\='s verb for an inactive
-project row, and RET on that row\='s `main\=' checkout.  All three ask the
-same question of the same server.
-
-The create half is `herdr-cmd--create-workspace-pane\=', which
-`herdr-cmd-pane-in-directory\=' also calls: with nothing open at ROOT
-there is no difference between going there and opening a terminal
-there, and writing the call twice is how the two drifted apart before."
+Shared by `herdr-project\=', the dispatcher\='s inactive-project verb, and
+RET on that row\='s `main\=' checkout.  The create half is
+`herdr-cmd--create-workspace-pane\=', which `herdr-cmd-pane-in-directory\='
+calls too: with nothing open at ROOT the two have nothing to differ
+about."
   (if-let* ((existing (herdr-state-workspace-for-directory
                        (herdr-state-current) root)))
       (progn

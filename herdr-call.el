@@ -10,11 +10,8 @@
 ;;; Commentary:
 
 ;; The escape hatch.  `herdr-cmd' covers the methods worth a keybinding;
-;; this reaches the other sixty-odd without anyone writing a wrapper for
-;; them, by prompting from the server's own schema.
-;;
-;; That is why the schema is loaded at runtime instead of generating 89
-;; generated menu entries: full coverage without a menu nobody can read.
+;; this reaches every other one by prompting from the server's own
+;; schema, so no wrapper and no generated menu has to exist for it.
 
 ;;; Code:
 
@@ -45,13 +42,10 @@
   "Read METHOD's parameter NAME, offering pane pickers where they fit."
   (if (and (member name '("pane_id" "target"))
            (herdr-state-pane-ids (herdr-state-current)))
-      ;; Ids are the one place a generic string prompt is actively worse
-      ;; than what the curated commands do, so reuse the picker.  But
-      ;; `completing-read' returns "" on empty input regardless of
-      ;; REQUIRE-MATCH, and every other branch of
-      ;; `herdr-schema-read-param' maps empty to nil to honour `herdr-call's
-      ;; documented omit-when-empty contract — map it here too, or an
-      ;; optional target left blank goes out as an explicit empty string.
+      ;; Map "" to nil, as every other `herdr-schema-read-param' branch
+      ;; does: `completing-read' returns "" on empty input whatever
+      ;; REQUIRE-MATCH says, and an optional target left blank must be
+      ;; omitted rather than sent as an empty string.
       (let ((choice (herdr-select-pane (format "%s: " name))))
         (unless (string-empty-p choice) choice))
     (herdr-schema-read-param method name)))

@@ -11,18 +11,11 @@
 
 ;; Knowing which agents are blocked or finished without going to look.
 ;;
-;; A modeline segment that is always on, fed by `herdr-state-change-functions'
-;; and doing no I/O, plus desktop notifications that are available but
-;; off, because an agent changing state is not by default worth
-;; interrupting for.
+;; A modeline segment that is always on, fed by
+;; `herdr-state-change-functions' and doing no I/O, plus desktop
+;; notifications that are available but off by default.
 ;;
-;; This was herdr-agents.el, which by the end named neither of the things
-;; in it: the buffer it was written for moved to `herdr-dispatch' when the
-;; dispatcher landed, and the command `herdr-agents' moved with it.  Two
-;; unrelated things then shared one prefix, so `herdr-agents--refresh-segment'
-;; read as internal to the command it has nothing to do with.  The modeline
-;; half is `herdr-modeline-', the notification half `herdr-notify-' — which
-;; is what the one public name here, `herdr-notify-statuses', already used.
+;; Two halves, two prefixes: `herdr-modeline-' and `herdr-notify-'.
 
 ;;; Code:
 
@@ -159,10 +152,8 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
           (when (and previous (member status herdr-notify-statuses))
             (herdr-notify--send
              (format "herdr: %s is %s" (or (alist-get 'agent pane) id) status)
-             ;; `herdr-tree-pane-name', not the bare title: the
-             ;; notification names the agent kind, which does not tell
-             ;; two Claudes apart, and a labelled pane says which one
-             ;; this is before it says what it was doing.
+             ;; `herdr-tree-pane-name', not the bare title: the agent
+             ;; kind alone does not tell two Claudes apart.
              (let ((name (herdr-tree-pane-name pane)))
                (if (string-empty-p name) id name)))))))))
 

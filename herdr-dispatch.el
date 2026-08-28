@@ -108,24 +108,14 @@ tells itself apart from a redraw of an empty session.")
     (define-key map "r" #'herdr-dispatch-read)
     (define-key map "R" #'herdr-dispatch-rename)
     (define-key map "k" #'herdr-dispatch-close)
-    ;; TAB is `magit-section-toggle' itself.  It was a command of ours
-    ;; for as long as unfolding a workspace was what fetched its
-    ;; worktrees, and that arrangement was wrong twice over: it put a
-    ;; blocking `worktree.list' on a keystroke, and the toggle collapsed
-    ;; the workspace before the fetch drew into it, so TAB on a workspace
-    ;; line hid the very worktrees it had just fetched.  They appeared
-    ;; only when TAB was pressed on an agent line, where a leaf section
-    ;; makes the toggle a no-op — which is how the bug was reported.
-    ;; `herdr-dispatch--request-worktrees' fetches on render now, leaving
-    ;; the toggle nothing of ours to do.
+    ;; TAB is `magit-section-toggle' itself.  Worktrees are fetched on
+    ;; render by `herdr-dispatch--request-worktrees', so the toggle has
+    ;; nothing of ours to do.
     ;;
-    ;; If folding misbehaves here again, the cause is not this binding.
-    ;; The reported "cannot fold after unfolding" was
-    ;; `herdr-dispatch--refresh-hook' redrawing synchronously out of the
-    ;; event stream's process filter, landing an `erase-buffer' in the
-    ;; middle of a command roughly ten times a second; the debounce and
-    ;; the unchanged-tree skip in `herdr-dispatch-refresh' are what
-    ;; address that.  Reach for those first.
+    ;; If folding misbehaves, the cause is not this binding.  It is a
+    ;; redraw landing an `erase-buffer' in the middle of a command; the
+    ;; debounce and the unchanged-tree skip in `herdr-dispatch-refresh'
+    ;; are what address that.
     (define-key map (kbd "TAB") #'magit-section-toggle)
     (define-key map "w" #'herdr-dispatch-create-workspace)
     (define-key map "n" #'herdr-dispatch-create-terminal)
@@ -499,41 +489,23 @@ rather than a buffer written to."
 (defun herdr-dispatch--fetch-worktrees (workspace-id directory)
   "Ask for WORKSPACE-ID\\='s worktrees, which live in DIRECTORY.
 
-A nil DIRECTORY has no question to ask — `herdr-state-workspace-directory\\='
-derives one from the workspace\\='s panes, and a workspace with no panes
-still renders — so it caches empty at once rather than being reconsidered
-on every redraw for as long as it stays empty.  That it caches as
-`no-directory\\=' rather than as a failure is what lets
-`herdr-dispatch--request-worktrees\\=' ask again the moment a pane gives
-the workspace a directory.
+A nil DIRECTORY caches as `no-directory\\=' rather than as a failure, so
+`herdr-dispatch--request-worktrees\\=' asks again the moment a pane gives
+the workspace one.
 
-Asynchronous because there is one request per workspace and this runs in
-the refresh path, which is driven by the event stream: a blocking round
-trip there is felt as the whole dashboard stalling.  `herdr-rpc-call-async\\='
-hands a server error to the callback as data, but getting the request out
-at all can signal here and now, so that is turned into the same failure
-the callback already handles rather than being allowed to escape into a
-redraw.
+Asynchronous: this runs in the refresh path, driven by the event stream,
+where a blocking round trip stalls the whole dashboard.  TIMEOUT is
+passed client-side, unlike the herdr-cmd.el callers that bind
+server-side, because nothing here waits out a server that accepted the
+connection and never answered.  A timeout then reaches
+`herdr-dispatch--worktrees-received\\=' as an ordinary error and
+`herdr-dispatch--retry-unanswered-worktrees\\=' cures it.
 
-Passes `herdr-rpc-timeout\\=' as the client-side TIMEOUT, unlike the
-callers in herdr-cmd.el: those block server-side on purpose and bind
-themselves there, but nothing here is willing to wait out a server that
-accepted the connection and never answers.  A timeout arrives at
-`herdr-dispatch--worktrees-received\\=' as an ordinary error, which is
-what lets `herdr-dispatch--retry-unanswered-worktrees\\=' cure it the same
-way it cures any other failed listing.
-
-`error\\=' rather than `herdr-error\\=', because two different signals are
-reachable: an unreachable socket is a `herdr-error\\=' with code
-\"no_server\", while a peer that closed between connecting and sending
-makes `process-send-string\\=' signal a plain `error\\='.  Both leave the
-pending marker set, and the callers of `herdr-dispatch-refresh\\=' — the
-debounce timer and \\[herdr-dispatch-refresh] — are not wrapped in
-`herdr-dispatch--protect\\=', so an escaping signal is a backtrace out of
-a timer and a workspace wedged behind a marker nothing will clear.  The
-width is affordable because the guarded form is one call: the callback
-is invoked from a sentinel later, not from inside it, so a bug in our own
-callback cannot hide in here."
+Catch plain `error\\=', not just `herdr-error\\=': an unreachable socket
+signals the latter, but a peer closing between connect and send makes
+`process-send-string\\=' signal the former.  Either escaping leaves the
+pending marker set and a workspace wedged behind it, and the refresh
+callers are not inside `herdr-dispatch--protect\\='."
   (if (null directory)
       (progn
         (setf (alist-get workspace-id herdr-dispatch--worktrees-unanswered
@@ -690,34 +662,18 @@ same row from disagreeing about which worktree it names."
 (defun herdr-dispatch--checked-worktree-at-point ()
   "Return the cached WorktreeInfo at point, or refuse the row.
 
-The backstop for the renderer\\='s filter, and the one place every worktree
-verb — `RET\\=', `f\\=' and `k\\=' alike — resolves a row through.  It refuses
-exactly what `herdr-tree--worktrees-node\\=' declines to draw, so a row that
-the renderer would not have produced cannot be acted on if one is reached
-anyway: from a cache entry drawn before the filter existed, or a listing
-whose required field the server omitted.
+The one place every worktree verb resolves a row, and the backstop for
+the renderer\\='s filter: it refuses exactly what the renderer declines to
+draw, so a stale row cannot be acted on.
 
-Three refusals, in the order the answers become available.
+Three refusals, in the order the answers arrive.  A row with no cached
+record first, or the others read fields off nil and announce that a row
+whose record was merely missing is the repository\\='s own checkout.  Then
+`herdr-tree-linked-worktree-p\\=', and `herdr-tree-own-workspace-p\\='
+against the enclosing `herdr-workspace\\=' section.
 
-A row with no cached record at all comes first.  Checking anything else
-first would read fields off nil and announce, confidently and wrongly,
-that a row whose record simply could not be found is the repository\\='s
-own checkout.
-
-Then the two the renderer applies: `herdr-tree-linked-worktree-p\\=', for a
-row that is not a worktree, and `herdr-tree-own-workspace-p\\=' against the
-enclosing `herdr-workspace\\=' section, for a row that IS that workspace.
-The second is what makes this a guard rather than a formality: `k\\=' on
-such a row resolves to the workspace the row is nested inside, which is
-the destruction the whole worktree fix is about.
-
-`RET\\=' goes through here too, which it did not before.  That mattered:
-`herdr-dispatch-open-worktree\\=' read `open_workspace_id\\=' straight off
-the record, so on a stale main-checkout row it focused the enclosing
-workspace — and where that field was nil it fell through to a MUTATING
-`worktree.open\\=' against the enclosing workspace\\='s own directory.  The
-one verb that reached the server unguarded was the one that skipped the
-guard."
+The last is the guard that matters: `k\\=' on such a row otherwise
+resolves to the workspace the row is nested inside."
   (let ((worktree (herdr-dispatch--worktree-at-point)))
     (unless worktree
       (user-error
@@ -758,35 +714,19 @@ function\\='s own name asks is left here."
 
 (defun herdr-dispatch--refuse-heading (complaint)
   "Refuse a verb on a grouping heading, COMPLAINT saying which.
-Covers both group headings this buffer draws: a `worktrees (N)\\=' list
-and the `Inactive (N)\\=' known-projects group.
+Covers the `worktrees (N)\\=' list and the `Inactive (N)\\=' group.
 
-The heading names a list, not a herdr object.  Every verb in this buffer
-acts on something with an id — a pane, a tab, a workspace, the workspace
-a worktree is open as, or a known project's root — and a heading has
-none: it is a container this file draws around a cached reply (a
-`worktree.list\\=' answer, or the filtered known-project list), and its
-value either names the id the reply was fetched for or is a stable
-placeholder, neither of which is the same claim as a herdr object.
+A heading names a list, not a herdr object, and every verb here acts on
+something with an id.
 
-Refusing rather than doing nothing is the point.
-`herdr-dispatch--value-at-point\\=' walks up from point, so a verb with no
-arm for this type does not fail — it silently finds the enclosing
-workspace and acts on that.  Verified before this existed: `k\\=', `R\\='
-and `f\\=' on a `worktrees (N)\\=' heading reached `workspace.close\\=',
-`workspace.rename\\=' and `workspace.focus\\=', each naming the repository
-whose worktrees the heading was counting.  That is the same defect shape
-as the one `herdr-tree-linked-worktree-p\\=' describes, one line above
-these arms in the same `cond\\='.  The `Inactive (N)\\=' heading has no
-enclosing workspace to fall through to — it sits at the top level — so
-for it this is a belt rather than the braces, but the same explicit
-refusal keeps both headings consistent under every verb.
+Refuse rather than do nothing.  `herdr-dispatch--value-at-point\\=' walks
+up from point, so a verb with no arm for this type does not fail: it
+silently finds the enclosing workspace and acts on that.  Before this
+existed, `k\\=' and `R\\=' on a `worktrees (N)\\=' heading reached
+`workspace.close\\=' and `workspace.rename\\=' against the repository the
+heading was counting worktrees for.
 
-`RET\\=' and `f\\=' refuse for that reason too, rather than approximating.
-Sending them to the enclosing workspace would be the fall-through
-dressed up as a decision, and there is no other server-side object here
-to go to.  Each heading's one useful action is folding, which
-\\[magit-section-toggle] already does — hence the hint."
+Folding is a heading\\='s one useful action, hence the hint."
   (user-error "herdr: %s; TAB folds it" complaint))
 
 (herdr-dispatch-defverb herdr-dispatch-open-worktree ()
@@ -1024,47 +964,27 @@ An empty base ref means the current HEAD and is omitted from the call."
 
 (defun herdr-dispatch--live-project-root-p (root)
   "Return non-nil when ROOT is a directory that still exists.
+project.el remembers a project until told to forget one, and nothing
+tells it when a directory is deleted, so a removed worktree keeps
+drawing an `Inactive\\=' row that `RET\\=' can only fail on.
 
-project.el remembers a project until it is told to forget one, and
-nothing tells it when a directory is deleted.  A worktree removed with
-`herdr-worktree-remove\\=', or any project directory deleted outside
-Emacs, therefore stays in `project-known-project-roots\\=' and
-kept drawing an `Inactive\\=' row for a path that is not there — a row
-`RET\\=' could only fail on, and one that no longer even appeared under
-the repository it came from, since the repository had stopped listing it
-as a worktree.
+A remote root is taken on trust: `file-directory-p\\=' over TRAMP is a
+round trip, and this runs on every redraw.
 
-A remote root is taken on trust.  `file-directory-p\\=' over TRAMP is a
-round trip to another machine, and this runs on every redraw; a row for
-a directory that has since gone from a remote host is a far smaller cost
-than a dashboard that blocks on an unreachable host every time an event
-arrives.
-
-This hides such a row; it does not forget the project.  Removing it from
-project.el is `project-forget-zombie-projects\\=', which is project.el's
-own command for exactly this and which writes to the user's
-`project-list-file\\=' — not something a dashboard redraw should do on
-its own."
+Hides the row, does not forget the project.  That is
+`project-forget-zombie-projects\\=', which writes to `project-list-file\\='
+and is not something a redraw should do."
   (or (file-remote-p root)
       (file-directory-p root)))
 
 (defun herdr-dispatch--known-project-roots ()
   "Return the still-existing `project-known-project-roots\\=', or nil.
-Nil without project.el; guarded rather than required, since
-`herdr-project\\=' checks the same way \(`fboundp\\=' \\='project-current\\='\),
-so the dispatcher asks nothing of project.el that the rest of the
-package does not already ask.
+Nil without project.el, which is guarded rather than required.
 
-Roots whose directory has been deleted are dropped here rather than in
-`herdr-tree.el\\=', which is a pure function of its arguments and stays
-that way: this is already the boundary where project.el's own answer
-enters the dashboard, and the only place that touches the filesystem to
-find out what that answer is worth.  See
-`herdr-dispatch--live-project-root-p\\='.
-
-Dropping them here also spares each one a `worktree.list\\=' round trip,
-since `herdr-dispatch--request-known-project-worktrees\\=' is given this
-filtered list."
+Deleted roots are dropped here, not in `herdr-tree.el\\=', which is pure
+and stays that way.  This is the boundary where project.el's answer
+enters, and the only place that touches the filesystem.  It also spares
+each dropped root a `worktree.list\\=' round trip."
   (when (fboundp 'project-known-project-roots)
     (seq-filter #'herdr-dispatch--live-project-root-p
                 (project-known-project-roots))))
@@ -1166,27 +1086,18 @@ inside a folded section has no width while the fold is in force."
 (defun herdr-dispatch-refresh (&optional force)
   "Redraw the dispatcher from the cache, keeping point and fold state.
 
-Does nothing when the tree and header are already what is on screen.
-Many events change nothing the dashboard renders — status refreshes
-that confirm the same status, reconciles that touched only volatile
-fields — and erasing the buffer to lay down the same characters is what
-reset the cursor and left folds acting on dead sections.  Non-nil FORCE
-redraws regardless, which is what \\[herdr-dispatch-refresh] does.
+Does nothing when the tree and header already match the screen.  Most
+events change nothing that renders, and erasing the buffer to lay down
+the same characters is what reset the cursor and left folds acting on
+dead sections.  Non-nil FORCE redraws regardless.
 
-Also where worktrees are fetched, since this is the one place that knows
-a workspace is being drawn — and, the same way, the one place that knows
-which known-but-unopened projects are being drawn under `Inactive\\='; see
-`herdr-dispatch--request-worktrees\\=' and its sibling
-`herdr-dispatch--request-known-project-worktrees\\='.  Both requests go
-out whether or not this call redraws, and each reply schedules its own
-redraw rather than forcing one.  FORCE additionally retries the
-workspaces whose last fetch could not be answered, which is the manual
-cure for a `worktree.list\\=' that failed.
+Also where worktrees are fetched, this being the one place that knows a
+workspace is being drawn.  Requests go out whether or not this call
+redraws, and each reply schedules its own redraw.  FORCE additionally
+retries the workspaces whose last fetch went unanswered.
 
-A redraw that does happen restores the section highlight as well as
-point and folds; see the comment where it does.  The skip is the other
-half of keeping that highlight, and `herdr-tree--steady-title\\=' is what
-lets the skip engage at all while an agent is working."
+`herdr-tree--steady-title\\=' is what lets the skip engage at all while an
+agent is working."
   (interactive (list t))
   (when-let* ((buffer (get-buffer herdr-dispatch-buffer-name)))
     (with-current-buffer buffer
@@ -1230,31 +1141,20 @@ lets the skip engage at all while an agent is working."
                            (and (cdr entry)
                                 (herdr-dispatch--position-restore (cdr entry)))))
                 (set-window-point (car entry) position)))
-            ;; The highlight is an overlay on the text `erase-buffer'
-            ;; just took away, and nothing recreates it: magit refreshes
-            ;; it from `magit-section-post-command-hook', and a redraw
-            ;; driven by the event stream is not a command.  Verified,
-            ;; one overlay before a redraw and none after — so the line
-            ;; you were reading stopped being marked as such the moment
-            ;; anything in the session moved.
+            ;; `erase-buffer' took the highlight overlay away and
+            ;; nothing recreates it: magit refreshes it from
+            ;; `magit-section-post-command-hook', and a redraw driven by
+            ;; the event stream is not a command.
             ;;
-            ;; After the point restores rather than before, because this
-            ;; highlights whatever `magit-current-section' answers, and
-            ;; that is read off point.
+            ;; After the point restore, not before: this highlights
+            ;; whatever `magit-current-section' answers, read off point.
             ;;
-            ;; Unforced, and that is not a near miss.  The unforced path
-            ;; updates when `magit-section-pre-command-section' is not
-            ;; `eq' to the section now at point, and every section object
-            ;; in this buffer was just replaced — `erase-buffer' and the
-            ;; insert below make new ones — so that test cannot be false
-            ;; here.  This call carried a FORCE argument justified by the
-            ;; claim that the unforced path would do nothing, which is
-            ;; untrue, and which no test could be written to defend: the
-            ;; two spellings behave identically at this call site.  What
-            ;; protects the behaviour either way is
-            ;; `herdr-dispatch-a-redraw-restores-the-section-highlight',
-            ;; which asserts the overlay rather than the mechanism, and
-            ;; so would fail if magit ever changed that branch.
+            ;; Unforced is correct.  The unforced path updates when
+            ;; `magit-section-pre-command-section' is not `eq' to the
+            ;; section at point, and `erase-buffer' just replaced every
+            ;; section object, so that test cannot be false here.
+            ;; `herdr-dispatch-a-redraw-restores-the-section-highlight'
+            ;; asserts the overlay rather than the mechanism.
             (magit-section-update-highlight))
           (setq herdr-dispatch--rendered-header header
                 herdr-dispatch--rendered-tree tree))
