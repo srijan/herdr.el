@@ -2147,6 +2147,77 @@ the test that would catch losing the check."
                                          herdr-term-select-focused)
                        (herdr-dispatch-visit)))))))
 
+(defconst herdr-dispatch-test--main-checkout-nodes
+  '((herdr-known-project "/tmp/other-project/" "other-project (1)  /tmp/other-project/"
+     ((herdr-worktree "/tmp/other-project/" "main  /tmp/other-project" nil))))
+  "A known project and the `main\\=' row for its own checkout.
+`herdr-tree--main-checkout-node\\=' draws that row with
+`herdr-tree--worktree-node\\=', so it is a `herdr-worktree\\=' section
+whose value is the repository root itself.")
+
+(defconst herdr-dispatch-test--main-checkout-worktrees
+  '(("/tmp/other-project/"
+     ((path . "/tmp/other-project/") (branch . "trunk"))))
+  "The reply behind the row above: one entry, the repository's own
+checkout, so `is_linked_worktree\\=' is absent and
+`herdr-tree-linked-worktree-p\\=' says no.")
+
+(ert-deftest herdr-dispatch-visit-opens-the-main-checkout-of-a-known-project ()
+  "RET on the `main\\=' row of an inactive project must do what RET on the
+project row above it does: create the workspace for that directory.
+
+The row is a `herdr-worktree\\=' section, and `herdr-dispatch-visit\\='
+tests that type before `herdr-known-project\\=', so it used to reach
+`herdr-dispatch-open-worktree\\=' and be refused by the guard there for
+not being a linked worktree.  The guard is right; the row had no
+business arriving at it."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
+    (let ((herdr-state--current (herdr-state-empty))
+          (herdr-dispatch--worktrees herdr-dispatch-test--main-checkout-worktrees))
+      (search-forward "main")
+      (should (equal '((herdr-rpc-call "workspace.create"
+                                       ((cwd . "/tmp/other-project/")
+                                        (label . "other-project")
+                                        (focus . t)))
+                       (herdr-term-select-focused))
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-rpc-call herdr-term-select-pane
+                                         herdr-term-select-focused)
+                       (herdr-dispatch-visit)))))))
+
+(ert-deftest herdr-dispatch-visit-focuses-an-already-open-main-checkout ()
+  "The same TOCTOU the known-project row guards: the listing can be a
+poll behind, and a second workspace for one directory is the bug
+`herdr-state-workspace-for-directory\\=' exists to prevent."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w9"))))
+              (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
+                         (cwd . "/tmp/other-project")))))))
+          (herdr-dispatch--worktrees herdr-dispatch-test--main-checkout-worktrees))
+      (search-forward "main")
+      (should (equal '((herdr-rpc-call "workspace.focus" ((workspace_id . "w9")))
+                       (herdr-term-select-focused))
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-rpc-call herdr-term-select-pane
+                                         herdr-term-select-focused)
+                       (herdr-dispatch-visit)))))))
+
+(ert-deftest herdr-dispatch-visit-still-refuses-a-worktree-row-with-no-record ()
+  "The main-checkout branch must not swallow the no-listing-cached case.
+A row whose record cannot be found says so; it does not get treated as a
+checkout and opened."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
+    (let ((herdr-state--current (herdr-state-empty))
+          (herdr-dispatch--worktrees nil))
+      (search-forward "main")
+      (should (equal nil
+                     (herdr-dispatch-test-with-recorders
+                         (herdr-rpc-call herdr-term-select-pane
+                                         herdr-term-select-focused)
+                       (should-error (herdr-dispatch-visit) :type 'user-error)))))))
+
 (ert-deftest herdr-dispatch-rename-refuses-a-known-project ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
     (search-forward "other-project (0)")

@@ -835,17 +835,38 @@ it creates, and goes there under either terminal backend."
 
 ;;; The read-only verbs
 
+(defun herdr-dispatch--main-checkout-at-point ()
+  "Return the path when point is on a repository\='s own checkout row.
+
+`herdr-tree--main-checkout-node\=' draws the `main\=' row of an inactive
+project with `herdr-tree--worktree-node\=', so it is a `herdr-worktree\='
+section like any other, and `herdr-dispatch-visit\=' used to send it to
+`herdr-dispatch-open-worktree\='.  The guard there refused it for not
+being a linked worktree, which it is not and cannot be: the row IS the
+checkout the worktrees hang off.  The guard is right; the row had no
+business reaching it.
+
+Nil when no record is cached, so such a row still gets the refetch error
+rather than being opened on a guess."
+  (when-let* ((path (herdr-dispatch--value-at-point 'herdr-worktree))
+              (record (herdr-dispatch--worktree-at-point))
+              ((not (herdr-tree-linked-worktree-p record))))
+    path))
+
 (herdr-dispatch-defverb herdr-dispatch-visit ()
   "Go to the thing at point.
-A pane is focused and its buffer shown; a workspace is focused and then
+A pane is focused and its buffer shown.  A workspace is focused and then
 followed to whichever pane herdr lands on, which is the server\\='s
-choice rather than ours.  A known project with no workspace
-open yet is created and focused instead — see
-`herdr-dispatch-open-known-project\\='.  The worktrees heading has
-nowhere to go; see `herdr-dispatch--refuse-heading\\='."
+choice rather than ours.  A known project with no workspace open yet is
+created and focused instead; see `herdr-dispatch-open-known-project\\='.
+So is that project's own `main\\=' checkout row, which names the same
+directory; see `herdr-dispatch--main-checkout-at-point\\='.  A heading
+has nowhere to go; see `herdr-dispatch--refuse-heading\\='."
   (cond
    ((herdr-dispatch--value-at-point 'herdr-pane)
     (herdr-pane-focus (herdr-dispatch--value-at-point 'herdr-pane)))
+   ((herdr-dispatch--main-checkout-at-point)
+    (herdr-cmd-open-workspace-for (herdr-dispatch--main-checkout-at-point)))
    ((herdr-dispatch--value-at-point 'herdr-worktree)
     (herdr-dispatch-open-worktree))
    ((herdr-dispatch--type-at-point 'herdr-panes)
