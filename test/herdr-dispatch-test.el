@@ -1052,18 +1052,6 @@ looks wrong."
     (search-forward "herdr.el")
     (should-error (herdr-dispatch-read) :type 'user-error)))
 
-(defun herdr-dispatch-test--focus-from (text)
-  "Return the calls `herdr-dispatch-focus' makes from the line holding TEXT.
-The following commands are recorded alongside `herdr-rpc-call' so that
-reaching the server through one of them is distinguishable from calling
-it directly — they issue the same request, and only the recorder tells
-them apart."
-  (goto-char (point-min))
-  (search-forward text)
-  (herdr-dispatch-test-with-recorders
-      (herdr-rpc-call herdr-pane-focus herdr-workspace-focus)
-    (herdr-dispatch-focus)))
-
 (ert-deftest herdr-dispatch-verbs-report-rather-than-raise ()
   "Every verb goes through the protection, not just the ones tested above."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes

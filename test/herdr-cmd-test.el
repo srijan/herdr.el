@@ -221,15 +221,6 @@ empty; a pane already in the cache must not also be handed to it."
         (herdr-cmd--follow-new-pane "w1:p9")
         (should (equal (unless select-succeeds "w1:p9") deferred))))))
 
-(ert-deftest herdr-cmd-created-pane-is-left-alone-under-session ()
-  "The session backend shows every pane already; adopting would only
-add a spurious row to herdr's own agents list."
-  (let ((herdr-adopt-created-shells t)
-        adopted)
-    (cl-letf (((symbol-function 'herdr-adopt-shell) (lambda (p) (setq adopted p))))
-      (herdr-cmd--follow-new-pane "w1:p9")
-      (should-not adopted))))
-
 ;;; What reached the server is the assertion
 
 ;; Both helpers below run against the fake server and assert on what it

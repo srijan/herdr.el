@@ -289,9 +289,6 @@ reconcile alone cannot account for a fresh label."
                 req '((snapshot . ((focused_pane_id . "w1:p1")
                                    (panes . [((pane_id . "w1:p1")
                                               (cwd . "/tmp"))])
-                                   (tabs . [((tab_id . "w1:t1")
-                                             (workspace_id . "w1")
-                                             (label . "fresh"))])
                                    (workspaces . [((workspace_id . "w1")
                                                    (label . "fresh"))])))))
                nil))
@@ -308,7 +305,6 @@ reconcile alone cannot account for a fresh label."
   "Return a cache whose every label says \"stale\"."
   (herdr-state-from-snapshot
    '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))
-     (tabs . (((tab_id . "w1:t1") (workspace_id . "w1") (label . "stale"))))
      (workspaces . (((workspace_id . "w1") (label . "stale")))))))
 
 (defun herdr-state-live-test--label (accessor id-key id)
@@ -602,11 +598,6 @@ event."
     (cons (herdr-test-ok req `((type . "workspace_list")
                                (workspaces . ,workspaces)))
           nil)))
-
-(defun herdr-state-live-test--tab-list-server (tabs)
-  "Return a responder answering `tab.list' with TABS."
-  (lambda (req)
-    (cons (herdr-test-ok req `((type . "tab_list") (tabs . ,tabs))) nil)))
 
 (ert-deftest herdr-state-reconcile-workspaces-drops-ghosts ()
   (herdr-test-with-server

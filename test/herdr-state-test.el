@@ -211,18 +211,6 @@ went on showing the old name."
     (should (= 1 (length (herdr-state-workspaces next))))
     (should (equal "web" (alist-get 'label (car (herdr-state-workspaces next)))))))
 
-(defun herdr-state-test--tab-order (state)
-  "Return STATE's tab ids in list order."
-  (mapcar (lambda (tab) (alist-get 'tab_id tab)) (herdr-state-tabs state)))
-
-(defun herdr-state-test--tab-seed ()
-  "Tabs of two workspaces, interleaved, for move tests."
-  (herdr-state-from-snapshot
-   '((tabs . (((tab_id . "w1:t1") (workspace_id . "w1") (label . "one"))
-              ((tab_id . "w2:t1") (workspace_id . "w2") (label . "other"))
-              ((tab_id . "w1:t2") (workspace_id . "w1") (label . "two"))
-              ((tab_id . "w1:t3") (workspace_id . "w1") (label . "three")))))))
-
 (defun herdr-state-test--ws-seed ()
   "State with four workspaces w1..w4 in order, for reorder tests."
   (herdr-state-from-snapshot
