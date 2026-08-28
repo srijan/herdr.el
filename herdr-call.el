@@ -14,7 +14,7 @@
 ;; them, by prompting from the server's own schema.
 ;;
 ;; That is why the schema is loaded at runtime instead of generating 89
-;; transient prefixes: full coverage without a menu nobody can read.
+;; generated menu entries: full coverage without a menu nobody can read.
 
 ;;; Code:
 

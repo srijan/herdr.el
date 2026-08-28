@@ -260,36 +260,24 @@ how callers tell a miss from a merge.  ITEMS is never mutated."
           (setf (alist-get (car cell) merged) (cdr cell)))
         (herdr-state--upsert items key id merged)))))
 
-(defun herdr-state--move-within (items key id index predicate)
+(defun herdr-state--move-within (items key id index)
   "Return ITEMS with the entry whose KEY is ID placed at INDEX.
 
-Only the entries PREDICATE accepts take part: they are lifted out in
-order, the one named by ID is put back among them at INDEX, and the
-result is written into the slots they came from.  Entries PREDICATE
-rejects never move, which is what lets a tab be positioned among its own
-workspace\\='s tabs while the cache holds every workspace\\='s tabs in one
-flat list.
-
-An ID no entry carries leaves ITEMS alone; an INDEX past the end is
+An ID no entry carries leaves ITEMS alone.  An INDEX past the end is
 clamped.  Like `herdr-state--upsert\\=', ITEMS is not mutated.
 
-INDEX counts against the group with the moved entry ALREADY REMOVED,
-which is the usual convention but is NOT VERIFIED against herdr.  It
-only matters for a forward move — moving an entry to a position after
-its own — where the other reading, counting against the list including
-the entry, lands it one slot earlier.  Backward moves are identical
-under both.  One real `tab.move\\=' watched on the event stream would
-settle it; until then the tests say plainly which of the two they pin."
-  (let* ((group (seq-filter predicate items))
-         (moved (seq-find (lambda (item) (equal id (alist-get key item))) group)))
+INDEX counts against the list with the moved entry ALREADY REMOVED.
+That is the usual convention, but it is NOT VERIFIED against herdr, and
+only a forward move can tell the two readings apart.  The other reading
+counts against the list including the entry and lands it one slot
+earlier.  One real `workspace.move\\=' watched on the event stream would
+settle it; until then the tests say which of the two they pin."
+  (let ((moved (seq-find (lambda (item) (equal id (alist-get key item))) items)))
     (if (not moved)
         items
-      (let* ((rest (delq moved (copy-sequence group)))
-             (at (max 0 (min (length rest) (or index 0))))
-             (ordered (append (seq-take rest at) (list moved) (seq-drop rest at)))
-             (result nil))
-        (dolist (item items (nreverse result))
-          (push (if (funcall predicate item) (pop ordered) item) result))))))
+      (let* ((rest (delq moved (copy-sequence items)))
+             (at (max 0 (min (length rest) (or index 0)))))
+        (append (seq-take rest at) (list moved) (seq-drop rest at))))))
 
 (defun herdr-state--merge-pane (state pane-id changes)
   "Return STATE with CHANGES merged into the pane named PANE-ID.
@@ -420,8 +408,7 @@ events use dots, so both spellings appear here deliberately."
          (setq workspaces
                (herdr-state--move-within workspaces 'workspace_id
                                          (alist-get 'workspace_id data)
-                                         (alist-get 'insert_index data)
-                                         (lambda (_workspace) t)))
+                                         (alist-get 'insert_index data)))
          (if (eq workspaces (herdr-state-workspaces state))
              state
            (setf (herdr-state-workspaces next) workspaces)
@@ -891,8 +878,8 @@ The cached ids are captured BEFORE the call: `herdr-rpc-call\\='s wait
 services the event-stream filters, so the cache can gain a pane while
 the reply is in flight — and a reply built before that pane existed
 cannot pronounce it stale.  Judging staleness against the pre-call set
-means a pane that arrived mid-wait is never evicted (nor its buffer
-killed by the agent-windows reap listening on the change hook)."
+means a pane that arrived mid-wait is never evicted, nor its buffer
+killed by the reap listening on the change hook."
   (let ((known-ids (herdr-state-pane-ids herdr-state--current)))
     (when-let* ((panes (condition-case nil
                            (alist-get 'panes (herdr-rpc-call "pane.list"))
@@ -922,11 +909,9 @@ killed by the agent-windows reap listening on the change hook)."
               ;; Replace the record rather than patching cwd alone: an
               ;; agent label can change under us and a cache that only
               ;; ever refreshed directories kept reporting the old one.
-              ;; The common case is an adopted shell that someone then
-              ;; starts Claude in: herdr 0.8.0 relabels it `claude' of
-              ;; its own accord a few seconds later, because reporting an
-              ;; agent does not suppress detection — the two run
-              ;; independently, and detection wins.
+              ;; The common case is a plain shell that someone starts
+              ;; Claude in: herdr relabels it `claude' of its own accord
+              ;; a few seconds later.
               (setq changed t)
               (setq herdr-state--current
                     (herdr-state-reduce herdr-state--current "pane_updated"

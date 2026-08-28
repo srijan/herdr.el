@@ -125,9 +125,9 @@ result greppable."
 (defun herdr-pane-focus (&optional pane-id)
   "Focus PANE-ID, prompting when not given, and select its buffer.
 
-Focusing is server-side.  Under `agent-windows' that has no visible
-effect on its own, because each pane is a separate Emacs buffer and
-nothing repaints — so Emacs is moved to match."
+Focusing is server-side and has no visible effect on its own, because
+each pane is a separate Emacs buffer and nothing repaints.  Emacs is
+moved to match."
   (interactive)
   (let ((pane (or pane-id (herdr-select-pane "Focus pane: "))))
     (herdr-rpc-call "pane.focus" `((pane_id . ,pane)))
@@ -138,10 +138,10 @@ nothing repaints — so Emacs is moved to match."
 (defun herdr-cmd--follow-focus ()
   "Show whichever pane herdr now considers focused.
 
-Focusing a workspace or tab lands on one of its panes — the server
-decides which — so the pane has to be asked for rather than assumed.
-The cache may not hold it yet — the focus change was announced on the
-event stream — so a miss waits for reconciliation instead of failing."
+Focusing a workspace lands on one of its panes, and the server decides
+which, so the pane has to be asked for rather than assumed.  The cache
+may not hold it yet, since the focus change arrives on the event stream,
+so a miss waits for reconciliation instead of failing."
   (or (herdr-term-select-focused)
       (when-let* ((pane (herdr-cmd--current-pane-id)))
         (herdr-cmd--select-pane-when-ready pane))))

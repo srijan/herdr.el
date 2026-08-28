@@ -97,7 +97,7 @@ where you were."
   (let ((herdr-terminal-backend 'agent-windows)
         (live (generate-new-buffer " *pane-with-buffer*")))
     (unwind-protect
-        (let ((herdr-term--agent-buffers (list (cons "w1:p1" live)))
+        (let ((herdr-term--buffers (list (cons "w1:p1" live)))
               (herdr-state--current
                (herdr-state-from-snapshot
                 '((panes . (((pane_id . "w1:p1") (agent . "claude"))
@@ -137,7 +137,7 @@ down to `herdr-rpc-background-timeout'."
         (target (generate-new-buffer " *target*"))
         focused)
     (unwind-protect
-        (let ((herdr-term--agent-buffers (list (cons "w1:p1" target))))
+        (let ((herdr-term--buffers (list (cons "w1:p1" target))))
           (cl-letf (((symbol-function 'herdr-rpc-call)
                      (lambda (method params)
                        (when (equal method "pane.focus")
@@ -156,7 +156,7 @@ you last went to, because herdr's focus is server-side and does not
 follow Emacs."
   (let* ((herdr-terminal-backend 'agent-windows)
          (mine (generate-new-buffer " *pane-b*"))
-         (herdr-term--agent-buffers (list (cons "w1:pB" mine)))
+         (herdr-term--buffers (list (cons "w1:pB" mine)))
          (herdr-state--current
           (herdr-state-from-snapshot
            '((focused_pane_id . "w1:pA")
@@ -170,7 +170,7 @@ follow Emacs."
 (ert-deftest herdr-select-target-falls-back-to-herdr-focus ()
   "Outside a herdr buffer there is no local answer, so use the server's."
   (let* ((herdr-terminal-backend 'agent-windows)
-         (herdr-term--agent-buffers nil)
+         (herdr-term--buffers nil)
          (herdr-state--current
           (herdr-state-from-snapshot
            '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))
@@ -181,7 +181,7 @@ follow Emacs."
 (ert-deftest herdr-select-target-ignores-a-buffer-whose-pane-is-gone ()
   (let* ((herdr-terminal-backend 'agent-windows)
          (orphan (generate-new-buffer " *orphan*"))
-         (herdr-term--agent-buffers (list (cons "w1:gone" orphan)))
+         (herdr-term--buffers (list (cons "w1:gone" orphan)))
          (herdr-state--current
           (herdr-state-from-snapshot
            '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))
