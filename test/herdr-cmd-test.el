@@ -453,6 +453,40 @@ directory's own name."
                                                 (focus . t))))
                        (reverse calls)))))))
 
+(ert-deftest herdr-cmd-going-somewhere-and-opening-a-terminal-there-agree ()
+  "With nothing open at a directory there is no difference between going
+there and opening a terminal there: both have to create the workspace,
+and the directory is the only input either has.
+
+`herdr-cmd-open-workspace-for\\=' and `herdr-cmd-pane-in-directory\\='
+each wrote that `workspace.create\\=' out in full, which is how they came
+to disagree about the label and about how to follow the new pane.  This
+pins them to one call."
+  (let (going opening)
+    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) t))
+              ((symbol-function 'herdr-term-select-focused) #'ignore))
+      (dolist (probe (list (cons 'going (lambda ()
+                                          (herdr-cmd-open-workspace-for
+                                           "/tmp/fresh/")))
+                           (cons 'opening (lambda ()
+                                            (herdr-cmd-pane-in-directory
+                                             "/tmp/fresh/")))))
+        (let ((calls nil))
+          (cl-letf (((symbol-function 'herdr-rpc-call)
+                     (lambda (method params)
+                       (push (cons method params) calls)
+                       '((root_pane . ((pane_id . "w7:p1")))))))
+            (let ((herdr-state--current (herdr-state-empty)))
+              (funcall (cdr probe))
+              (if (eq (car probe) 'going)
+                  (setq going (reverse calls))
+                (setq opening (reverse calls))))))))
+    (should (equal '(("workspace.create" . ((cwd . "/tmp/fresh/")
+                                            (label . "fresh")
+                                            (focus . t))))
+                   going))
+    (should (equal going opening))))
+
 (ert-deftest herdr-cmd-pane-in-directory-adds-a-tab-to-a-workspace-already-open ()
   "A workspace already at the directory is used as it is."
   (let ((calls nil))
