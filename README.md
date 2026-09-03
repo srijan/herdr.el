@@ -264,8 +264,9 @@ Everything measured, with the source excerpts and the wrong readings kept visibl
 
 Worth knowing about:
 
-- `herdr-new-terminal` opens a terminal, asking where first. It offers each open workspace, and
-  each `project.el` project with no workspace open yet, which it creates and then opens in.
+- `herdr-new-terminal` opens a terminal, asking where first. It offers every `project.el` project
+  by path, including open projects, and each open workspace by id. An open target gets a new tab.
+  An unopened project gets a workspace and its root pane.
 - `herdr-worktree-create` takes a branch name and gives you a git worktree with its own herdr
   workspace, using herdr's native worktree support.
 - `herdr-pane-read` puts terminal output into a real Emacs buffer. The `recent_unwrapped` source

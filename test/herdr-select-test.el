@@ -188,8 +188,8 @@ follow Emacs."
 
 ;;; Choosing where a new terminal goes
 
-(ert-deftest herdr-select-place-offers-open-workspaces-and-unopened-roots ()
-  "An open workspace by id, a project with no workspace open by path."
+(ert-deftest herdr-select-place-offers-workspaces-and-every-known-project ()
+  "Known projects stay searchable by path even when already open."
   (let (offered)
     (let ((herdr-state--current
            (herdr-state-from-snapshot
@@ -203,9 +203,7 @@ follow Emacs."
                  (lambda (_prompt candidates &rest _)
                    (setq offered candidates) (car candidates))))
         (herdr-select-place)
-        ;; `/tmp/open/' is dropped: it is in the list once already, under
-        ;; the id the verbs act on.
-        (should (equal '("w1" "/tmp/elsewhere/") offered))))))
+        (should (equal '("w1" "/tmp/open/" "/tmp/elsewhere/") offered))))))
 
 (ert-deftest herdr-select-place-works-without-project-el ()
   "Unbound and restored rather than stubbed: `fboundp\\=' is what the guard
@@ -226,13 +224,17 @@ asks, and a stub that answers calls cannot make it answer nil."
             (should (equal '("w1") offered))))
       (when saved (fset 'project-known-project-roots saved)))))
 
-(ert-deftest herdr-select-place-annotates-an-unopened-root-as-not-open ()
-  "What tells the two kinds of candidate apart in the picker."
+(ert-deftest herdr-select-place-annotates-projects-by-open-state ()
+  "Project paths say whether their workspace is already open."
   (let ((herdr-state--current
          (herdr-state-from-snapshot
           '((workspaces . (((workspace_id . "w1") (label . "ws")
-                            (pane_count . 2))))))))
+                            (pane_count . 2))))
+            (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                       (cwd . "/tmp/open/"))))))))
     (should (string-match-p "ws" (herdr-select--place-annotation "w1")))
+    (should (string-match-p "ws"
+                            (herdr-select--place-annotation "/tmp/open/")))
     (should (string-match-p "not open"
                             (herdr-select--place-annotation "/tmp/elsewhere/")))))
 
