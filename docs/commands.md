@@ -68,9 +68,9 @@ point in the dashboard.
 |---|---|---|
 | `herdr-new-terminal` | `tab.create`, `workspace.create` | Open a terminal in a workspace or a directory. |
 
-`herdr-new-terminal` asks where first. It offers each open workspace by id, and each `project.el`
-project with no workspace open by path. A workspace gets a new tab. A directory is opened as a
-workspace, and the terminal is that workspace's root pane.
+`herdr-new-terminal` asks where first. It offers each open workspace by id and every `project.el`
+project by path. An open project appears both ways. Selecting either choice adds a new tab to its
+workspace. Selecting an unopened project creates its workspace and opens the root pane.
 
 A worktree appears in the list only when project.el knows it as a project. The command does not
 ask the server for worktrees, because `worktree.list` needs a directory inside a repository that

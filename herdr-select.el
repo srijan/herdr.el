@@ -107,23 +107,25 @@ than one extra round trip, and the cache can drift."
 
 (defun herdr-select--place-annotation (place)
   "Return the annotation string for PLACE in `herdr-select-place\\='."
-  (if (herdr-state-workspace (herdr-state-current) place)
-      (herdr-select--annotate-workspace place)
-    "  not open yet"))
+  (let* ((state (herdr-state-current))
+         (workspace (or (herdr-state-workspace state place)
+                        (herdr-state-workspace-for-directory state place))))
+    (if workspace
+        (herdr-select--annotate-workspace
+         (alist-get 'workspace_id workspace))
+      "  not open yet")))
 
 (defun herdr-select-place (&optional prompt)
   "Read where to open a terminal: an open workspace id, or a project directory.
-PROMPT overrides the default.  A directory already open as a workspace is
-dropped, being in the list once already under the id the verbs act on."
+PROMPT overrides the default.  Known projects stay in the list when open so
+completion can match their paths instead of only their opaque workspace ids."
   (herdr-state-refresh)
   (let* ((state (herdr-state-current))
          (workspaces (mapcar (lambda (workspace)
                                (alist-get 'workspace_id workspace))
                              (herdr-state-workspaces state)))
          (roots (when (fboundp 'project-known-project-roots)
-                  (seq-remove (lambda (root)
-                                (herdr-state-workspace-for-directory state root))
-                              (project-known-project-roots)))))
+                  (project-known-project-roots))))
     (herdr-select--read (or prompt "New terminal in: ")
                         (append workspaces roots)
                         'herdr-place #'herdr-select--place-annotation)))
