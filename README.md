@@ -313,9 +313,10 @@ the same as any other detected agent.
 ## Completion
 
 Pickers are plain `completing-read` over the cache, so they inherit whatever completion stack you
-already use. With `marginalia` the annotation shows agent, status, title and directory. With
-`orderless` that makes `web claude blocked` a working query. `embark-act` on a pane candidate
-offers focus, read, prompt and close.
+already use. A pane candidate is the whole row - id, agent, status, name and directory - rather
+than an id annotated with the rest, because `completing-read` matches the candidate and never the
+annotation. With `orderless` that makes `web claude blocked` a working query. `embark-act` on a
+pane candidate offers focus, read, prompt and close.
 
 ## Development
 

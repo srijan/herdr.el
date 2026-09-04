@@ -61,6 +61,70 @@ findable by the name it is known by as well as by what it is doing."
   (herdr-select-test-with-state '()
     (should (equal "" (herdr-select--annotate-pane "w9:p9")))))
 
+
+;;; Candidates carry the name, not only the id
+
+(ert-deftest herdr-select-pane-candidates-carry-the-readable-name ()
+  "`completing-read\\=' matches candidates and never annotations, so a name
+that lives only in an annotation is a name you cannot type to find its
+pane.  The picker offered bare ids and could be searched by nothing
+else."
+  (let (offered)
+    (herdr-select-test-with-state
+        '(((pane_id . "w1:p1") (agent . "claude") (agent_status . "blocked")
+           (label . "Lantern") (cwd . "/tmp/web")))
+      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates &rest _)
+                   (setq offered candidates) (car candidates))))
+        ;; What comes back is still the id the commands take.
+        (should (equal "w1:p1" (herdr-select-pane)))))
+    (should (= 1 (length offered)))
+    (let ((row (car offered)))
+      (should (string-match-p "w1:p1" row))
+      (should (string-match-p "Lantern" row))
+      (should (string-match-p "claude" row))
+      (should (string-match-p "/tmp/web" row)))))
+
+(ert-deftest herdr-select-agent-candidates-carry-the-readable-name ()
+  "The agent picker reads the same rows; only its list is narrower."
+  (let (offered)
+    (herdr-select-test-with-state
+        '(((pane_id . "w1:p1") (agent . "claude") (agent_status . "working")
+           (label . "Lantern") (cwd . "/tmp/web"))
+          ((pane_id . "w1:p2") (cwd . "/tmp/web")))
+      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates &rest _)
+                   (setq offered candidates) (car candidates))))
+        (should (equal "w1:p1" (herdr-select-agent)))))
+    (should (= 1 (length offered)))
+    (should (string-match-p "Lantern" (car offered)))))
+
+(ert-deftest herdr-select-pane-picker-does-not-annotate-the-row-twice ()
+  "The row is the candidate now; annotating it again would print it twice."
+  (let (annotator)
+    (herdr-select-test-with-state '(((pane_id . "w1:p1")))
+      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates _category annotate)
+                   (setq annotator annotate) (car candidates))))
+        (herdr-select-pane)))
+    (should-not (funcall annotator "w1:p1"))))
+
+(ert-deftest herdr-select-pane-id-reduces-a-row-and-passes-an-id-through ()
+  "Rows come from the picker and bare ids from consult and the dispatcher."
+  (should (equal "w1:p1"
+                 (herdr-select-pane-id "w1:p1  ▶ claude    Lantern  /tmp")))
+  (should (equal "w1:p1" (herdr-select-pane-id "w1:p1"))))
+
+(ert-deftest herdr-select-embark-target-reduces-a-row-to-the-pane-id ()
+  "Embark hands an action the candidate string, and every action on the
+pane map takes an id."
+  (should (equal '(herdr-pane . "w1:p1")
+                 (herdr-select--embark-pane-target
+                  'herdr-pane "w1:p1  ▶ claude    Lantern  /tmp"))))
+
 ;;; Marginalia registration must not be able to break loading
 
 (ert-deftest herdr-select-registers-with-current-marginalia-api ()
