@@ -376,6 +376,43 @@ received are."
       (should (equal (if answer '("pane.close") nil) wire))
       (should (string-match-p "w1:p1" (or said ""))))))
 
+(ert-deftest herdr-pane-close-names-the-pane-in-its-confirmation ()
+  "The human-readable identity leads, while the exact id stays visible."
+  (dolist (answer '(t nil))
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1") (label . "project"))))
+              (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                         (agent . "codex")))))))
+          question
+          said
+          wire)
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (prompt) (setq question prompt) answer))
+                ((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (herdr-test-with-server
+            (lambda (req)
+              (push (alist-get 'method req) wire)
+              (cons (herdr-test-ok req '((type . "ok"))) nil))
+          (herdr-pane-close "w1:p1")))
+      (should (equal "Close pane codex@project (w1:p1)? " question))
+      (should (equal (if answer
+                         "herdr: closed codex@project (w1:p1)"
+                       "herdr: codex@project (w1:p1) left open")
+                     said))
+      (should (equal (if answer '("pane.close") nil) wire))))
+  (let ((herdr-state--current (herdr-state-from-snapshot nil))
+        question
+        said)
+    (cl-letf (((symbol-function 'y-or-n-p)
+               (lambda (prompt) (setq question prompt) nil))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+      (herdr-pane-close "missing:pane"))
+    (should (equal "Close pane missing:pane? " question))
+    (should (equal "herdr: missing:pane left open" said))))
+
 (ert-deftest herdr-workspace-close-closes-only-when-confirmed ()
   "A workspace takes every tab and pane in it, so declining must send
 nothing.  This used to assert only the message, and only for the yes
