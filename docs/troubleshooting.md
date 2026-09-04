@@ -65,21 +65,19 @@ load time.
 
 **Correction.** Add `:ensure nil` to the form. herdr.el is not on MELPA.
 
-## The dashboard took the whole frame
+## The dashboard opened in the wrong place
 
-**Symptom.** `M-x herdr` deletes your other windows. The key `q` does not bring them back.
+**Symptom.** `M-x herdr` opens in a split or takes the whole frame.
 
-**Cause.** `herdr-dispatch-display-action` defaults to `(display-buffer-full-frame)`. A pane row
-has four columns, and the last two carry the news. Half a frame cuts them off.
+**Cause.** `herdr-dispatch-display-action` has been customized. Its default reuses the selected
+window and preserves the rest of the frame.
 
-**Correction.** For the splitting behaviour, set the option to nil:
+**Correction.** Restore the default action:
 
 ```elisp
-(setq herdr-dispatch-display-action nil)
+(setq herdr-dispatch-display-action
+      '(display-buffer-same-window))
 ```
-
-`q` restores the buffer that this window held before. It cannot restore a window that was
-deleted.
 
 ## Every agent shows the status `idle`
 

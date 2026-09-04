@@ -34,9 +34,8 @@ herdr.el (2)                 ~/src/herdr.el/
 Inactive (24)
 ```
 
-The dashboard takes the frame instead of splitting one. That deletes your other windows. `q`
-restores the buffer this window held, but it cannot bring the other windows back. Set
-`herdr-dispatch-display-action` to nil to split instead.
+The dashboard opens in the selected window and leaves your other windows alone. `q` restores the
+buffer that window held before.
 
 | Key | Action |
 | --- | --- |

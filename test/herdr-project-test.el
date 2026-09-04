@@ -140,24 +140,39 @@ workspace, not make one for the subdirectory it happened to be in."
     (should (eq (cdr entry) (lookup-key herdr-command-map (car entry))))
     (should (commandp (cdr entry)))))
 
-(ert-deftest herdr-dispatch-takes-the-frame-rather-than-splitting-it ()
-  "Asserted on the action passed to `pop-to-buffer\\=', not on the window
-count: batch has one window, where `display-buffer-full-frame\\=' is a
-no-op."
+(ert-deftest herdr-dispatch-reuses-the-current-window-and-preserves-splits ()
+  "The default display action leaves the rest of the frame alone."
   (let (action)
     (cl-letf (((symbol-function 'pop-to-buffer)
                (lambda (_buffer &optional given &rest _) (setq action given)))
               ((symbol-function 'herdr-dispatch-refresh) #'ignore))
       (herdr-agents)
-      (should (equal '(display-buffer-full-frame) action))
+      (should (equal '(display-buffer-same-window) action))
       (should (equal herdr-dispatch-display-action action)))
-    ;; And it is a knob, so the old splitting behaviour is one setq away.
+    ;; The placement remains customizable.
     (cl-letf (((symbol-function 'pop-to-buffer)
                (lambda (_buffer &optional given &rest _) (setq action given)))
               ((symbol-function 'herdr-dispatch-refresh) #'ignore))
-      (let ((herdr-dispatch-display-action nil))
+      (let ((herdr-dispatch-display-action '(display-buffer-full-frame)))
         (herdr-agents)
-        (should-not action)))))
+        (should (equal '(display-buffer-full-frame) action)))))
+  (let ((neighbor (generate-new-buffer " *herdr-neighbor*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'herdr-dispatch-refresh) #'ignore))
+          (save-window-excursion
+            (delete-other-windows)
+            (let* ((dashboard (get-buffer-create herdr-dispatch-buffer-name))
+                   (dashboard-window (selected-window))
+                   (selected (split-window-right)))
+              (set-window-buffer dashboard-window dashboard)
+              (set-window-buffer selected neighbor)
+              (select-window selected)
+              (herdr-agents)
+              (should (eq selected (selected-window)))
+              (should (eq dashboard (window-buffer selected)))
+              (should (window-live-p dashboard-window))
+              (should (= 2 (length (window-list)))))))
+      (kill-buffer neighbor))))
 
 (ert-deftest herdr-requires-the-escape-hatch-rather-than-autoloading-it ()
   "`herdr-call\\=' used to arrive with `herdr-transient\\=' and answered
