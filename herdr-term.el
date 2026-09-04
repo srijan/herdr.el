@@ -69,14 +69,13 @@ Nil only when PANE names no workspace to begin with."
                               (herdr-state-workspaces state)))
         workspace-id)))
 
-(defun herdr-term-buffer-name (state pane)
-  "Return the wanted buffer name for PANE, read against STATE.
+(defun herdr-term-pane-name (state pane)
+  "Return the readable terminal identity for PANE, read against STATE.
 In order: a name set through `agent.rename\\=', then the pane\\='s own
 `label\\=', then KIND@WORKSPACE, then a bare \"shell\".
 
-Not unique.  Two unnamed panes of the same kind in one workspace compute
-the same name, so callers that create a buffer must uniquify first; see
-`herdr-term--unique-buffer-name\\='."
+Not unique.  Two unnamed panes of the same kind in one workspace can
+have the same identity."
   (let* ((pane-id (alist-get 'pane_id pane))
          (name (and pane-id (herdr-state-agent-name state pane-id)))
          (label (alist-get 'label pane))
@@ -84,9 +83,16 @@ the same name, so callers that create a buffer must uniquify first; see
                    (alist-get 'agent pane)
                    "shell"))
          (workspace (herdr-term--workspace-label state pane)))
-    (format "*herdr: %s*"
-            (or name label
-                (if workspace (format "%s@%s" kind workspace) kind)))))
+    (or name label
+        (if workspace (format "%s@%s" kind workspace) kind))))
+
+(defun herdr-term-buffer-name (state pane)
+  "Return the wanted buffer name for PANE, read against STATE.
+
+Not unique.  Two unnamed panes of the same kind in one workspace compute
+the same name, so callers that create a buffer must uniquify first; see
+`herdr-term--unique-buffer-name\\='."
+  (format "*herdr: %s*" (herdr-term-pane-name state pane)))
 
 (defun herdr-term--unique-buffer-name (state pane)
   "Return a unique buffer name for PANE, from `herdr-term-buffer-name'.

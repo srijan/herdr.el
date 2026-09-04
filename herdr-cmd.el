@@ -26,6 +26,8 @@
 (require 'herdr-select)
 (require 'herdr-term)
 
+(declare-function herdr-term-pane-name "herdr-term" (state pane))
+
 (defconst herdr-cmd-methods
   '((herdr-pane-close            "pane.close"           "pane_id")
     (herdr-pane-rename           "pane.rename"          "pane_id" "label")
@@ -46,6 +48,14 @@ schema by the drift test.")
   "Return the id of the pane herdr currently considers focused."
   (ignore-errors
     (alist-get 'pane_id (alist-get 'pane (herdr-rpc-call "pane.current")))))
+
+(defun herdr-cmd--pane-description (pane-id)
+  "Return a readable description of PANE-ID, retaining its exact id."
+  (let* ((state (herdr-state-current))
+         (pane (herdr-state-pane state pane-id)))
+    (if pane
+        (format "%s (%s)" (herdr-term-pane-name state pane) pane-id)
+      pane-id)))
 
 (defun herdr-cmd--created-pane-id (result)
   "Return the id of the pane a create-style RESULT reports.
@@ -95,15 +105,16 @@ result greppable."
 (defun herdr-pane-close (&optional pane-id)
   "Close PANE-ID, or the pane being acted on."
   (interactive)
-  (let ((pane (or pane-id (herdr-select-target-pane "Close pane: "))))
-    (if (y-or-n-p (format "Close pane %s? " pane))
+  (let* ((pane (or pane-id (herdr-select-target-pane "Close pane: ")))
+         (description (herdr-cmd--pane-description pane)))
+    (if (y-or-n-p (format "Close pane %s? " description))
         (progn
           (herdr-rpc-call "pane.close" `((pane_id . ,pane)))
           ;; Say something afterwards.  Closing reaps the pane's buffer,
           ;; so redisplay happens while the confirmation prompt is still
           ;; on screen and it otherwise sits there looking unanswered.
-          (message "herdr: closed %s" pane))
-      (message "herdr: %s left open" pane))))
+          (message "herdr: closed %s" description))
+      (message "herdr: %s left open" description))))
 
 (defun herdr-pane-rename (label &optional pane-id)
   "Rename PANE-ID, or the focused pane, to LABEL."
