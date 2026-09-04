@@ -12,12 +12,12 @@
 ;; Pickers for panes, agents and workspaces, on plain `completing-read'
 ;; over the state cache.
 ;;
-;; A candidate is the whole readable row - pane id, agent, status, name,
-;; directory - rather than an id with the rest hung off an annotation.
-;; `completing-read' matches the candidate and never the annotation, so
-;; a name that lives only in an annotation is a name you cannot type to
-;; find its pane.  With the row itself as the candidate, "web claude
-;; blocked" is a working query under `orderless'.
+;; A pane or workspace candidate is the whole readable row - id, then
+;; what you know it by - rather than an id with the rest hung off an
+;; annotation.  `completing-read' matches the candidate and never the
+;; annotation, so a name that lives only in an annotation is a name you
+;; cannot type to find what it names.  With the row itself as the
+;; candidate, "web claude blocked" is a working query under `orderless'.
 ;;
 ;; `embark' and `consult' integration registers only when those packages
 ;; are present.  Neither is a dependency.
@@ -99,35 +99,37 @@ a name stay two candidates.  What follows is the annotation, moved into
 the candidate so it can be matched against."
   (concat pane-id (herdr-select--annotate-pane pane-id)))
 
-(defun herdr-select-pane-id (candidate)
-  "Return the pane id CANDIDATE names.
-A picker row leads with the id; the consult source and the dispatcher
-hand over a bare id.  Both reduce here."
+(defun herdr-select-row-id (candidate)
+  "Return the id CANDIDATE names, pane or workspace.
+A picker row leads with the id; the consult source, embark and the
+dispatcher hand over a bare id.  Both reduce here."
   (car (split-string candidate)))
 
-(defun herdr-select--read-pane (prompt pane-ids)
-  "Read one of PANE-IDS with PROMPT, offering each as its readable row."
-  (herdr-select-pane-id
-   (herdr-select--read prompt
-                       (mapcar #'herdr-select--pane-candidate pane-ids)
+(defun herdr-select--read-row (prompt ids candidate category)
+  "Read one of IDS with PROMPT, offering each as the row CANDIDATE builds.
+CATEGORY tags the completion table."
+  (herdr-select-row-id
+   (herdr-select--read prompt (mapcar candidate ids)
                        ;; No annotator: the row is the candidate now, and
                        ;; annotating it again would print it twice.
-                       'herdr-pane #'ignore)))
+                       category #'ignore)))
 
 (defun herdr-select-pane (&optional prompt)
   "Read a pane id, defaulting the prompt to PROMPT.
 Refreshes first: a picker listing panes that no longer exist is worse
 than one extra round trip, and the cache can drift."
   (herdr-state-refresh)
-  (herdr-select--read-pane (or prompt "Pane: ")
-                           (herdr-state-pane-ids (herdr-state-current))))
+  (herdr-select--read-row (or prompt "Pane: ")
+                          (herdr-state-pane-ids (herdr-state-current))
+                          #'herdr-select--pane-candidate 'herdr-pane))
 
 (defun herdr-select-agent (&optional prompt)
   "Read the pane id of an agent, defaulting the prompt to PROMPT."
   (herdr-state-refresh)
-  (herdr-select--read-pane (or prompt "Agent: ")
-                           (mapcar (lambda (pane) (alist-get 'pane_id pane))
-                                   (herdr-state-agents (herdr-state-current)))))
+  (herdr-select--read-row (or prompt "Agent: ")
+                          (mapcar (lambda (pane) (alist-get 'pane_id pane))
+                                  (herdr-state-agents (herdr-state-current)))
+                          #'herdr-select--pane-candidate 'herdr-pane))
 
 (defun herdr-select--place-annotation (place)
   "Return the annotation string for PLACE in `herdr-select-place\\='."
@@ -154,13 +156,22 @@ completion can match their paths instead of only their opaque workspace ids."
                         (append workspaces roots)
                         'herdr-place #'herdr-select--place-annotation)))
 
+(defun herdr-select--workspace-candidate (workspace-id)
+  "Return the completion candidate for WORKSPACE-ID.
+Built like a pane row, for the same reason: the label and the pane count
+are what you know a workspace by, and completion matches only what is in
+the candidate."
+  (concat workspace-id (herdr-select--annotate-workspace workspace-id)))
+
 (defun herdr-select-workspace (&optional prompt)
   "Read a workspace id, defaulting the prompt to PROMPT."
   (herdr-state-refresh)
-  (herdr-select--read (or prompt "Workspace: ")
-                      (mapcar (lambda (w) (alist-get 'workspace_id w))
-                              (herdr-state-workspaces (herdr-state-current)))
-                      'herdr-workspace #'herdr-select--annotate-workspace))
+  (herdr-select--read-row (or prompt "Workspace: ")
+                          (mapcar (lambda (w) (alist-get 'workspace_id w))
+                                  (herdr-state-workspaces
+                                   (herdr-state-current)))
+                          #'herdr-select--workspace-candidate
+                          'herdr-workspace))
 
 (defun herdr-select-current-target (&optional buffer)
   "Return the pane a command would act on from BUFFER, or nil.
@@ -220,7 +231,7 @@ and moves only when something moves it."
   "Reduce embark TARGET of TYPE to the pane id it names.
 Every action on `herdr-select-pane-embark-map' takes an id, and a picker
 candidate is a whole row."
-  (cons type (herdr-select-pane-id target)))
+  (cons type (herdr-select-row-id target)))
 
 (with-eval-after-load 'embark
   (when (boundp 'embark-keymap-alist)
