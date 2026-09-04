@@ -33,10 +33,11 @@
   :type 'string
   :group 'herdr)
 
-(defcustom herdr-dispatch-display-action '(display-buffer-full-frame)
+(defcustom herdr-dispatch-display-action
+  '(display-buffer-same-window)
   "How the dispatcher buffer is shown, as a `display-buffer\\=' ACTION.
-Taking the frame deletes your other windows, and \\[quit-window] does not
-bring them back.  Nil splits instead."
+The default reuses the selected window and leaves the rest of the frame
+alone.  Nil lets `display-buffer\=' choose another window."
   :type 'sexp
   :group 'herdr)
 

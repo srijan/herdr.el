@@ -48,25 +48,22 @@ therefore poll. The poll runs only while herdr terminal buffers exist.
 | Option | Default | Function |
 |---|---|---|
 | `herdr-dispatch-buffer-name` | `"*herdr-agents*"` | The name of the dashboard buffer. |
-| `herdr-dispatch-display-action` | `(display-buffer-full-frame)` | Where the dashboard appears. |
+| `herdr-dispatch-display-action` | `(display-buffer-same-window)` | Where the dashboard appears. |
 | `herdr-dispatch-refresh-debounce` | `0.2` | The number of seconds to group the dashboard redraws. |
 | `herdr-dispatch-fold-indicators` | `nil` | The value that `magit-section-visibility-indicators` takes. |
 
-The dashboard takes the frame. A pane row has four columns, and the last two carry the news: the
-pane id, and the work that the agent reports. Half a frame cuts them off.
+The dashboard reuses the selected window, so it preserves the rest of the frame. The key `q`
+restores the buffer that window held before.
 
-Taking the frame deletes your other windows. The key `q` does not bring them back. It restores
-the buffer that this window held before.
-
-For a dashboard that splits the window instead, set the option to nil:
+To give the dashboard the whole frame instead:
 
 ```elisp
-(setq herdr-dispatch-display-action nil)
+(setq herdr-dispatch-display-action '(display-buffer-full-frame))
 ```
 
 The dashboard and the terminals have separate options on purpose. A terminal is a buffer that you
-move between, and it must not rearrange the frame. The dashboard is a place that you go to, read,
-and leave.
+move between. The dashboard is a place that you go to, read, and leave. Both reuse the selected
+window by default, but you can place them independently.
 
 The dashboard redraws from the cache, not from the server. A redraw therefore costs no socket
 traffic. The debounce stops a busy agent from causing many redraws each second.
