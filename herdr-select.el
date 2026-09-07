@@ -141,6 +141,31 @@ than one extra round trip, and the cache can drift."
          (alist-get 'workspace_id workspace))
       "  not open yet")))
 
+(defun herdr-select--place-candidate (place)
+  "Return the completion candidate for PLACE.
+A workspace id says nothing about what it is a workspace of, so the
+annotation joins the candidate here too."
+  (concat place (herdr-select--place-annotation place)))
+
+(defun herdr-select--read-place (prompt places)
+  "Read one of PLACES with PROMPT, offering each as a readable row.
+Rows map back through an alist rather than by splitting off a leading
+token, the way pane and workspace rows do: a place can be a directory
+path, and a path can contain a space."
+  (let* ((rows (mapcar (lambda (place)
+                         (cons (herdr-select--place-candidate place) place))
+                       places))
+         (chosen (herdr-select--read prompt (mapcar #'car rows)
+                                     'herdr-place #'ignore)))
+    ;; Two places can only collide here by rendering the same row, which
+    ;; the picker shows as one line twice; the first wins.
+    (or (alist-get chosen rows nil nil #'equal)
+        ;; `completing-read' answers with the empty string on empty input
+        ;; whatever REQUIRE-MATCH says, and no row is empty.  The pane
+        ;; picker reduces that to nil, which `herdr-call' reads as an
+        ;; optional parameter left out; a place is not optional.
+        (user-error "herdr: no place chosen"))))
+
 (defun herdr-select-place (&optional prompt)
   "Read where to open a terminal: an open workspace id, or a project directory.
 PROMPT overrides the default.  Known projects stay in the list when open so
@@ -152,9 +177,8 @@ completion can match their paths instead of only their opaque workspace ids."
                              (herdr-state-workspaces state)))
          (roots (when (fboundp 'project-known-project-roots)
                   (project-known-project-roots))))
-    (herdr-select--read (or prompt "New terminal in: ")
-                        (append workspaces roots)
-                        'herdr-place #'herdr-select--place-annotation)))
+    (herdr-select--read-place (or prompt "New terminal in: ")
+                              (append workspaces roots))))
 
 (defun herdr-select--workspace-candidate (workspace-id)
   "Return the completion candidate for WORKSPACE-ID.

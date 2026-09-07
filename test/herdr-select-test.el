@@ -304,8 +304,11 @@ follow Emacs."
                 ((symbol-function 'herdr-select--read)
                  (lambda (_prompt candidates &rest _)
                    (setq offered candidates) (car candidates))))
-        (herdr-select-place)
-        (should (equal '("w1" "/tmp/open/" "/tmp/elsewhere/") offered))))))
+        (should (equal "w1" (herdr-select-place)))
+        (should (equal 3 (length offered)))
+        (should (string-prefix-p "w1 " (nth 0 offered)))
+        (should (string-prefix-p "/tmp/open/" (nth 1 offered)))
+        (should (string-prefix-p "/tmp/elsewhere/" (nth 2 offered)))))))
 
 (ert-deftest herdr-select-place-works-without-project-el ()
   "Unbound and restored rather than stubbed: `fboundp\\=' is what the guard
@@ -322,8 +325,9 @@ asks, and a stub that answers calls cannot make it answer nil."
                     ((symbol-function 'herdr-select--read)
                      (lambda (_prompt candidates &rest _)
                        (setq offered candidates) (car candidates))))
-            (herdr-select-place)
-            (should (equal '("w1") offered))))
+            (should (equal "w1" (herdr-select-place)))
+            (should (equal 1 (length offered)))
+            (should (string-prefix-p "w1 " (car offered)))))
       (when saved (fset 'project-known-project-roots saved)))))
 
 (ert-deftest herdr-select-place-annotates-projects-by-open-state ()
@@ -339,6 +343,68 @@ asks, and a stub that answers calls cannot make it answer nil."
                             (herdr-select--place-annotation "/tmp/open/")))
     (should (string-match-p "not open"
                             (herdr-select--place-annotation "/tmp/elsewhere/")))))
+
+(ert-deftest herdr-select-place-rows-carry-the-label-and-the-open-state ()
+  "A place row can be matched by what the workspace is called."
+  (let (offered)
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1") (label . "lantern")
+                              (pane_count . 2))))
+              (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                         (cwd . "/tmp/open/"))))))))
+      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'project-known-project-roots)
+                 (lambda () '("/tmp/elsewhere/")))
+                ((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates &rest _)
+                   (setq offered candidates) (car candidates))))
+        (herdr-select-place)
+        (should (string-match-p "lantern" (nth 0 offered)))
+        (should (string-match-p "2 panes" (nth 0 offered)))
+        (should (string-match-p "not open" (nth 1 offered)))))))
+
+(ert-deftest herdr-select-place-maps-a-row-back-to-a-path-with-a-space ()
+  "The reduction cannot be a split: a directory name may contain a space."
+  (let ((herdr-state--current (herdr-state-from-snapshot '())))
+    (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+              ((symbol-function 'project-known-project-roots)
+               (lambda () '("/tmp/my project/")))
+              ((symbol-function 'herdr-select--read)
+               (lambda (_prompt candidates &rest _) (car candidates))))
+      (should (equal "/tmp/my project/" (herdr-select-place))))))
+
+(ert-deftest herdr-select-place-picker-does-not-annotate-the-row-twice ()
+  "The row already carries the annotation, so the table must not add it."
+  (let (annotator)
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1"))))))))
+      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'project-known-project-roots) (lambda () nil))
+                ((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates _category fn)
+                   (setq annotator fn) (car candidates))))
+        (herdr-select-place)
+        (should (null (funcall annotator "w1")))))))
+
+(ert-deftest herdr-select-place-refuses-empty-input ()
+  "`completing-read\\=' hands back the empty string on empty input whatever
+REQUIRE-MATCH says, and no row can match it."
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot '((workspaces . (((workspace_id . "w1"))))))))
+    (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+              ((symbol-function 'project-known-project-roots) (lambda () nil))
+              ((symbol-function 'completing-read) (lambda (&rest _) "")))
+      (should-error (herdr-select-place) :type 'user-error))))
+
+(ert-deftest herdr-select-pane-answers-empty-input-with-nothing ()
+  "An empty row splits to nil, and `herdr-call\\=' reads that as an optional
+parameter left out.  The place picker\\='s refusal must not spread here."
+  (herdr-select-test-with-state '(((pane_id . "w1:p1")))
+    (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+              ((symbol-function 'completing-read) (lambda (&rest _) "")))
+      (should (null (herdr-select-pane))))))
 
 (ert-deftest herdr-select-offers-no-agent-start-picker ()
   "It existed only to keep the choice away from a pane the server would

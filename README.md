@@ -316,8 +316,9 @@ Pickers are plain `completing-read` over the cache, so they inherit whatever com
 already use. A pane candidate is the whole row - id, agent, status, name and directory - and a
 workspace candidate is its id, label and pane count, rather than an id annotated with the rest,
 because `completing-read` matches the candidate and never the annotation. With `orderless` that
-makes `web claude blocked` a working query. `embark-act` on a pane candidate offers focus, read,
-prompt and close.
+makes `web claude blocked` a working query. `herdr-new-terminal` builds its rows the same way, over
+open workspaces and known project roots, so a project is findable by path and a workspace by label.
+`embark-act` on a pane candidate offers focus, read, prompt and close.
 
 ## Development
 
