@@ -242,6 +242,16 @@ moved as a side effect of the command that just ran."
     (when (and id (herdr-state-pane (herdr-state-current) id))
       id)))
 
+(defun herdr-term-buffer-p (&optional buffer)
+  "Return non-nil if BUFFER is one of herdr\\='s terminal buffers.
+
+Membership in the registry rather than the major mode: a herdr terminal
+is a `ghostel-mode\\=' buffer like any other ghostel shell, and only herdr
+knows which of them front its panes.  Unlike `herdr-term-pane-for-buffer\\='
+this still answers for a buffer whose pane has gone away, which is a
+buffer to clean up rather than one to protect."
+  (and (rassq (or buffer (current-buffer)) (herdr-term--live-buffers)) t))
+
 (defun herdr-term--attach (state pane)
   "Create and start a ghostel buffer attached to PANE, named from STATE.
 Returns an existing buffer untouched rather than attaching twice:
@@ -463,6 +473,23 @@ is changing directories."
   (dolist (cell (herdr-term--live-buffers))
     (kill-buffer (cdr cell)))
   (setq herdr-term--buffers nil))
+
+;;; Optional integration, registered only when project.el is loaded
+
+;; herdr's terminals live in the project directory and answer to
+;; `project-buffers', but no default clause in
+;; `project-kill-buffer-conditions' matches one, so `project-kill-buffers'
+;; counted them and left them behind.  Guarded like the completion
+;; integrations: project.el is built in, its variables are not a
+;; contract, and a convenience must never break loading.
+
+(defun herdr-term--register-project ()
+  "Teach `project-kill-buffer-conditions\\=' about herdr terminals."
+  (when (boundp 'project-kill-buffer-conditions)
+    (add-to-list 'project-kill-buffer-conditions #'herdr-term-buffer-p t)))
+
+(with-eval-after-load 'project
+  (herdr-term--register-project))
 
 (provide 'herdr-term)
 ;;; herdr-term.el ends here
