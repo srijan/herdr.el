@@ -159,6 +159,12 @@ Workspaces are modelled. They are keyed by working directory, they survive a ser
 group the dashboard, and they back `herdr-project`. Going to one shows that workspace's active
 pane in the current window.
 
+A pane's terminal buffer belongs to the project it sits in. `project.el` already counted them,
+through `default-directory`, but `C-x p k` left them standing: no default clause in
+`project-kill-buffer-conditions` matches a ghostel buffer. herdr adds one when `project.el`
+loads, so killing a project's buffers kills its terminals too. The panes themselves keep running -
+the buffer is an attachment, and `M-x herdr` attaches again.
+
 ## Requirements
 
 - Emacs 28.1+

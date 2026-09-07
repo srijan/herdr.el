@@ -532,5 +532,77 @@ to a forty-second frozen startup."
       (should (herdr-server-live-p))
       (should (equal 2.0 seen)))))
 
+
+;;; Belonging to the project
+
+(ert-deftest herdr-term-buffer-p-answers-from-the-registry ()
+  "The major mode cannot be the test: a herdr terminal is a `ghostel-mode\\='
+buffer like any ghostel shell, and only herdr knows which are its panes.
+It answers for a buffer whose pane has gone away too, which is a buffer
+to clean up rather than one to protect."
+  (let* ((mine (generate-new-buffer " *pane*"))
+         (theirs (generate-new-buffer " *other*"))
+         (herdr-term--buffers (list (cons "w1:p1" mine)))
+         (herdr-state--current (herdr-state-from-snapshot nil)))
+    (unwind-protect
+        (progn
+          (should (herdr-term-buffer-p mine))
+          (should-not (herdr-term-buffer-p theirs))
+          (should-not (herdr-term-pane-for-buffer mine)))
+      (kill-buffer mine)
+      (kill-buffer theirs))))
+
+(ert-deftest herdr-term-buffers-are-killed-with-the-project ()
+  "`project-kill-buffers\\=' counted herdr's terminals and left them standing:
+they answer to `project-buffers\\=' through `default-directory\\=', and no
+default condition matches one.  Asserted both ways, because a test that
+only kills would pass without the registration doing anything."
+  (require 'project)
+  (let* ((root "/tmp/herdr-project-test/")
+         (buffer (generate-new-buffer "*herdr: claude@herdr-project-test*"))
+         (herdr-term--buffers (list (cons "w1:p1" buffer)))
+         (project (cons 'transient root)))
+    (unwind-protect
+        (progn
+          (with-current-buffer buffer
+            (setq default-directory root)
+            (setq major-mode 'ghostel-mode))
+          ;; Without herdr's own clause, however this file was loaded:
+          ;; requiring project.el registers it, and another test may have.
+          ;; The PROJECT argument arrived after 28.1, which this package
+          ;; still supports, so the project comes through `project-current'.
+          (cl-letf (((symbol-function 'project-current) (lambda (&rest _) project)))
+            (let ((project-kill-buffer-conditions
+                   (remq #'herdr-term-buffer-p project-kill-buffer-conditions)))
+              (project-kill-buffers t)
+              (should (buffer-live-p buffer))
+              (herdr-term--register-project)
+              (project-kill-buffers t)
+              (should-not (buffer-live-p buffer)))))
+      (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest herdr-term-registers-itself-when-project-loads ()
+  "The registration is a load-time side effect.  Tests that call the helper
+themselves pass with the `with-eval-after-load\=' form deleted, so this one
+asks the loaded world instead."
+  (require 'project)
+  (should (memq #'herdr-term-buffer-p project-kill-buffer-conditions)))
+
+(ert-deftest herdr-term-project-registration-cannot-break-loading ()
+  "Unbound and restored rather than stubbed: `boundp\\=' is what the guard
+asks, and project.el's variables are not a contract."
+  (require 'project)
+  (let ((saved project-kill-buffer-conditions))
+    (unwind-protect
+        (progn
+          (makunbound 'project-kill-buffer-conditions)
+          (should-not (herdr-term--register-project)))
+      (setq project-kill-buffer-conditions saved)))
+  (let ((project-kill-buffer-conditions '(buffer-file-name)))
+    (herdr-term--register-project)
+    (should (memq #'herdr-term-buffer-p project-kill-buffer-conditions))
+    ;; Appended, so herdr never outranks a condition the user put first.
+    (should (equal 'buffer-file-name (car project-kill-buffer-conditions)))))
+
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here
