@@ -449,6 +449,68 @@ types it as a boolean."
       (herdr-worktree-remove "w3" t)
       (should (eq t (alist-get 'force params))))))
 
+(ert-deftest herdr-workspace-close-names-the-workspace-in-its-confirmation ()
+  "The label leads, while the exact id stays visible - the same shape the
+pane prompts settled on, in the prompt where getting it wrong takes every
+tab in the workspace."
+  (dolist (answer '(t nil))
+    (let ((herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1") (label . "lantern")))))))
+          question
+          said
+          params
+          wire)
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (prompt) (setq question prompt) answer))
+                ((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (herdr-test-with-server
+            (lambda (req)
+              (push (alist-get 'method req) wire)
+              (setq params (alist-get 'params req))
+              (cons (herdr-test-ok req '((type . "ok"))) nil))
+          (herdr-workspace-close "w1")))
+      (should (equal "Close workspace lantern (w1)? " question))
+      ;; The description is for the human; the id is what the server is
+      ;; asked to close.
+      (should (equal (when answer "w1") (alist-get 'workspace_id params)))
+      (should (equal (if answer
+                         "herdr: closed workspace lantern (w1)"
+                       "herdr: workspace lantern (w1) left open")
+                     said))
+      (should (equal (if answer '("workspace.close") nil) wire)))))
+
+(ert-deftest herdr-worktree-remove-names-the-workspace-in-its-confirmation ()
+  "The verb that deletes a checkout on disk says which one."
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot
+          '((workspaces . (((workspace_id . "w3") (label . "beacon-fix")))))))
+        question
+        said
+        params)
+    (cl-letf (((symbol-function 'yes-or-no-p)
+               (lambda (prompt) (setq question prompt) t))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+      (herdr-test-with-server
+          (lambda (req)
+            (setq params (alist-get 'params req))
+            (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-worktree-remove "w3")))
+    (should (equal "Remove worktree workspace beacon-fix (w3)? " question))
+    (should (equal "herdr: removed worktree beacon-fix (w3)" said))
+    (should (equal "w3" (alist-get 'workspace_id params)))))
+
+(ert-deftest herdr-workspace-description-falls-back-to-the-bare-id ()
+  "A workspace the cache has no record of, and one the server labelled with
+an empty string, both leave the id to speak for itself."
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot
+          '((workspaces . (((workspace_id . "w2") (label . ""))))))))
+    (should (equal "w2" (herdr-cmd--workspace-description "w2")))
+    (should (equal "w9" (herdr-cmd--workspace-description "w9")))))
+
 ;;; Value-shaping wrappers: the transform is the behaviour worth locking
 
 ;; The pure passthrough commands are covered by the drift test, which
