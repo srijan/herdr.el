@@ -57,6 +57,14 @@ schema by the drift test.")
         (format "%s (%s)" (herdr-term-pane-name state pane) pane-id)
       pane-id)))
 
+(defun herdr-cmd--workspace-description (workspace-id)
+  "Return a readable description of WORKSPACE-ID, retaining its exact id."
+  (let* ((workspace (herdr-state-workspace (herdr-state-current) workspace-id))
+         (label (alist-get 'label workspace)))
+    (if (and label (not (string-empty-p label)))
+        (format "%s (%s)" label workspace-id)
+      workspace-id)))
+
 (defun herdr-cmd--created-pane-id (result)
   "Return the id of the pane a create-style RESULT reports.
 `pane.split' answers with `pane'; `tab.create' and `workspace.create'
@@ -213,12 +221,14 @@ test is enough."
 (defun herdr-workspace-close (&optional workspace-id)
   "Close WORKSPACE-ID, prompting when not given."
   (interactive)
-  (let ((workspace (or workspace-id (herdr-select-workspace "Close workspace: "))))
-    (if (y-or-n-p (format "Close workspace %s? " workspace))
+  (let* ((workspace (or workspace-id
+                        (herdr-select-workspace "Close workspace: ")))
+         (description (herdr-cmd--workspace-description workspace)))
+    (if (y-or-n-p (format "Close workspace %s? " description))
         (progn
           (herdr-rpc-call "workspace.close" `((workspace_id . ,workspace)))
-          (message "herdr: closed workspace %s" workspace))
-      (message "herdr: workspace %s left open" workspace))))
+          (message "herdr: closed workspace %s" description))
+      (message "herdr: workspace %s left open" description))))
 
 (defun herdr-workspace-focus (&optional workspace-id)
   "Focus WORKSPACE-ID, prompting when not given, and follow it in Emacs."
@@ -253,14 +263,16 @@ name to a worktree with its own herdr workspace."
 (defun herdr-worktree-remove (&optional workspace-id force)
   "Remove the worktree workspace WORKSPACE-ID, forcing when FORCE."
   (interactive)
-  (let ((workspace (or workspace-id (herdr-select-workspace "Remove worktree: "))))
-    (if (yes-or-no-p (format "Remove worktree workspace %s? " workspace))
+  (let* ((workspace (or workspace-id
+                        (herdr-select-workspace "Remove worktree: ")))
+         (description (herdr-cmd--workspace-description workspace)))
+    (if (yes-or-no-p (format "Remove worktree workspace %s? " description))
         (progn
           (herdr-rpc-call "worktree.remove"
                           `((workspace_id . ,workspace)
                             (force . ,(if force t :false))))
-          (message "herdr: removed worktree %s" workspace))
-      (message "herdr: worktree %s kept" workspace))))
+          (message "herdr: removed worktree %s" description))
+      (message "herdr: worktree %s kept" description))))
 
 ;;; Agents
 
