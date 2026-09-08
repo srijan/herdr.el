@@ -25,8 +25,8 @@
 (require 'herdr-state)
 (require 'herdr-select)
 (require 'herdr-term)
+(require 'herdr-pane)
 
-(declare-function herdr-term-pane-name "herdr-term" (state pane))
 
 (defconst herdr-cmd-methods
   '((herdr-pane-close            "pane.close"           "pane_id")
@@ -50,20 +50,27 @@ schema by the drift test.")
     (alist-get 'pane_id (alist-get 'pane (herdr-rpc-call "pane.current")))))
 
 (defun herdr-cmd--pane-description (pane-id)
-  "Return a readable description of PANE-ID, retaining its exact id."
+  "Return a readable description of PANE-ID, retaining its exact id.
+What the pane is doing, so the confirmation echoes the row you picked it
+from; its identity when it is doing nothing nameable, because a prompt
+has to say something."
   (let* ((state (herdr-state-current))
          (pane (herdr-state-pane state pane-id)))
-    (if pane
-        (format "%s (%s)" (herdr-term-pane-name state pane) pane-id)
-      pane-id)))
+    (if (not pane)
+        pane-id
+      (let ((name (herdr-pane-name pane)))
+        (format "%s (%s)"
+                (if (string-empty-p name)
+                    (herdr-term-pane-identity state pane)
+                  name)
+                pane-id)))))
 
 (defun herdr-cmd--workspace-description (workspace-id)
   "Return a readable description of WORKSPACE-ID, retaining its exact id."
-  (let* ((workspace (herdr-state-workspace (herdr-state-current) workspace-id))
-         (label (alist-get 'label workspace)))
-    (if (and label (not (string-empty-p label)))
-        (format "%s (%s)" label workspace-id)
-      workspace-id)))
+  (if-let* ((label (herdr-state-workspace-label (herdr-state-current)
+                                               workspace-id)))
+      (format "%s (%s)" label workspace-id)
+    workspace-id))
 
 (defun herdr-cmd--created-pane-id (result)
   "Return the id of the pane a create-style RESULT reports.

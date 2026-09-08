@@ -22,6 +22,7 @@
 (require 'subr-x)
 (require 'herdr-state)
 (require 'herdr-tree)
+(require 'herdr-pane)
 
 ;; `herdr-agents' is the dispatcher command, and lives in
 ;; `herdr-dispatch', which requires magit-section.  Autoloaded rather
@@ -152,9 +153,9 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
           (when (and previous (member status herdr-notify-statuses))
             (herdr-notify--send
              (format "herdr: %s is %s" (or (alist-get 'agent pane) id) status)
-             ;; `herdr-tree-pane-name', not the bare title: the agent
-             ;; kind alone does not tell two Claudes apart.
-             (let ((name (herdr-tree-pane-name pane)))
+             ;; `herdr-pane-name', not the bare title: the agent kind
+             ;; alone does not tell two Claudes apart.
+             (let ((name (herdr-pane-name pane)))
                (if (string-empty-p name) id name)))))))))
 
 (add-hook 'herdr-state-change-functions #'herdr-notify--maybe)

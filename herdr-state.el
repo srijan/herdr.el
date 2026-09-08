@@ -119,6 +119,15 @@ first line of defence.")
   (seq-find (lambda (workspace) (equal id (alist-get 'workspace_id workspace)))
             (herdr-state-workspaces state)))
 
+(defun herdr-state-workspace-label (state id)
+  "Return the label of the workspace ID in STATE, or nil.
+Nil for a workspace the cache has no record of, and for one the server
+labelled with an empty string: both mean the same thing to a caller, and
+each has its own fallback - a buffer name wants the workspace id, a
+confirmation wants the workspace id in parentheses."
+  (when-let* ((label (alist-get 'label (herdr-state-workspace state id))))
+    (unless (string-empty-p label) label)))
+
 (defun herdr-state-agents (state)
   "Return the panes in STATE with a detected or reported agent."
   (seq-filter (lambda (pane) (alist-get 'agent pane))
