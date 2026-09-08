@@ -635,4 +635,5 @@ nothing to reconnect, and a failed poll stays a failed poll."
       (should-not (herdr-state-reconcile-panes))
       (should-not herdr-state--reconnect-timer))))
 
+(provide 'herdr-state-test)
 ;;; herdr-state-test.el ends here
