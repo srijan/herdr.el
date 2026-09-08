@@ -92,7 +92,7 @@ is always on screen stops being read.")
 and the dispatcher header so the two surfaces cannot disagree."
   (let ((counts nil))
     (dolist (pane (herdr-state-agents state))
-      (let ((status (or (alist-get 'agent_status pane) "unknown")))
+      (let ((status (or (herdr-pane-status pane) "unknown")))
         (setf (alist-get status counts nil nil #'equal)
               (1+ (or (alist-get status counts nil nil #'equal) 0)))))
     counts))
@@ -117,12 +117,12 @@ always on screen stops being read.  Empty when nothing is noteworthy."
   "Return the agent column for PANE in STATE.
 A pane with no agent reads as a shell, since it has no agent lifecycle.
 A name set through `agent.rename\\=' is appended to the kind."
-  (if (not (alist-get 'agent pane))
+  (if (not (herdr-pane-agent pane))
       "shell"
-    (let* ((kind (or (alist-get 'display_agent pane)
-                     (alist-get 'agent pane)
+    (let* ((kind (or (herdr-pane-display-agent pane)
+                     (herdr-pane-agent pane)
                      "shell"))
-           (name (herdr-state-agent-name state (alist-get 'pane_id pane))))
+           (name (herdr-state-agent-name state (herdr-pane-id pane))))
       (if name (concat kind "/" name) kind))))
 
 (defconst herdr-tree-agent-column-min 10
@@ -148,9 +148,9 @@ than as a section heading, so the faces here are all the shape it gets.
 The status governs both the glyph and the word, which makes the leading
 column a colour strip you can read down without reading any of the
 words."
-  (let* ((id (alist-get 'pane_id pane))
-         (shell (not (alist-get 'agent pane)))
-         (status (if shell "" (or (alist-get 'agent_status pane) "")))
+  (let* ((id (herdr-pane-id pane))
+         (shell (not (herdr-pane-agent pane)))
+         (status (if shell "" (or (herdr-pane-status pane) "")))
          (face (herdr-tree-status-face status)))
     (list 'herdr-pane id
           (string-trim-right
@@ -171,7 +171,7 @@ Tabs are server-side layout.  Every pane is its own Emacs buffer here,
 so grouping rows by tab would explain nothing and cost a level."
   (mapcar (lambda (pane) (herdr-tree--pane-node state pane width))
           (seq-filter (lambda (pane)
-                        (equal workspace-id (alist-get 'workspace_id pane)))
+                        (equal workspace-id (herdr-pane-workspace-id pane)))
                       (herdr-state-panes state))))
 
 (defun herdr-tree-linked-worktree-p (worktree)

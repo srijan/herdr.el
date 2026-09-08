@@ -145,14 +145,14 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
   "Notify about agents that just entered a status in `herdr-notify-statuses'."
   (when herdr-notify-statuses
     (dolist (pane (herdr-state-agents (herdr-state-current)))
-      (let* ((id (alist-get 'pane_id pane))
-             (status (alist-get 'agent_status pane))
+      (let* ((id (herdr-pane-id pane))
+             (status (herdr-pane-status pane))
              (previous (gethash id herdr-notify--last-status)))
         (unless (equal status previous)
           (puthash id status herdr-notify--last-status)
           (when (and previous (member status herdr-notify-statuses))
             (herdr-notify--send
-             (format "herdr: %s is %s" (or (alist-get 'agent pane) id) status)
+             (format "herdr: %s is %s" (or (herdr-pane-agent pane) id) status)
              ;; `herdr-pane-name', not the bare title: the agent kind
              ;; alone does not tell two Claudes apart.
              (let ((name (herdr-pane-name pane)))

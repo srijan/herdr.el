@@ -178,5 +178,97 @@ shows what it is doing, the buffer is called what it is."
     (should (equal "Fix the reconcile order" (herdr-pane-name pane)))
     (should (equal "claude@web" (herdr-pane-identity pane nil "web")))))
 
+;;; Fields
+
+(ert-deftest herdr-pane-directory-prefers-cwd ()
+  (should (equal "/tmp/" (herdr-pane-directory
+                          '((cwd . "/tmp") (foreground_cwd . "/usr")))))
+  (should (equal "/usr/" (herdr-pane-directory
+                          '((foreground_cwd . "/usr")))))
+  (should (null (herdr-pane-directory '((pane_id . "w1:p1")))))
+  (should (null (herdr-pane-directory
+                 '((cwd . "/definitely/not/here/at/all"))))))
+
+(ert-deftest herdr-pane-label-is-a-significant-field ()
+  "A `pane.rename' must redraw the surfaces that now show the label.
+Left off `herdr-pane-significant-fields', a rename reached the
+cache silently and appeared nowhere until an unrelated change happened
+to redraw.  It is safe to watch: unlike the terminal title it moves only
+when somebody moves it."
+  (should (memq 'label herdr-pane-significant-fields))
+  (should (herdr-pane-differs-p
+           '((pane_id . "w16:p2") (agent . "claude"))
+           '((pane_id . "w16:p2") (agent . "claude") (label . "Lantern"))))
+  ;; The volatile ones stay off it.
+  (should-not (herdr-pane-differs-p
+               '((pane_id . "w16:p2") (agent . "claude")
+                 (terminal_title_stripped . "a"))
+               '((pane_id . "w16:p2") (agent . "claude")
+                 (terminal_title_stripped . "b")))))
+
+(provide 'herdr-state-test)
+
+(ert-deftest herdr-pane-attach-args-target-the-terminal-stream ()
+  "Attach goes through `herdr terminal attach', which takes any pane."
+  (should (equal '("terminal" "attach" "t7")
+                 (herdr-pane-attach-args '((pane_id . "w1:p1") (terminal_id . "t7")) nil)))
+  (should (equal '("terminal" "attach" "t7" "--takeover")
+                 (herdr-pane-attach-args '((pane_id . "w1:p1") (terminal_id . "t7")) t))))
+
+(ert-deftest herdr-pane-attach-args-refuses-a-pane-without-a-terminal-id ()
+  (should-error (herdr-pane-attach-args '((pane_id . "w1:p1")) nil)
+                :type 'user-error))
+
+
+;;; The seam, asserted rather than hoped for
+
+(defconst herdr-pane-test--source-directory
+  (file-name-directory
+   (directory-file-name
+    (file-name-directory (or load-file-name buffer-file-name))))
+  "The package root, found from this file rather than from `default-directory'.
+`make test' and a test run from inside Emacs do not agree about the
+latter.")
+
+(defun herdr-pane-test--sources ()
+  "Return the package's own source files, `herdr-pane.el' excluded."
+  (seq-remove (lambda (file)
+                (equal "herdr-pane.el" (file-name-nondirectory file)))
+              (directory-files herdr-pane-test--source-directory t
+                               "\\`herdr.*\\.el\\'")))
+
+(ert-deftest herdr-pane-is-the-only-file-that-reads-a-pane-record ()
+  "The wire lives in one file, and this is what keeps it there.
+
+Before this module the six surfaces each destructured the record herdr
+sends, so a field rename was a grep and a hope.  The rule is narrow on
+purpose: a variable called `pane' holds a pane record, and only
+`herdr-pane.el' may read a field off one.  It cannot catch a pane bound
+to some other name — `alist-get' on an event payload called `data' is
+legitimate and looks identical — so it is a floor, not a proof."
+  (let (offenders)
+    (dolist (file (herdr-pane-test--sources))
+      (with-temp-buffer
+        (insert-file-contents file)
+        (goto-char (point-min))
+        (while (re-search-forward "(alist-get '[a-z_]+ pane)" nil t)
+          (push (format "%s:%d" (file-name-nondirectory file)
+                        (line-number-at-pos))
+                offenders))))
+    (should-not offenders)))
+
+(ert-deftest herdr-pane-requires-no-herdr-module ()
+  "A leaf, and it has to stay one.
+
+`herdr-state' requires this file, so a `require' pointing back would be
+a cycle.  It is also what keeps both names pure: the facts identity
+cannot read off the record arrive as arguments precisely because there
+is no cache to ask."
+  (with-temp-buffer
+    (insert-file-contents
+     (expand-file-name "herdr-pane.el" herdr-pane-test--source-directory))
+    (goto-char (point-min))
+    (should-not (re-search-forward "^(require 'herdr" nil t))))
+
 (provide 'herdr-pane-test)
 ;;; herdr-pane-test.el ends here

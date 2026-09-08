@@ -360,15 +360,6 @@ arrays."
                    (mapcar (lambda (p) (alist-get 'pane_id p))
                            (herdr-state-agents state))))))
 
-(ert-deftest herdr-state-pane-directory-prefers-cwd ()
-  (should (equal "/tmp/" (herdr-state-pane-directory
-                          '((cwd . "/tmp") (foreground_cwd . "/usr")))))
-  (should (equal "/usr/" (herdr-state-pane-directory
-                          '((foreground_cwd . "/usr")))))
-  (should (null (herdr-state-pane-directory '((pane_id . "w1:p1")))))
-  (should (null (herdr-state-pane-directory
-                 '((cwd . "/definitely/not/here/at/all"))))))
-
 (ert-deftest herdr-state-keeps-the-agents-array ()
   "session.snapshot carries agent names that no pane record has."
   (let ((state (herdr-state-from-snapshot
@@ -644,22 +635,4 @@ nothing to reconnect, and a failed poll stays a failed poll."
       (should-not (herdr-state-reconcile-panes))
       (should-not herdr-state--reconnect-timer))))
 
-(ert-deftest herdr-state-pane-label-is-a-significant-field ()
-  "A `pane.rename' must redraw the surfaces that now show the label.
-Left off `herdr-state-pane-significant-fields', a rename reached the
-cache silently and appeared nowhere until an unrelated change happened
-to redraw.  It is safe to watch: unlike the terminal title it moves only
-when somebody moves it."
-  (should (memq 'label herdr-state-pane-significant-fields))
-  (should (herdr-state--pane-differs-p
-           '((pane_id . "w16:p2") (agent . "claude"))
-           '((pane_id . "w16:p2") (agent . "claude") (label . "Lantern"))))
-  ;; The volatile ones stay off it.
-  (should-not (herdr-state--pane-differs-p
-               '((pane_id . "w16:p2") (agent . "claude")
-                 (terminal_title_stripped . "a"))
-               '((pane_id . "w16:p2") (agent . "claude")
-                 (terminal_title_stripped . "b")))))
-
-(provide 'herdr-state-test)
 ;;; herdr-state-test.el ends here

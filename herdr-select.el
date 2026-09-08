@@ -60,10 +60,10 @@
       ;; as well as by what it is doing.  Shared with the dispatcher
       ;; row and the confirmations, so no two surfaces can disagree
       ;; about what a pane is called.
-      (let ((agent (alist-get 'agent pane))
-            (status (alist-get 'agent_status pane))
+      (let ((agent (herdr-pane-agent pane))
+            (status (herdr-pane-status pane))
             (title (herdr-pane-name pane))
-            (cwd (alist-get 'cwd pane)))
+            (cwd (herdr-pane-cwd pane)))
         (concat "  "
                 (if agent
                     (format "%s %-8s" (herdr-select--status-glyph status) agent)
@@ -128,7 +128,7 @@ than one extra round trip, and the cache can drift."
   "Read the pane id of an agent, defaulting the prompt to PROMPT."
   (herdr-state-refresh)
   (herdr-select--read-row (or prompt "Agent: ")
-                          (mapcar (lambda (pane) (alist-get 'pane_id pane))
+                          (mapcar (lambda (pane) (herdr-pane-id pane))
                                   (herdr-state-agents (herdr-state-current)))
                           #'herdr-select--pane-candidate 'herdr-pane))
 

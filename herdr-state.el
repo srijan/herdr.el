@@ -40,6 +40,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'herdr-rpc)
+(require 'herdr-pane)
 
 (defcustom herdr-state-reconnect-min 1.0
   "Initial delay, in seconds, before retrying a dropped event stream."
@@ -111,7 +112,7 @@ first line of defence.")
 
 (defun herdr-state-pane (state id)
   "Return the pane in STATE whose id is ID, or nil."
-  (seq-find (lambda (pane) (equal id (alist-get 'pane_id pane)))
+  (seq-find (lambda (pane) (equal id (herdr-pane-id pane)))
             (herdr-state-panes state)))
 
 (defun herdr-state-workspace (state id)
@@ -130,20 +131,8 @@ confirmation wants the workspace id in parentheses."
 
 (defun herdr-state-agents (state)
   "Return the panes in STATE with a detected or reported agent."
-  (seq-filter (lambda (pane) (alist-get 'agent pane))
+  (seq-filter (lambda (pane) (herdr-pane-agent pane))
               (herdr-state-panes state)))
-
-(defun herdr-state-pane-directory (pane)
-  "Return PANE's working directory as a directory name, or nil.
-
-herdr tracks cwd itself and republishes it as panes change directory,
-which is what makes this possible: it consumes OSC 7 rather than
-forwarding it, so a terminal buffer fronting a herdr pane has no other
-way to know where it is."
-  (when-let* ((dir (or (alist-get 'cwd pane)
-                       (alist-get 'foreground_cwd pane))))
-    (when (file-directory-p dir)
-      (file-name-as-directory dir))))
 
 (defun herdr-state-agent-name (state pane-id)
   "Return the name reported for the agent in PANE-ID, or nil.
@@ -168,8 +157,8 @@ so that is the oldest pane herdr told us about, which is the one the
 workspace was created in."
   (when-let* ((dir (seq-some (lambda (pane)
                                (and (equal workspace-id
-                                           (alist-get 'workspace_id pane))
-                                    (alist-get 'cwd pane)))
+                                           (herdr-pane-workspace-id pane))
+                                    (herdr-pane-cwd pane)))
                              (herdr-state-panes state))))
     (file-name-as-directory dir)))
 
@@ -197,7 +186,7 @@ dispatcher has never seen a pane in."
 
 (defun herdr-state-pane-ids (state)
   "Return every pane id in STATE."
-  (mapcar (lambda (pane) (alist-get 'pane_id pane))
+  (mapcar (lambda (pane) (herdr-pane-id pane))
           (herdr-state-panes state)))
 
 ;;; Pure reduction
@@ -304,7 +293,7 @@ events use dots, so both spellings appear here deliberately."
              state
            (setf (herdr-state-panes next)
                  (herdr-state--upsert (herdr-state-panes state) 'pane_id
-                                      (alist-get 'pane_id pane) pane))
+                                      (herdr-pane-id pane) pane))
            next)))
 
       ((or "pane_closed" "pane_exited")
@@ -637,7 +626,7 @@ as long as the subscription lives (herdr 0.8.2, api/subscriptions.rs) —
 subscribing every pane meant a session with a dozen plain shells paid
 ~120 server-side requests a second to watch statuses nothing here
 displays."
-  (mapcar (lambda (pane) (alist-get 'pane_id pane))
+  (mapcar (lambda (pane) (herdr-pane-id pane))
           (herdr-state-agents herdr-state--current)))
 
 (defun herdr-state--pane-subscriptions ()
@@ -708,11 +697,11 @@ then."
            (dolist (pane (alist-get 'panes snapshot))
              (setq herdr-state--current
                    (herdr-state--merge-pane
-                    herdr-state--current (alist-get 'pane_id pane)
+                    herdr-state--current (herdr-pane-id pane)
                     (seq-filter #'cdr
                                 (list (cons 'agent_status
-                                            (alist-get 'agent_status pane))
-                                      (cons 'agent (alist-get 'agent pane)))))))
+                                            (herdr-pane-status pane))
+                                      (cons 'agent (herdr-pane-agent pane)))))))
            (run-hook-with-args 'herdr-state-change-functions "resync" nil)))
        herdr-rpc-background-timeout))))
 
@@ -779,29 +768,6 @@ without changing what B should watch."
                   herdr-state-global-subscriptions))))
   (herdr-state--open-pane-stream))
 
-(defconst herdr-state-pane-significant-fields
-  '(agent agent_status cwd foreground_cwd workspace_id tab_id label)
-  "Pane fields worth reacting to when reconciling against `pane.list\\='.
-
-Excludes the volatile ones: revision, scroll and the terminal title.
-The title especially, however stable it looks — an agent animates a
-spinner and a second counter inside it, so it changes several times a
-second and every poll would declare a change.  `label\\=' is included
-because only a person or a plugin sets it.
-
-A record differing only in excluded fields is still refreshed, silently,
-without running the change hook; see `herdr-state-reconcile-panes\\='.
-
-`revision\\=' is not a staleness guard.  herdr bumps it for presentation
-metadata only, never for `agent_status\\=' (0.8.2, terminal/state.rs), so
-it cannot order status updates.")
-
-(defun herdr-state--pane-differs-p (known fresh)
-  "Return non-nil when FRESH differs from KNOWN in a field worth noticing."
-  (seq-some (lambda (field)
-              (not (equal (alist-get field known) (alist-get field fresh))))
-            herdr-state-pane-significant-fields))
-
 (defun herdr-state-reconcile-panes ()
   "Make the cached pane set match the server, and refresh directories.
 
@@ -828,7 +794,7 @@ cannot pronounce it stale."
                          (error (when herdr-state--running
                                   (herdr-state--schedule-reconnect))
                                 nil))))
-      (let* ((live-ids (mapcar (lambda (pane) (alist-get 'pane_id pane)) panes))
+      (let* ((live-ids (mapcar (lambda (pane) (herdr-pane-id pane)) panes))
              (cached-ids (seq-filter (lambda (id) (member id known-ids))
                                      (herdr-state-pane-ids herdr-state--current)))
              (stale (seq-remove (lambda (id) (member id live-ids)) cached-ids))
@@ -839,7 +805,7 @@ cannot pronounce it stale."
                 (herdr-state-reduce herdr-state--current "pane_closed"
                                     `((pane_id . ,id)))))
         (dolist (pane panes)
-          (let* ((id (alist-get 'pane_id pane))
+          (let* ((id (herdr-pane-id pane))
                  (known (herdr-state-pane herdr-state--current id)))
             (cond
              ((null known)
@@ -847,7 +813,7 @@ cannot pronounce it stale."
               (setq herdr-state--current
                     (herdr-state-reduce herdr-state--current "pane_created"
                                         `((pane . ,pane)))))
-             ((herdr-state--pane-differs-p known pane)
+             ((herdr-pane-differs-p known pane)
               ;; Replace the record rather than patching cwd alone: an
               ;; agent label can change under us and a cache that only
               ;; ever refreshed directories kept reporting the old one.
@@ -862,7 +828,7 @@ cannot pronounce it stale."
               ;; Volatile-only drift: refresh the record but stay
               ;; silent, so titles track the server at poll cadence
               ;; without the hook redrawing everything per poll.  See
-              ;; `herdr-state-pane-significant-fields'.
+              ;; `herdr-pane-significant-fields'.
               (setq herdr-state--current
                     (herdr-state-reduce herdr-state--current "pane_updated"
                                         `((pane . ,pane))))))))

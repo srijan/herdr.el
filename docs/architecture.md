@@ -15,7 +15,7 @@ Each file has one duty.
 | `herdr-cmd.el` | The curated commands. |
 | `herdr-call.el` | The generic caller for every server method. |
 | `herdr-schema.el` | The reader for the JSON Schema of the server. |
-| `herdr-pane.el` | What a pane is called: its name and its identity. |
+| `herdr-pane.el` | The pane record: its fields, and the two names built from them. |
 | `herdr-select.el` | The `completing-read` pickers. |
 | `herdr-tree.el` | The dashboard tree, as data only. |
 | `herdr-dispatch.el` | The dashboard renderer, and its verbs. |

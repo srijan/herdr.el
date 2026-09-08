@@ -922,7 +922,7 @@ itself.  Nil is refused by `herdr-dispatch--workspace-target-pane\\='."
   (or (herdr-dispatch--value-at-point 'herdr-workspace)
       (when-let* ((pane-id (herdr-dispatch--value-at-point 'herdr-pane))
                   (pane (herdr-state-pane (herdr-state-current) pane-id)))
-        (alist-get 'workspace_id pane))))
+        (herdr-pane-workspace-id pane))))
 
 (defun herdr-dispatch--workspace-target-pane ()
   "Return a fresh tab\\='s pane in the workspace at point, or refuse.

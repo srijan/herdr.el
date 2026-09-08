@@ -43,5 +43,7 @@ and the confirmations all show this.
 which is why buffer names are built from it and why prompts fall back to it when the name is
 empty.
 
-Both live in `herdr-pane.el`. Neither takes a cache: the two facts identity cannot read off the
+Both live in `herdr-pane.el`, which is also the only file that reads a pane record's fields —
+`pane_id`, `terminal_id`, `display_agent` and the rest are wire names, and a rename of one is
+that file's problem alone. A test asserts it. Neither name takes a cache: the two facts identity cannot read off the
 pane record — the rename and the workspace's label — are passed in by whoever has one.
