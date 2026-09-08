@@ -413,6 +413,28 @@ received are."
     (should (equal "Close pane missing:pane? " question))
     (should (equal "herdr: missing:pane left open" said))))
 
+(ert-deftest herdr-pane-close-echoes-the-row-you-picked-it-from ()
+  "The confirmation names the pane the way the picker did - what it is
+doing - rather than in a second vocabulary one keystroke later.  Falls
+back to the identity for a pane doing nothing nameable, because a prompt
+has to say something."
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot
+          '((workspaces . (((workspace_id . "w1") (label . "project"))))
+            (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                       (agent . "codex")
+                       (terminal_title_stripped . "Fix the reconcile order"))
+                      ((pane_id . "w1:p2") (workspace_id . "w1")
+                       (agent . "codex")))))))
+        question)
+    (cl-letf (((symbol-function 'y-or-n-p)
+               (lambda (prompt) (setq question prompt) nil))
+              ((symbol-function 'message) #'ignore))
+      (herdr-pane-close "w1:p1")
+      (should (equal "Close pane Fix the reconcile order (w1:p1)? " question))
+      (herdr-pane-close "w1:p2")
+      (should (equal "Close pane codex@project (w1:p2)? " question)))))
+
 (ert-deftest herdr-workspace-close-closes-only-when-confirmed ()
   "A workspace takes every tab and pane in it, so declining must send
 nothing.  This used to assert only the message, and only for the yes

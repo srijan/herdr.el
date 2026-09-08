@@ -28,6 +28,7 @@
 (require 'subr-x)
 (require 'herdr-rpc)
 (require 'herdr-state)
+(require 'herdr-pane)
 
 (declare-function ghostel-exec "ghostel" (buffer program &optional args))
 (declare-function ghostel-mode "ghostel" ())
@@ -54,45 +55,22 @@ reuses the current window and leaves the frame alone.
 
 ;;; Naming and argument construction — pure, so they are testable
 
-(defun herdr-term--workspace-label (state pane)
-  "Return a display label for PANE\\='s workspace in STATE, or nil.
-
-Prefers the workspace\\='s own label; falls back to its id when the
-workspace carries no label, or when STATE does not have the workspace
-at all — its label is then unknowable, but PANE still carries its id.
-Nil only when PANE names no workspace to begin with."
-  (when-let* ((workspace-id (alist-get 'workspace_id pane)))
-    (or (alist-get 'label
-                    (seq-find (lambda (workspace)
-                                (equal workspace-id
-                                       (alist-get 'workspace_id workspace)))
-                              (herdr-state-workspaces state)))
-        workspace-id)))
-
-(defun herdr-term-pane-name (state pane)
-  "Return the readable terminal identity for PANE, read against STATE.
-In order: a name set through `agent.rename\\=', then the pane\\='s own
-`label\\=', then KIND@WORKSPACE, then a bare \"shell\".
-
-Not unique.  Two unnamed panes of the same kind in one workspace can
-have the same identity."
-  (let* ((pane-id (alist-get 'pane_id pane))
-         (name (and pane-id (herdr-state-agent-name state pane-id)))
-         (label (alist-get 'label pane))
-         (kind (or (alist-get 'display_agent pane)
-                   (alist-get 'agent pane)
-                   "shell"))
-         (workspace (herdr-term--workspace-label state pane)))
-    (or name label
-        (if workspace (format "%s@%s" kind workspace) kind))))
-
 (defun herdr-term-buffer-name (state pane)
   "Return the wanted buffer name for PANE, read against STATE.
 
 Not unique.  Two unnamed panes of the same kind in one workspace compute
 the same name, so callers that create a buffer must uniquify first; see
 `herdr-term--unique-buffer-name\\='."
-  (format "*herdr: %s*" (herdr-term-pane-name state pane)))
+  (format "*herdr: %s*" (herdr-term-pane-identity state pane)))
+
+(defun herdr-term-pane-identity (state pane)
+  "Return PANE\='s identity, with the two facts STATE holds looked up.
+`herdr-pane-identity\=' takes no cache on purpose; this is the one place
+that fetches what it needs from one."
+  (herdr-pane-identity pane
+                       (herdr-state-agent-name state (herdr-pane-id pane))
+                       (herdr-state-workspace-label
+                        state (herdr-pane-workspace-id pane))))
 
 (defun herdr-term--unique-buffer-name (state pane)
   "Return a unique buffer name for PANE, from `herdr-term-buffer-name'.
@@ -108,17 +86,6 @@ own wanted name forever; see `herdr-term--rename-stale-buffers\\='."
       (substring name 0 (match-beginning 0))
     name))
 
-(defun herdr-term-attach-args (pane takeover)
-  "Return argv tail for attaching to PANE, stealing it when TAKEOVER.
-PANE is the pane's alist from the cache; `herdr terminal attach' wants
-the raw terminal stream id, which only the pane record knows."
-  (let ((terminal (alist-get 'terminal_id pane)))
-    (unless terminal
-      (user-error "herdr: pane %s has no terminal_id; herdr 0.8.2+ required"
-                  (alist-get 'pane_id pane)))
-    (append (list "terminal" "attach" terminal)
-            (when takeover '("--takeover")))))
-
 (defun herdr-term-reconcile (state buffers)
   "Compare STATE against BUFFERS and return (TO-CREATE . TO-REAP).
 
@@ -126,11 +93,11 @@ BUFFERS is an alist of (PANE-ID . BUFFER).  TO-CREATE holds pane alists
 that herdr will attach to but that have no buffer; TO-REAP holds buffers
 whose pane is gone.  Pure: no processes are touched."
   (let* ((panes (herdr-state-panes state))
-         (pane-ids (mapcar (lambda (pane) (alist-get 'pane_id pane)) panes))
+         (pane-ids (mapcar (lambda (pane) (herdr-pane-id pane)) panes))
          (have-ids (mapcar #'car buffers)))
     (cons
      (seq-remove (lambda (pane)
-                   (member (alist-get 'pane_id pane) have-ids))
+                   (member (herdr-pane-id pane) have-ids))
                  panes)
      (mapcar #'cdr
              (seq-remove (lambda (cell) (member (car cell) pane-ids))
@@ -257,7 +224,7 @@ buffer to clean up rather than one to protect."
 Returns an existing buffer untouched rather than attaching twice:
 attachment is exclusive per pane, so a second attach either fails or
 steals the first one's terminal."
-  (let* ((pane-id (alist-get 'pane_id pane))
+  (let* ((pane-id (herdr-pane-id pane))
          (existing (herdr-term-buffer-for-pane pane-id)))
     (if (buffer-live-p existing)
         existing
@@ -283,13 +250,13 @@ terminal."
     (herdr-term--show buffer)
     (condition-case err
         (ghostel-exec buffer herdr-executable
-                      (herdr-term-attach-args pane nil))
+                      (herdr-pane-attach-args pane nil))
       (error
        (if (and (y-or-n-p
                  (format "Attaching to %s failed (%s).  Take it over? "
                          pane-id (error-message-string err))))
            (ghostel-exec buffer herdr-executable
-                         (herdr-term-attach-args pane t))
+                         (herdr-pane-attach-args pane t))
          (kill-buffer buffer)
          (setq buffer nil))))
     (when buffer
@@ -431,7 +398,7 @@ is changing directories."
 (defun herdr-term--set-directory (buffer pane)
   "Point BUFFER's `default-directory' at PANE's working directory."
   (when-let* (((buffer-live-p buffer))
-              (dir (herdr-state-pane-directory pane)))
+              (dir (herdr-pane-directory pane)))
     (with-current-buffer buffer
       (unless (equal default-directory dir)
         (setq default-directory dir)))))

@@ -56,43 +56,6 @@ Its own children, unless it has worktrees — then inside the `main\\=' group."
             (cons (nth 0 node) (herdr-tree-test--types (nth 3 node))))
           nodes))
 
-(ert-deftest herdr-tree-pane-name-joins-the-label-and-the-title ()
-  "Both halves: the label says which pane this is, the title says what it
-is doing, and a row that dropped either lost something real."
-  (should (equal "Lantern · fixing tests"
-                 (herdr-tree-pane-name
-                  '((pane_id . "w16:p2") (label . "Lantern")
-                    (terminal_title_stripped . "fixing tests"))))))
-
-(ert-deftest herdr-tree-pane-name-does-not-print-a-repeat ()
-  (should (equal "Lantern"
-                 (herdr-tree-pane-name
-                  '((pane_id . "w16:p2") (label . "Lantern")
-                    (terminal_title_stripped . "Lantern"))))))
-
-(ert-deftest herdr-tree-pane-name-strips-the-spinner-from-the-title ()
-  "The title half goes through `herdr-tree--steady-title' like it always
-did, so a labelled pane does not reintroduce the churn."
-  (should (equal "Lantern · fixing tests"
-                 (herdr-tree-pane-name
-                  '((pane_id . "w16:p2") (label . "Lantern")
-                    (terminal_title_stripped . "◐ fixing tests"))))))
-
-(ert-deftest herdr-tree-pane-name-is-just-the-label-without-a-title ()
-  (should (equal "Lantern"
-                 (herdr-tree-pane-name
-                  '((pane_id . "w16:p2") (label . "Lantern"))))))
-
-(ert-deftest herdr-tree-pane-name-falls-back-to-the-steady-title ()
-  "An unlabelled pane — most of them — reads exactly as it did before."
-  (should (equal "fixing tests"
-                 (herdr-tree-pane-name
-                  '((pane_id . "w1:p1")
-                    (terminal_title_stripped . "fixing tests"))))))
-
-(ert-deftest herdr-tree-pane-name-is-empty-with-neither ()
-  (should (equal "" (herdr-tree-pane-name '((pane_id . "w1:p1"))))))
-
 (ert-deftest herdr-tree-pane-row-shows-the-label-and-the-title ()
   "The whole point: a renamed pane's name reaches the dashboard row
 without costing the row what the agent is working on."
@@ -229,61 +192,10 @@ tree equality is precisely what the redraw skip tests."
     (should (equal spun-a spun-b))
     (should (equal spun-a still))))
 
-(ert-deftest herdr-tree-keeps-the-words-of-a-title-it-normalises ()
-  "Only the leading glyph run and the space after it come off.
-
-A title is the agent's own words; stripping is for the animation, not
-for the message.  A title that is nothing but a spinner is the one case
-that ends up empty, and it says nothing anyway."
-  (should (equal "Debug webmentions from fed.brid.gy"
-                 (herdr-tree--steady-title
-                  "◐ Debug webmentions from fed.brid.gy")))
-  (should (equal "Debug webmentions" (herdr-tree--steady-title
-                                      "Debug webmentions")))
-  (should (equal "" (herdr-tree--steady-title "◑ ")))
-  (should (equal "" (herdr-tree--steady-title "")))
-  ;; Not from the middle or the end: those are the agent's characters.
-  (should (equal "phase ◐ two" (herdr-tree--steady-title "phase ◐ two")))
-  (should (equal "done ◑" (herdr-tree--steady-title "done ◑"))))
-
-(ert-deftest herdr-tree-spinner-glyphs-are-quoted-into-the-character-class ()
-  "The constant is interpolated into a regexp, and it invites editing.
-
-Its docstring says to add a glyph when another agent turns up, so the
-next character in it is chosen by whoever hits that.  Interpolated raw
-between brackets, some characters stop being characters:
-
-  a leading `^' negates the class — `[^◐]' matches everything that is
-  NOT the spinner, so the first title word is deleted and the rest of
-  the line with it, on every pane, silently;
-
-  a `-' between two others makes a range — `[a-z]' is twenty-six
-  characters nobody put there.
-
-`regexp-opt-charset' quotes both back into literals (`[◐^]', `[az-]'),
-and these are the two sets that tell the two spellings apart.  A set of
-`]', `^' and `-' does NOT: Emacs happens to read `[]^-]' as three
-literals either way, so a test using that one passes over the raw
-version — which a mutation run found it doing."
-  (let ((herdr-tree-spinner-glyphs '(?^ ?◐)))
-    (should (equal "working" (herdr-tree--steady-title "^ working")))
-    (should (equal "working" (herdr-tree--steady-title "◐ working")))
-    ;; The whole point: a title with no glyph at its head keeps every
-    ;; character it had.
-    (should (equal "hello world" (herdr-tree--steady-title "hello world"))))
-  (let ((herdr-tree-spinner-glyphs '(?a ?- ?z)))
-    (should (equal "hello world" (herdr-tree--steady-title "hello world")))
-    (should (equal "world" (herdr-tree--steady-title "az- world"))))
-  ;; A single glyph is a class of one, which needs no brackets at all and
-  ;; must still not swallow the character after it.
-  (let ((herdr-tree-spinner-glyphs '(?◐)))
-    (should (equal "working" (herdr-tree--steady-title "◐ working")))
-    (should (equal "◑ working" (herdr-tree--steady-title "◑ working")))))
-
 (ert-deftest herdr-tree-spinner-normalisation-reaches-the-pane-row ()
   "The strip has to happen where the line is built, not only in the helper.
 
-A `herdr-tree--steady-title' that nothing calls would pass every
+A `herdr-pane-steady-title' that nothing calls would pass every
 assertion above while the dashboard went on redrawing once a second."
   (let ((line (nth 2 (car (herdr-tree-test--pane-nodes (car (herdr-tree-build
                                        (herdr-tree-test--spinning-state

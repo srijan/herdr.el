@@ -178,17 +178,6 @@ to make that impossible."
             (kill-buffer created)))
       (kill-buffer existing))))
 
-(ert-deftest herdr-term-attach-args-target-the-terminal-stream ()
-  "Attach goes through `herdr terminal attach', which takes any pane."
-  (should (equal '("terminal" "attach" "t7")
-                 (herdr-term-attach-args '((pane_id . "w1:p1") (terminal_id . "t7")) nil)))
-  (should (equal '("terminal" "attach" "t7" "--takeover")
-                 (herdr-term-attach-args '((pane_id . "w1:p1") (terminal_id . "t7")) t))))
-
-(ert-deftest herdr-term-attach-args-refuses-a-pane-without-a-terminal-id ()
-  (should-error (herdr-term-attach-args '((pane_id . "w1:p1")) nil)
-                :type 'user-error))
-
 ;;; Directory tracking
 
 (ert-deftest herdr-term-reconcile-creates-a-buffer-for-a-plain-shell ()
