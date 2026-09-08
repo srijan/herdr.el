@@ -37,6 +37,13 @@
 (require 'subr-x)
 (require 'regexp-opt)
 
+(defun herdr-pane--said (string)
+  "Return STRING when it says something, nil when it is empty or absent.
+The server sends an empty label for a pane nobody has named, and an
+empty string is a name that reads as a missing one - `claude@\=' for a
+workspace labelled \"\" was a real buffer name."
+  (unless (or (null string) (string-empty-p string)) string))
+
 ;;; Fields
 ;;
 ;; The wire names live here and nowhere else.  Most of these are one
@@ -86,8 +93,8 @@ for display but does not decide whether a pane has an agent at all."
   "Return the agent kind to show for PANE, or nil.
 `display_agent\\=' is what the server wants shown - a plugin pane seated
 with a manifest name has one - and it falls back to the detected agent."
-  (or (alist-get 'display_agent pane)
-      (alist-get 'agent pane)))
+  (or (herdr-pane--said (alist-get 'display_agent pane))
+      (herdr-pane--said (alist-get 'agent pane))))
 
 (defun herdr-pane-directory (pane)
   "Return PANE\\='s working directory as a directory name, or nil.
@@ -205,12 +212,16 @@ workspace half falls back to the id PANE carries, so a workspace the
 cache has not caught up with still tells two panes apart rather than
 collapsing them onto one name.
 
+An empty string counts as absent at every step, so this is never empty:
+a pane the server labelled \"\" reads as `claude@web\=', not as nothing.
+
 Not unique.  Two unnamed panes of the same kind in one workspace have
 the same identity, so callers that name a buffer with it must uniquify."
-  (let ((label (herdr-pane-label pane))
-        (kind (or (herdr-pane-display-agent pane) "shell"))
-        (workspace (or workspace-label (herdr-pane-workspace-id pane))))
-    (or rename label
+  (let ((label (herdr-pane--said (herdr-pane-label pane)))
+        (kind (or (herdr-pane--said (herdr-pane-display-agent pane)) "shell"))
+        (workspace (or (herdr-pane--said workspace-label)
+                       (herdr-pane--said (herdr-pane-workspace-id pane)))))
+    (or (herdr-pane--said rename) label
         (if workspace (format "%s@%s" kind workspace) kind))))
 
 (provide 'herdr-pane)

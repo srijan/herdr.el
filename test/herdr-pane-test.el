@@ -47,11 +47,17 @@ did, so a labelled pane does not reintroduce the churn."
 
 
 (ert-deftest herdr-pane-name-falls-back-to-the-steady-title ()
-  "An unlabelled pane — most of them — reads exactly as it did before."
+  "An unlabelled pane — most of them — reads exactly as it did before,
+and steady means steady: the spinner comes off this half too, which is
+the half most panes are named by."
   (should (equal "fixing tests"
                  (herdr-pane-name
                   '((pane_id . "w1:p1")
-                    (terminal_title_stripped . "fixing tests"))))))
+                    (terminal_title_stripped . "fixing tests")))))
+  (should (equal "fixing tests"
+                 (herdr-pane-name
+                  '((pane_id . "w1:p1")
+                    (terminal_title_stripped . "◐ fixing tests"))))))
 
 
 (ert-deftest herdr-pane-name-is-empty-with-neither ()
@@ -158,6 +164,29 @@ kind would not."
                   '((pane_id . "w1:p1") (workspace_id . "w1")
                     (agent . "claude"))))))
 
+(ert-deftest herdr-pane-identity-treats-an-empty-string-as-absent ()
+  "The server sends \"\" for a pane nobody named, and an empty name reads
+as a missing one.  Before this, a pane labelled \"\" was called nothing at
+all, and a workspace labelled \"\" made every pane in it `claude@\='."
+  (should (equal "claude@web"
+                 (herdr-pane-identity
+                  '((pane_id . "w1:p1") (label . "") (agent . "claude"))
+                  "" "web")))
+  (should (equal "claude@w1"
+                 (herdr-pane-identity
+                  '((pane_id . "w1:p1") (workspace_id . "w1")
+                    (agent . "claude"))
+                  nil "")))
+  (should (equal "shell" (herdr-pane-identity '((label . "")))))
+  ;; An empty `display_agent' must not mask the agent that was detected:
+  ;; the fallback is what `display_agent' is for.
+  (should (equal "claude@w1"
+                 (herdr-pane-identity
+                  '((pane_id . "w1:p1") (workspace_id . "w1")
+                    (display_agent . "") (agent . "claude")))))
+  (should (equal "claude" (herdr-pane-display-agent
+                           '((display_agent . "") (agent . "claude"))))))
+
 (ert-deftest herdr-pane-identity-is-never-empty ()
   "A prompt has to print something.  This is the floor callers fall back
 to when `herdr-pane-name\\=' is empty."
@@ -206,7 +235,6 @@ when somebody moves it."
                '((pane_id . "w16:p2") (agent . "claude")
                  (terminal_title_stripped . "b")))))
 
-(provide 'herdr-state-test)
 
 (ert-deftest herdr-pane-attach-args-target-the-terminal-stream ()
   "Attach goes through `herdr terminal attach', which takes any pane."
@@ -251,7 +279,11 @@ legitimate and looks identical — so it is a floor, not a proof."
       (with-temp-buffer
         (insert-file-contents file)
         (goto-char (point-min))
-        (while (re-search-forward "(alist-get '[a-z_]+ pane)" nil t)
+        ;; `pane)' and `pane nil)' and a line break between them: the
+        ;; three-argument form and a wrapped call are the two ways the
+        ;; first version of this regexp was walked past.
+        (while (re-search-forward "(alist-get[ \t\n]+'[a-z_]+[ \t\n]+pane[ \t\n)]"
+                                  nil t)
           (push (format "%s:%d" (file-name-nondirectory file)
                         (line-number-at-pos))
                 offenders))))
@@ -268,7 +300,9 @@ is no cache to ask."
     (insert-file-contents
      (expand-file-name "herdr-pane.el" herdr-pane-test--source-directory))
     (goto-char (point-min))
-    (should-not (re-search-forward "^(require 'herdr" nil t))))
+    ;; Not anchored to column zero: `eval-when-compile' and `with-eval-
+    ;; after-load' both indent a `require' out of a column-zero match.
+    (should-not (re-search-forward "(require 'herdr" nil t))))
 
 (provide 'herdr-pane-test)
 ;;; herdr-pane-test.el ends here
