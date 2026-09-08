@@ -833,7 +833,8 @@ restore that only puts back `point' cannot pass by accident."
               (should (equal "w1:p2"
                              (save-excursion
                                (goto-char position)
-                               (herdr-dispatch--value-at-point 'herdr-pane))))
+                               (herdr-dispatch-target-value
+                                (herdr-dispatch-target-at-point)))))
               (should (equal 3 (save-excursion
                                  (goto-char position)
                                  (current-column))))))
@@ -850,30 +851,30 @@ under the same `erase-buffer'."
     (goto-char (+ 4 (line-beginning-position)))
     (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
     (herdr-dispatch-refresh)
-    (should (equal "w1:p2" (herdr-dispatch--value-at-point 'herdr-pane)))
+    (should (equal "w1:p2" (herdr-dispatch-target-value
+                            (herdr-dispatch-target-at-point))))
     (should (equal 4 (current-column)))))
 
-;;; Resolution
+;;; What point is on
 
-(ert-deftest herdr-dispatch-resolves-the-nearest-enclosing-section ()
+(ert-deftest herdr-dispatch-target-is-the-innermost-row ()
+  "A pane line sits inside a workspace; the pane is what a verb is aimed at."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (search-forward "w1:p2")
-    (should (equal "w1:p2" (herdr-dispatch--value-at-point 'herdr-pane)))
-    (should (equal "w1" (herdr-dispatch--value-at-point 'herdr-workspace)))))
+    (let ((target (herdr-dispatch-target-at-point)))
+      (should (eq 'herdr-pane (herdr-dispatch-target-type target)))
+      (should (equal "w1:p2" (herdr-dispatch-target-value target)))
+      (should (equal "w1" (herdr-dispatch-target-workspace target))))))
 
-(ert-deftest herdr-dispatch-resolution-is-nil-when-absent ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "herdr.el")
-    (should-not (herdr-dispatch--value-at-point 'herdr-pane))))
-
-(ert-deftest herdr-dispatch-resolves-every-ancestor-type ()
-  "One pane line has to answer for its workspace as well."
+(ert-deftest herdr-dispatch-target-carries-its-own-workspace ()
+  "One pane line has to answer for its own workspace, not the first drawn."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (search-forward "w2:p2")
-    (should (equal "w2:p2" (herdr-dispatch--value-at-point 'herdr-pane)))
-    (should (equal "w2" (herdr-dispatch--value-at-point 'herdr-workspace)))))
+    (let ((target (herdr-dispatch-target-at-point)))
+      (should (equal "w2:p2" (herdr-dispatch-target-value target)))
+      (should (equal "w2" (herdr-dispatch-target-workspace target))))))
 
-(ert-deftest herdr-dispatch-resolution-prefers-the-innermost-match ()
+(ert-deftest herdr-dispatch-target-prefers-the-innermost-workspace ()
   "\"Nearest enclosing\" means the walk stops at the first match.
 
 `herdr-tree-build' never nests a type inside itself today, so no fixture
@@ -886,20 +887,37 @@ its own."
                          ((herdr-workspace "inner" "inner workspace"
                                            ((herdr-pane "p" "a pane" nil))))))
     (search-forward "a pane")
-    (should (equal "inner" (herdr-dispatch--value-at-point 'herdr-workspace)))))
+    (should (equal "inner"
+                   (herdr-dispatch-target-workspace
+                    (herdr-dispatch-target-at-point))))))
 
-(ert-deftest herdr-dispatch-require-errors-with-a-specific-message ()
+(ert-deftest herdr-dispatch-target-is-nil-off-every-row ()
+  "A line belonging to no herdr section is not a target, and every verb
+ends on that arm."
+  (herdr-dispatch-test-with-buffer nil
+    (should-not (herdr-dispatch-target-at-point))))
+
+(ert-deftest herdr-dispatch-target-of-a-heading-is-the-heading ()
+  "The old resolver walked up, so a heading answered as the workspace it
+was drawn inside, and every verb had to sit its heading arm above its
+workspace arm to notice.  The innermost section is the heading itself,
+which is why a `pcase' over the type cannot be mis-ordered."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (goto-char (point-min))
+    (search-forward "main")
+    (should (eq 'herdr-panes
+                (herdr-dispatch-target-type (herdr-dispatch-target-at-point))))))
+
+(ert-deftest herdr-dispatch-aimed-at-errors-with-a-specific-message ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (search-forward "herdr.el")
-    (should-error (herdr-dispatch--require 'herdr-pane "a pane")
-                  :type 'user-error)
-    (should (equal "herdr: point is not on a pane"
-                   (condition-case err
-                       (herdr-dispatch--require 'herdr-pane "a pane")
-                     (user-error (error-message-string err)))))
-    (should (equal "w1" (herdr-dispatch--require 'herdr-workspace "a workspace")))))
-
-;;; Error reporting
+    (let ((target (herdr-dispatch-target-at-point)))
+      (should (equal "herdr: point is not on a pane"
+                     (condition-case err
+                         (herdr-dispatch--aimed-at target 'herdr-pane "a pane")
+                       (user-error (error-message-string err)))))
+      (should (equal "w1" (herdr-dispatch--aimed-at target 'herdr-workspace
+                                                    "a workspace"))))))
 
 (defvar herdr-dispatch-test--calls nil
   "Calls recorded by `herdr-dispatch-test--recorder', newest first.")
@@ -1015,8 +1033,12 @@ looks wrong."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (should (equal '((herdr-pane-focus "w1:p2"))
                    (herdr-dispatch-test--visit-from "w1:p2")))
-    (should (equal '((herdr-dispatch-open-worktree))
-                   (herdr-dispatch-test--visit-from "open as w2")))
+    (let ((calls (herdr-dispatch-test--visit-from "open as w2")))
+      (should (equal 1 (length calls)))
+      (should (eq 'herdr-dispatch-open-worktree (caar calls)))
+      ;; Handed the target already resolved, rather than resolving twice.
+      (should (eq 'herdr-worktree
+                  (herdr-dispatch-target-type (cadr (car calls))))))
     (should (equal '((herdr-pane-focus "w2:p1"))
                    (herdr-dispatch-test--visit-from "w2:p1")))
     (should (equal '((herdr-workspace-focus "w2"))
@@ -2477,8 +2499,10 @@ checkout, which is a different problem with a different fix."
                        (is_linked_worktree . t)
                        (branch . "other")))))))
       (search-forward "open as w2")
-      (let ((message (cadr (should-error (herdr-dispatch--checked-worktree-at-point)
-                                         :type 'user-error))))
+      (let ((message (cadr (should-error
+                            (herdr-dispatch--checked-worktree
+                             (herdr-dispatch-target-at-point))
+                            :type 'user-error))))
         (should (string-match-p "no worktree listing" message))
         (should-not (string-match-p "own checkout" message))))))
 
@@ -2610,17 +2634,52 @@ ancestor must not stop it firing when point really is on the heading."
         (should (equal "w1" (alist-get 'workspace_id params)))
         (should (eq t (alist-get 'focus params)))))))
 
-(ert-deftest herdr-dispatch-workspace-target-resolves-a-pane-through-its-own-record ()
+(ert-deftest herdr-dispatch-terminal-workspace-reads-an-unnested-pane-record ()
   "A pane row is not always nested under a `herdr-workspace\\=' section —
-the agents buffer can list panes on their own — so the fallback has to
-consult the pane's own `workspace_id\\=' rather than assume nesting."
+the agents buffer can list panes on their own — so `n\\=' falls back to the
+pane\\='s own `workspace_id\\=' rather than assuming nesting.
+
+Only `n\\='.  The target\\='s WORKSPACE stays the section it sits in, because
+`w\\=' and `%\\=' create things against a workspace on screen and must refuse
+a row that shows none - reaching through a record for one would make `%\\='
+build a worktree for a workspace the row never named."
   (let ((herdr-state--current
          (herdr-state-from-snapshot
           '((panes . (((pane_id . "w9:p1") (workspace_id . "w9"))))))))
     (herdr-dispatch-test-with-buffer
         '((herdr-pane "w9:p1" "orphan pane w9:p1" nil))
       (search-forward "w9:p1")
-      (should (equal "w9" (herdr-dispatch--workspace-target))))))
+      (let ((target (herdr-dispatch-target-at-point)))
+        (should-not (herdr-dispatch-target-workspace target))
+        (should (equal "w9" (herdr-dispatch--terminal-workspace target)))))))
+
+(ert-deftest herdr-dispatch-open-worktree-refuses-a-row-that-is-not-one ()
+  "Reachable as a command, so it has to answer for a row it was not aimed
+at: a struct accessor on a nil target would say `wrong-type-argument\\='
+where the verb it replaced said which row you needed."
+  (herdr-dispatch-test-with-buffer nil
+    (should (equal "herdr: point is not on a worktree"
+                   (condition-case err
+                       (herdr-dispatch--checked-worktree
+                        (herdr-dispatch-target-at-point))
+                     (user-error (error-message-string err)))))))
+
+(ert-deftest herdr-dispatch-open-worktree-acts-on-the-target-it-is-given ()
+  "`herdr-dispatch-visit\\=' hands over the target it already resolved, and
+this is the half of that which the visit test cannot see: point is
+somewhere else entirely while the verb runs."
+  (let ((herdr-dispatch--worktrees
+         '(("w1" . (((path . "/tmp/wt") (is_linked_worktree . t)
+                     (branch . "topic") (open_workspace_id . "w5")))))))
+    (herdr-dispatch-test-with-buffer
+        '((herdr-workspace "w1" "workspace w1"
+                           ((herdr-worktree "/tmp/wt" "topic /tmp/wt" nil))))
+      (search-forward "topic")
+      (let ((target (herdr-dispatch-target-at-point)))
+        (goto-char (point-min))
+        (should (equal '((herdr-workspace-focus "w5"))
+                       (herdr-dispatch-test-with-recorders (herdr-workspace-focus)
+                         (herdr-dispatch-open-worktree target))))))))
 
 (ert-deftest herdr-dispatch-create-worktree-omits-an-empty-base ()
   "A blank base must not reach the server as an empty string.  This verb
