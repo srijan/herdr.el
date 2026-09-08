@@ -583,7 +583,7 @@ only kills would pass without the registration doing anything."
 
 (ert-deftest herdr-term-registers-itself-when-project-loads ()
   "The registration is a load-time side effect.  Tests that call the helper
-themselves pass with the `with-eval-after-load\=' form deleted, so this one
+themselves pass with the `with-eval-after-load\\=' form deleted, so this one
 asks the loaded world instead."
   (require 'project)
   (should (memq #'herdr-term-buffer-p project-kill-buffer-conditions)))

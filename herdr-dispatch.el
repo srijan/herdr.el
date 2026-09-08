@@ -37,7 +37,7 @@
   '(display-buffer-same-window)
   "How the dispatcher buffer is shown, as a `display-buffer\\=' ACTION.
 The default reuses the selected window and leaves the rest of the frame
-alone.  Nil lets `display-buffer\=' choose another window."
+alone.  Nil lets `display-buffer\\=' choose another window."
   :type 'sexp
   :group 'herdr)
 
@@ -777,12 +777,12 @@ it creates, and goes there under either terminal backend."
 ;;; The read-only verbs
 
 (defun herdr-dispatch--main-checkout-at-point ()
-  "Return the path when point is on a repository\='s own checkout row.
+  "Return the path when point is on a repository\\='s own checkout row.
 
-`herdr-tree--main-checkout-node\=' draws the `main\=' row of an inactive
-project with `herdr-tree--worktree-node\=', so it is a `herdr-worktree\='
-section like any other, and `herdr-dispatch-visit\=' used to send it to
-`herdr-dispatch-open-worktree\='.  The guard there refused it for not
+`herdr-tree--main-checkout-node\\=' draws the `main\\=' row of an inactive
+project with `herdr-tree--worktree-node\\=', so it is a `herdr-worktree\\='
+section like any other, and `herdr-dispatch-visit\\=' used to send it to
+`herdr-dispatch-open-worktree\\='.  The guard there refused it for not
 being a linked worktree, which it is not and cannot be: the row IS the
 checkout the worktrees hang off.  The guard is right; the row had no
 business reaching it.

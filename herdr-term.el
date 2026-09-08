@@ -39,7 +39,7 @@ Starting herdr, going to a pane and attaching all route through this, so
 one buffer cannot appear two ways depending on the command.  The default
 reuses the current window and leaves the frame alone.
 
-    (setq herdr-display-action \='(display-buffer-full-frame))"
+    (setq herdr-display-action \\='(display-buffer-full-frame))"
   :type 'sexp
   :group 'herdr)
 
@@ -206,7 +206,7 @@ selects that buffer.
 
 Attaching happens here rather than in reconciliation because the client
 needs a window at startup, so attaching every agent up front would mean
-`M-x herdr\=' seizing a window per agent before being asked for anything.
+`M-x herdr\\=' seizing a window per agent before being asked for anything.
 Returns the buffer when it showed one."
   (let ((buffer (herdr-term-buffer-for-pane pane-id)))
     (unless (buffer-live-p buffer)
@@ -279,7 +279,7 @@ terminal."
     ;; kills the client and ghostel then kills the buffer.  Being merely
     ;; hidden later is fine — a buried terminal keeps running — so the
     ;; window only has to exist, not persist.  Shown through
-    ;; `herdr-display-action\=' like every other path.
+    ;; `herdr-display-action' like every other path.
     (herdr-term--show buffer)
     (condition-case err
         (ghostel-exec buffer herdr-executable
@@ -326,8 +326,8 @@ the state-change hook."
   "Reap buffers whose pane is gone and correct stale names.
 
 Deliberately does not attach.  Attaching requires displaying the buffer
-and keeping it displayed, so attaching on every `pane_agent_detected\='
-would take a window each time an agent appears.  `herdr-term-select-pane\='
+and keeping it displayed, so attaching on every `pane_agent_detected\\='
+would take a window each time an agent appears.  `herdr-term-select-pane\\='
 attaches on demand instead."
   (let* ((plan (herdr-term-reconcile (herdr-state-current)
                                      (herdr-term--live-buffers))))

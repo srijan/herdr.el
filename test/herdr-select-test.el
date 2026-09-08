@@ -129,7 +129,7 @@ pane map takes an id."
                   'herdr-pane "w1:p1  ▶ claude    Lantern  /tmp"))))
 
 (ert-deftest herdr-select-workspace-candidates-carry-the-label ()
-  "The picker offered `w2P\=' and annotated it `veda\=', so the only
+  "The picker offered `w2P\\=' and annotated it `veda\\=', so the only
 searchable half of a workspace row was the half that means nothing.
 Four commands read this picker: close, focus, rename and worktree
 remove."

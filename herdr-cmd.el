@@ -290,11 +290,11 @@ name to a worktree with its own herdr workspace."
   (file-name-nondirectory (directory-file-name directory)))
 
 (defun herdr-cmd--create-workspace-pane (directory)
-  "Create a focused workspace at DIRECTORY and return its root pane\='s id.
-`focus\=' rides on the create: without it the workspace is made but not
+  "Create a focused workspace at DIRECTORY and return its root pane\\='s id.
+`focus\\=' rides on the create: without it the workspace is made but not
 focused, and anything that then asks the server \"where am I?\" answers
 with the pane the user was on before.  The reply names the new
-workspace\='s root pane, so callers go there directly rather than asking."
+workspace\\='s root pane, so callers go there directly rather than asking."
   (herdr-cmd--created-pane-id
    (herdr-rpc-call "workspace.create"
                    `((cwd . ,(expand-file-name directory))
@@ -303,9 +303,9 @@ workspace\='s root pane, so callers go there directly rather than asking."
 
 (defun herdr-cmd-open-workspace-for (root)
   "Focus the workspace at ROOT, creating it if absent, and go there.
-Shared by `herdr-project\=', the dispatcher\='s inactive-project verb, and
-RET on that row\='s `main\=' checkout.  The create half is
-`herdr-cmd--create-workspace-pane\=', which `herdr-cmd-pane-in-directory\='
+Shared by `herdr-project\\=', the dispatcher\\='s inactive-project verb, and
+RET on that row\\='s `main\\=' checkout.  The create half is
+`herdr-cmd--create-workspace-pane\\=', which `herdr-cmd-pane-in-directory\\='
 calls too: with nothing open at ROOT the two have nothing to differ
 about."
   (if-let* ((existing (herdr-state-workspace-for-directory
