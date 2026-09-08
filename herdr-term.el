@@ -86,22 +86,21 @@ own wanted name forever; see `herdr-term--rename-stale-buffers\\='."
       (substring name 0 (match-beginning 0))
     name))
 
-(defun herdr-term-reconcile (state buffers)
-  "Compare STATE against BUFFERS and return (TO-CREATE . TO-REAP).
+(defun herdr-term-buffers-to-reap (state buffers)
+  "Return the buffers in BUFFERS whose pane is gone from STATE.
 
-BUFFERS is an alist of (PANE-ID . BUFFER).  TO-CREATE holds pane alists
-that herdr will attach to but that have no buffer; TO-REAP holds buffers
-whose pane is gone.  Pure: no processes are touched."
-  (let* ((panes (herdr-state-panes state))
-         (pane-ids (mapcar (lambda (pane) (herdr-pane-id pane)) panes))
-         (have-ids (mapcar #'car buffers)))
-    (cons
-     (seq-remove (lambda (pane)
-                   (member (herdr-pane-id pane) have-ids))
-                 panes)
-     (mapcar #'cdr
-             (seq-remove (lambda (cell) (member (car cell) pane-ids))
-                         buffers)))))
+BUFFERS is an alist of (PANE-ID . BUFFER).  Pure: no processes are
+touched and no buffer is killed here.
+
+It used to answer a pair, the other half naming panes with no buffer.
+Nothing attached from it - attaching needs a window, so it happens on
+demand in `herdr-term-select-pane\=' - so the half was carried, tested
+and never read."
+  (let ((pane-ids (mapcar (lambda (pane) (herdr-pane-id pane))
+                          (herdr-state-panes state))))
+    (mapcar #'cdr
+            (seq-remove (lambda (cell) (member (car cell) pane-ids))
+                        buffers))))
 
 ;;; Server lifecycle
 
@@ -233,35 +232,47 @@ steals the first one's terminal."
 (defun herdr-term--attach-1 (state pane pane-id)
   "Create and start a ghostel buffer attached to PANE, named from STATE.
 
+Signals rather than answering nil when the client will not start: the
+two ways it can fail - a pane with no `terminal_id\\=', an
+`herdr-executable\\=' that will not run - are both settings to fix, and
+neither improves by being retried.  Nil is left meaning what the callers
+that retry already read it as: the cache does not know this pane yet.
+
 Created under `herdr-term--unique-buffer-name\\=' rather than the
 plain wanted name: that name is not guaranteed unique, and a collision
 would hand this pane's client a buffer `get-buffer-create\\=' found
 already live for a different pane, attaching two panes into one
 terminal."
-  (let ((buffer (get-buffer-create
-                 (herdr-term--unique-buffer-name state pane))))
-    (with-current-buffer buffer (ghostel-mode))
-    ;; The buffer needs a window when the client starts: attaching without
-    ;; displaying, or with a window that is deleted straight afterwards,
-    ;; kills the client and ghostel then kills the buffer.  Being merely
-    ;; hidden later is fine — a buried terminal keeps running — so the
-    ;; window only has to exist, not persist.  Shown through
-    ;; `herdr-display-action' like every other path.
-    (herdr-term--show buffer)
+  (let* (;; Argv first, before anything exists to clean up:
+         ;; `herdr-pane-attach-args' refuses a pane with no
+         ;; `terminal_id', and that refusal is about the server being
+         ;; too old, not about this buffer.
+         (args (herdr-pane-attach-args pane nil))
+         (buffer (get-buffer-create
+                  (herdr-term--unique-buffer-name state pane))))
+    ;; Everything from here to the registry under one cleanup.  A buffer
+    ;; that exists but never reached `herdr-term--buffers' is invisible
+    ;; to teardown, to the reap and to `herdr-term-buffer-p', and the
+    ;; next select builds a second buffer for the same pane - so any step
+    ;; that can signal has to take the buffer with it, not just the one
+    ;; that signals most often.
     (condition-case err
-        (ghostel-exec buffer herdr-executable
-                      (herdr-pane-attach-args pane nil))
+        (progn
+          (with-current-buffer buffer (ghostel-mode))
+          ;; The buffer needs a window when the client starts: attaching
+          ;; without displaying, or with a window that is deleted straight
+          ;; afterwards, kills the client and ghostel then kills the
+          ;; buffer.  Being merely hidden later is fine — a buried
+          ;; terminal keeps running — so the window only has to exist, not
+          ;; persist.  Shown through `herdr-display-action' like every
+          ;; other path.
+          (herdr-term--show buffer)
+          (ghostel-exec buffer herdr-executable args)
+          (herdr-term--set-directory buffer pane)
+          (push (cons pane-id buffer) herdr-term--buffers))
       (error
-       (if (and (y-or-n-p
-                 (format "Attaching to %s failed (%s).  Take it over? "
-                         pane-id (error-message-string err))))
-           (ghostel-exec buffer herdr-executable
-                         (herdr-pane-attach-args pane t))
-         (kill-buffer buffer)
-         (setq buffer nil))))
-    (when buffer
-      (herdr-term--set-directory buffer pane)
-      (push (cons pane-id buffer) herdr-term--buffers))
+       (kill-buffer buffer)
+       (signal (car err) (cdr err))))
     buffer))
 
 (defun herdr-term--rename-stale-buffers ()
@@ -296,12 +307,11 @@ Deliberately does not attach.  Attaching requires displaying the buffer
 and keeping it displayed, so attaching on every `pane_agent_detected\\='
 would take a window each time an agent appears.  `herdr-term-select-pane\\='
 attaches on demand instead."
-  (let* ((plan (herdr-term-reconcile (herdr-state-current)
-                                     (herdr-term--live-buffers))))
-    (dolist (buffer (cdr plan))
-      (when (buffer-live-p buffer) (kill-buffer buffer)))
-    (herdr-term--rename-stale-buffers)
-    (herdr-term--live-buffers)))
+  (dolist (buffer (herdr-term-buffers-to-reap (herdr-state-current)
+                                             (herdr-term--live-buffers)))
+    (when (buffer-live-p buffer) (kill-buffer buffer)))
+  (herdr-term--rename-stale-buffers)
+  (herdr-term--live-buffers))
 
 ;;; Directory tracking
 

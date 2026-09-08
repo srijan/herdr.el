@@ -20,46 +20,24 @@
   `((pane_id . ,id) (agent . ,agent) (agent_status . "idle")
     (workspace_id . "w1") (terminal_title_stripped . ,(or agent "shell"))))
 
-(ert-deftest herdr-term-reconcile-creates-buffers-for-new-agents ()
-  (let* ((state (herdr-term-test--state
-                 (herdr-term-test--pane "w1:p1" "claude")
-                 (herdr-term-test--pane "w1:p2" "codex")))
-         (result (herdr-term-reconcile state nil)))
-    (should (equal '("w1:p1" "w1:p2")
-                   (mapcar (lambda (p) (alist-get 'pane_id p)) (car result))))
-    (should (null (cdr result)))))
+(ert-deftest herdr-term-reaps-buffers-whose-pane-is-gone ()
+  (let ((state (herdr-term-test--state
+                (herdr-term-test--pane "w1:p1" "claude"))))
+    (should (equal '(:buf9)
+                   (herdr-term-buffers-to-reap state '(("w1:p1" . :buf1)
+                                                       ("w1:p9" . :buf9)))))))
 
-(ert-deftest herdr-term-reconcile-offers-every-pane ()
-  "TO-CREATE covers agentless panes too; attach needs no agent."
-  (let* ((state (herdr-term-test--state
-                 (herdr-term-test--pane "w1:p1" "claude")
-                 (herdr-term-test--pane "w1:p2")))
-         (result (herdr-term-reconcile state nil)))
-    (should (equal '("w1:p1" "w1:p2")
-                   (mapcar (lambda (p) (alist-get 'pane_id p)) (car result))))))
-
-(ert-deftest herdr-term-reconcile-reaps-buffers-whose-pane-is-gone ()
-  (let* ((state (herdr-term-test--state
-                 (herdr-term-test--pane "w1:p1" "claude")))
-         (result (herdr-term-reconcile state '(("w1:p1" . :buf1)
-                                               ("w1:p9" . :buf9)))))
-    (should (null (car result)))
-    (should (equal '(:buf9) (cdr result)))))
-
-(ert-deftest herdr-term-reconcile-reaps-only-when-the-pane-is-gone ()
+(ert-deftest herdr-term-reaps-only-when-the-pane-is-gone ()
   "A pane losing its agent keeps its buffer; only a closed pane is reaped."
-  (let* ((state (herdr-term-test--state (herdr-term-test--pane "w1:p1")))
-         (result (herdr-term-reconcile state '(("w1:p1" . :buf1)
-                                               ("w1:p9" . :buf9)))))
-    (should (null (car result)))
-    (should (equal '(:buf9) (cdr result)))))
+  (let ((state (herdr-term-test--state (herdr-term-test--pane "w1:p1"))))
+    (should (equal '(:buf9)
+                   (herdr-term-buffers-to-reap state '(("w1:p1" . :buf1)
+                                                       ("w1:p9" . :buf9)))))))
 
-(ert-deftest herdr-term-reconcile-is-stable-when-nothing-changed ()
-  (let* ((state (herdr-term-test--state
-                 (herdr-term-test--pane "w1:p1" "claude")))
-         (result (herdr-term-reconcile state '(("w1:p1" . :buf1)))))
-    (should (null (car result)))
-    (should (null (cdr result)))))
+(ert-deftest herdr-term-reaps-nothing-when-nothing-changed ()
+  (let ((state (herdr-term-test--state
+                (herdr-term-test--pane "w1:p1" "claude"))))
+    (should (null (herdr-term-buffers-to-reap state '(("w1:p1" . :buf1)))))))
 
 ;;; Buffer naming: name first, workspace fallback
 
@@ -178,16 +156,120 @@ to make that impossible."
             (kill-buffer created)))
       (kill-buffer existing))))
 
-;;; Directory tracking
 
-(ert-deftest herdr-term-reconcile-creates-a-buffer-for-a-plain-shell ()
-  "Every pane attaches, so a shell pane must get a buffer like any other."
-  (let* ((state (herdr-term-test--state
-                 (herdr-term-test--pane "w1:p1" "claude")
-                 (herdr-term-test--pane "w1:p2" "shell")))
-         (result (herdr-term-reconcile state nil)))
-    (should (equal '("w1:p1" "w1:p2")
-                   (mapcar (lambda (p) (alist-get 'pane_id p)) (car result))))))
+;;; Attaching, which nothing used to test
+
+(defmacro herdr-term-test--attaching (exec &rest body)
+  "Run BODY with `ghostel-exec' bound to EXEC and no ghostel loaded.
+`ghostel-mode' and the display call are stubbed too: the first needs the
+package, the second a window, and neither is what these assert."
+  (declare (indent 1) (debug t))
+  `(let ((herdr-term--buffers nil))
+     (cl-letf (((symbol-function 'ghostel-exec) ,exec)
+               ((symbol-function 'ghostel-mode) #'ignore)
+               ((symbol-function 'herdr-term--show) #'ignore))
+       ,@body)))
+
+(ert-deftest herdr-term-attach-registers-the-buffer-it-started ()
+  "The registry is what teardown, reap and `herdr-term-buffer-p' all read.
+A buffer that started but never reached it is invisible to every one."
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (agent . "claude") (terminal_id . "t7")))))))
+        started)
+    (herdr-term-test--attaching
+        (lambda (buffer _program &optional args) (setq started (cons buffer args)) t)
+      (let ((buffer (herdr-term--attach
+                     state (herdr-state-pane state "w1:p1"))))
+        (unwind-protect
+            (progn
+              (should (buffer-live-p buffer))
+              (should (equal buffer (car started)))
+              (should (equal '("terminal" "attach" "t7") (cdr started)))
+              (should (equal buffer (herdr-term-buffer-for-pane "w1:p1"))))
+          (kill-buffer buffer))))))
+
+(ert-deftest herdr-term-attach-leaves-nothing-behind-when-the-client-fails ()
+  "The defect this test exists for: a failing start used to be able to
+leave a live, displayed buffer that never reached the registry, so
+teardown could not kill it and the next select built a second buffer for
+the same pane."
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (agent . "claude") (terminal_id . "t7")))))))
+        (before (buffer-list)))
+    (herdr-term-test--attaching
+        (lambda (&rest _) (error "ghostel: no such program"))
+      (should-error (herdr-term--attach state (herdr-state-pane state "w1:p1")))
+      (should (null herdr-term--buffers))
+      (should (null (seq-difference (buffer-list) before))))))
+
+(ert-deftest herdr-term-attach-refuses-a-pane-the-server-is-too-old-for ()
+  "A pane with no `terminal_id\\=' cannot be attached at all, and the
+argv is built before the buffer is committed to, so nothing is created
+and nothing is displayed."
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (agent . "claude")))))))
+        (before (buffer-list))
+        shown)
+    (let ((herdr-term--buffers nil))
+      (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
+                ((symbol-function 'ghostel-exec)
+                 (lambda (&rest _) (error "should not be reached")))
+                ((symbol-function 'herdr-term--show)
+                 (lambda (&rest _) (setq shown t))))
+        (should-error (herdr-term--attach state (herdr-state-pane state "w1:p1"))
+                      :type 'user-error)
+        (should-not shown)
+        (should (null herdr-term--buffers))
+        (should (null (seq-difference (buffer-list) before)))))))
+
+
+(ert-deftest herdr-term-attach-displays-the-buffer-before-starting-the-client ()
+  "ghostel sizes the PTY from a displayed window and paints nothing into
+a zero-sized one, so the order is load-bearing rather than incidental."
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (agent . "claude") (terminal_id . "t7")))))))
+        order)
+    (let ((herdr-term--buffers nil))
+      (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
+                ((symbol-function 'herdr-term--show)
+                 (lambda (&rest _) (push 'shown order)))
+                ((symbol-function 'ghostel-exec)
+                 (lambda (&rest _) (push 'started order))))
+        (let ((buffer (herdr-term--attach state (herdr-state-pane state "w1:p1"))))
+          (unwind-protect
+              (should (equal '(shown started) (nreverse order)))
+            (kill-buffer buffer)))))))
+
+(ert-deftest herdr-term-attach-cleans-up-when-any-step-fails ()
+  "Not only the exec: a display action that signals, or a pane whose cwd
+is not a string, used to leave the same unregistered live buffer through
+a different door."
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (agent . "claude") (terminal_id . "t7")
+                             (cwd . 42)))))))
+        (before (buffer-list)))
+    (let ((herdr-term--buffers nil))
+      (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
+                ((symbol-function 'ghostel-exec) #'ignore)
+                ((symbol-function 'herdr-term--show) #'ignore))
+        ;; `herdr-pane-directory' asks `file-directory-p' about a number.
+        (should-error (herdr-term--attach state (herdr-state-pane state "w1:p1")))
+        (should (null herdr-term--buffers))
+        (should (null (seq-difference (buffer-list) before))))
+      (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
+                ((symbol-function 'ghostel-exec) #'ignore)
+                ((symbol-function 'herdr-term--show)
+                 (lambda (&rest _) (error "display-buffer: no window"))))
+        (should-error (herdr-term--attach state (herdr-state-pane state "w1:p1")))
+        (should (null herdr-term--buffers))
+        (should (null (seq-difference (buffer-list) before)))))))
+
+;;; Directory tracking
 
 (ert-deftest herdr-term-set-directory-follows-the-pane ()
   (with-temp-buffer
