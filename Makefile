@@ -18,7 +18,15 @@ EXTRA_LOAD_PATH ?=
 ## EXTRA_LOAD_PATH still works and still wins: it is added to the load
 ## path ahead of the search, and herdr-deps only looks for what
 ## `locate-library' cannot already answer.
+
+## `load-prefer-newer' before anything is loaded, because it defaults to
+## nil: `require' takes the .elc whenever one exists, however old.  That
+## made `make test' after `make compile' silently test the last compile
+## rather than the working tree — a source edit could pass, or fail, on
+## code that is no longer there.  Measured while checking that a test
+## caught a deliberate break: it did not, and the break was invisible.
 BATCH := $(EMACS) -Q --batch -L . -L test $(addprefix -L ,$(EXTRA_LOAD_PATH)) \
+           --eval '(setq load-prefer-newer t)' \
            -l test/herdr-deps.el
 
 TESTS := $(wildcard test/*-test.el)
