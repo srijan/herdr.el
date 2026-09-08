@@ -20,6 +20,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'subr-x)
 (require 'seq)
 (require 'magit-section)
@@ -348,45 +349,83 @@ and do not need defending."
 
 ;;; The object at point
 
-(defun herdr-dispatch--value-at-point (type)
-  "Return the value of the nearest enclosing section of TYPE, or nil.
-Walks up rather than down: a verb invoked on a pane line inside a
-workspace should reach the workspace too."
-  (let ((section (magit-current-section))
-        (found nil))
-    (while (and section (not found))
-      (when (eq type (oref section type))
-        (setq found (oref section value)))
+(defconst herdr-dispatch-target-types
+  '(herdr-workspace herdr-panes herdr-pane herdr-worktree
+                    herdr-known-project herdr-known-projects)
+  "The section types a verb can be aimed at.
+Every type `herdr-tree-build\\=' draws.  A section of any other type - the
+buffer\\='s root, the header - is not a target, and the verbs say so.")
+
+(cl-defstruct (herdr-dispatch-target
+               (:constructor herdr-dispatch--target-make)
+               (:copier nil))
+  "What a verb is aimed at: one row, resolved once.
+
+Each of the four verbs used to re-derive this in a hand-ordered `cond\\='
+of its own, and the order was the interface - the heading arms had to
+sit above the pane and workspace arms or a heading swallowed its own
+children, a fix that had to be applied in four places at once.
+Resolving to the INNERMOST section carrying a herdr type answers the
+question once, and a `pcase\\=' over the answer cannot be mis-ordered.
+
+TYPE is one of `herdr-dispatch-target-types\\='.  VALUE is the identifier
+the row carries.  RECORD is what the cache knows VALUE by - the pane,
+the workspace, the WorktreeInfo - and nil for a heading, for a row
+naming only a path, and for a row the cache has not caught up with.
+WORKSPACE is the workspace section the row sits INSIDE, which is not its
+own value: a worktree row sits inside the repository whose list it was
+expanded from, and reaching for one when you meant the other is how `k\\='
+came to remove the workspace point was standing in.  Nesting only - a
+pane\\='s own `workspace_id\\=' is a different question, asked by
+`herdr-dispatch--terminal-workspace\\=' and by nothing else, because the
+verbs that create things must refuse a row that names no workspace on
+screen rather than reach through a record for one."
+  type value record workspace)
+
+(defun herdr-dispatch--section-at-point ()
+  "Return the innermost section at point carrying a herdr type, or nil."
+  (let ((section (magit-current-section)))
+    (while (and section
+                (not (memq (oref section type) herdr-dispatch-target-types)))
       (setq section (oref section parent)))
-    found))
+    section))
 
-(defun herdr-dispatch--type-at-point (type)
-  "Return the value of the section at point when it is of TYPE, or nil.
+(defun herdr-dispatch--enclosing-value (section type)
+  "Return the value of SECTION or its nearest ancestor of TYPE, or nil."
+  (while (and section (not (eq type (oref section type))))
+    (setq section (oref section parent)))
+  (and section (oref section value)))
 
-Deliberately does not walk up, and that is the whole difference from
-`herdr-dispatch--value-at-point\\='.  A heading is acted on only when
-point is on the heading itself; an ancestor heading is something the row
-under point sits inside, not the thing the verb was aimed at.
+(defun herdr-dispatch--target-record (type value)
+  "Return what the cache knows TYPE\\='s VALUE by, or nil."
+  (pcase type
+    ('herdr-pane (herdr-state-pane (herdr-state-current) value))
+    ('herdr-workspace (herdr-state-workspace (herdr-state-current) value))
+    ('herdr-worktree (herdr-dispatch--worktree-record value))
+    (_ nil)))
 
-Every heading in this buffer is an ancestor of the rows a verb is
-normally aimed at, and the heading arms sit above the pane and workspace
-arms in each `cond\\='.  Walking up therefore made a heading swallow its
-own children: \\[herdr-dispatch-close] on an agent answered \"a
-workspace\\='s main group cannot be closed\" and touched nothing, and each
-of the other three verbs refused the same rows in its own words.
+(defun herdr-dispatch-target-at-point ()
+  "Return what point is on as a `herdr-dispatch-target\\=', or nil."
+  (when-let* ((section (herdr-dispatch--section-at-point)))
+    (let* ((type (oref section type))
+           (value (oref section value))
+           (record (herdr-dispatch--target-record type value)))
+      (herdr-dispatch--target-make
+       :type type
+       :value value
+       :record record
+       :workspace (herdr-dispatch--enclosing-value section 'herdr-workspace)))))
 
-The action arms still walk up, and should: a verb on a pane row reaching
-the workspace that pane belongs to is what `herdr-dispatch--value-at-point\\='
-exists for.  Only the refusals are aimed at point itself, which is what
-they meant all along."
-  (when-let* ((section (magit-current-section))
-              ((eq type (oref section type))))
-    (oref section value)))
+(defun herdr-dispatch--target-type (target)
+  "Return TARGET\\='s type, or nil when point is on no row at all.
+The nil arm is what every verb\\='s `pcase\\=' ends on."
+  (and target (herdr-dispatch-target-type target)))
 
-(defun herdr-dispatch--require (type what)
-  "Return the nearest enclosing TYPE value, or signal that WHAT is needed."
-  (or (herdr-dispatch--value-at-point type)
-      (user-error "herdr: point is not on %s" what)))
+(defun herdr-dispatch--aimed-at (target type what)
+  "Return TARGET\\='s value when it is of TYPE, or signal that WHAT is needed."
+  (if (eq type (herdr-dispatch--target-type target))
+      (herdr-dispatch-target-value target)
+    (user-error "herdr: point is not on %s" what)))
 
 (defun herdr-dispatch--protect (fn)
   "Call FN, reporting a `herdr-error\\=' rather than letting it escape.
@@ -624,7 +663,7 @@ is gone, matching `herdr-dispatch--refresh-hook\\='.
 
 `workspace_closed\\=' belongs on this list even though it announces no
 worktree.  A cached listing outlived the workspace it described for the
-rest of the session, and `herdr-dispatch--worktree-at-point\\=' flattens
+rest of the session, and `herdr-dispatch--worktree-record\\=' flattens
 every cached listing together before searching it, so a dead
 workspace\\='s entry could still supply the record a worktree row
 resolved to.
@@ -647,35 +686,40 @@ on an event that fires when a workspace closes and at no other time."
   (unless (get-buffer herdr-dispatch-buffer-name)
     (remove-hook 'herdr-state-change-functions #'herdr-dispatch--invalidate-worktrees)))
 
-(defun herdr-dispatch--worktree-at-point ()
-  "Return the cached WorktreeInfo for the worktree line at point.
+(defun herdr-dispatch--worktree-record (path)
+  "Return the cached WorktreeInfo for PATH, or nil.
 
 A worktree section carries only its path as its value; the branch, and
 whether herdr has already opened it as a workspace, live in the cached
-record.  Every worktree verb therefore has to resolve the row back to
-that record, and resolving it in one place is what stops two verbs on the
-same row from disagreeing about which worktree it names."
-  (let ((path (herdr-dispatch--require 'herdr-worktree "a worktree")))
-    (seq-find (lambda (candidate)
-                (equal path (alist-get 'path candidate)))
-              (apply #'append (mapcar #'cdr herdr-dispatch--worktrees)))))
+record.  Resolved once, into `herdr-dispatch-target\='\='s RECORD, so two
+verbs on the same row cannot disagree about which worktree it names.
 
-(defun herdr-dispatch--checked-worktree-at-point ()
-  "Return the cached WorktreeInfo at point, or refuse the row.
+Searches every workspace\='s listing flattened together, because a row
+knows its path and not which listing answered for it."
+  (seq-find (lambda (candidate)
+              (equal path (alist-get 'path candidate)))
+            (apply #'append (mapcar #'cdr herdr-dispatch--worktrees))))
 
-The one place every worktree verb resolves a row, and the backstop for
-the renderer\\='s filter: it refuses exactly what the renderer declines to
-draw, so a stale row cannot be acted on.
+(defun herdr-dispatch--checked-worktree (target)
+  "Return TARGET\\='s WorktreeInfo, or refuse the row.
+
+The one place every worktree verb settles whether a row may be acted on,
+and the backstop for the renderer\\='s filter: it refuses exactly what the
+renderer declines to draw, so a stale row cannot be acted on.
 
 Three refusals, in the order the answers arrive.  A row with no cached
 record first, or the others read fields off nil and announce that a row
 whose record was merely missing is the repository\\='s own checkout.  Then
 `herdr-tree-linked-worktree-p\\=', and `herdr-tree-own-workspace-p\\='
-against the enclosing `herdr-workspace\\=' section.
+against the workspace the row sits inside.
 
 The last is the guard that matters: `k\\=' on such a row otherwise
 resolves to the workspace the row is nested inside."
-  (let ((worktree (herdr-dispatch--worktree-at-point)))
+  (unless (eq 'herdr-worktree (herdr-dispatch--target-type target))
+    ;; `M-x herdr-dispatch-open-worktree' off any row lands here, and a
+    ;; struct accessor on nil would answer with a wrong-type-argument.
+    (user-error "herdr: point is not on a worktree"))
+  (let ((worktree (herdr-dispatch-target-record target)))
     (unless worktree
       (user-error
        "herdr: no worktree listing is cached for the row at point (g refetches)"))
@@ -687,14 +731,14 @@ resolves to the workspace the row is nested inside."
          "herdr: %s is the repository's own checkout, not one of its worktrees"
          name))
       (when (herdr-tree-own-workspace-p
-             worktree (herdr-dispatch--value-at-point 'herdr-workspace))
+             worktree (herdr-dispatch-target-workspace target))
         (user-error
          "herdr: %s is the workspace this list belongs to, not one of its worktrees"
          name))
       worktree)))
 
-(defun herdr-dispatch--worktree-workspace ()
-  "Return the id of the workspace the worktree at point is open as.
+(defun herdr-dispatch--worktree-workspace (target)
+  "Return the id of the workspace TARGET\\='s worktree is open as.
 
 `worktree.remove\\=' and `workspace.focus\\=' both address a workspace, and a
 worktree that herdr has not opened as one has no such id.  The enclosing
@@ -704,9 +748,9 @@ is how `k\\=' came to remove the very workspace point was standing in.  So
 this refuses rather than guesses.
 
 Whether the row may be acted on at all is settled first, by
-`herdr-dispatch--checked-worktree-at-point\\='.  Only the question this
-function\\='s own name asks is left here."
-  (let ((worktree (herdr-dispatch--checked-worktree-at-point)))
+`herdr-dispatch--checked-worktree\\='.  Only the question this function\\='s
+own name asks is left here."
+  (let ((worktree (herdr-dispatch--checked-worktree target)))
     (or (alist-get 'open_workspace_id worktree)
         (user-error "herdr: worktree %s is not open as a workspace (RET opens it)"
                     (or (alist-get 'branch worktree)
@@ -715,22 +759,25 @@ function\\='s own name asks is left here."
 
 (defun herdr-dispatch--refuse-heading (complaint)
   "Refuse a verb on a grouping heading, COMPLAINT saying which.
-Covers the `worktrees (N)\\=' list and the `Inactive (N)\\=' group.
+Covers a workspace\\='s `main\\=' group and the `Inactive (N)\\=' group, the
+two types in `herdr-dispatch-target-types\\=' that name a list rather than
+a thing.
 
 A heading names a list, not a herdr object, and every verb here acts on
 something with an id.
 
-Refuse rather than do nothing.  `herdr-dispatch--value-at-point\\=' walks
-up from point, so a verb with no arm for this type does not fail: it
-silently finds the enclosing workspace and acts on that.  Before this
-existed, `k\\=' and `R\\=' on a `worktrees (N)\\=' heading reached
+Say which heading, rather than falling through.  A verb with no arm for
+a heading type reaches its own \"nothing at point\" arm, which is safe but
+tells you nothing about the row you were standing on.  It used to be
+worse than unhelpful: resolution walked up from point, so `k\\=' and `R\\='
+on a heading found the enclosing workspace and reached
 `workspace.close\\=' and `workspace.rename\\=' against the repository the
-heading was counting worktrees for.
+heading belonged to.
 
 Folding is a heading\\='s one useful action, hence the hint."
   (user-error "herdr: %s; TAB folds it" complaint))
 
-(herdr-dispatch-defverb herdr-dispatch-open-worktree ()
+(herdr-dispatch-defverb herdr-dispatch-open-worktree (&optional target)
   "Open the worktree at point as a workspace.
 
 Calls `worktree.open\\=' directly rather than through `herdr-worktree-open\\=',
@@ -739,15 +786,17 @@ here that would be `*herdr-agents*\\=', not the worktree's own workspace,
 so the request would resolve against whatever directory the dispatcher
 buffer happened to hold rather than the workspace at point.
 
-Resolves through `herdr-dispatch--checked-worktree-at-point\\=' like every
+Resolves through `herdr-dispatch--checked-worktree\\=' like every
 other worktree verb.  It cannot use `herdr-dispatch--worktree-workspace\\='
 itself, which refuses a worktree that is not open as a workspace —
 opening exactly that is what this command is for — but the checks that
 say whether the row may be acted on at all are the same ones, and
 reading the record directly is what let this command act on rows the
 others refuse."
-  (let* ((worktree (herdr-dispatch--checked-worktree-at-point))
-         (workspace (herdr-dispatch--require 'herdr-workspace "a workspace")))
+  (let* ((target (or target (herdr-dispatch-target-at-point)))
+         (worktree (herdr-dispatch--checked-worktree target))
+         (workspace (or (herdr-dispatch-target-workspace target)
+                        (user-error "herdr: point is not on a workspace"))))
     (if-let* ((open (alist-get 'open_workspace_id worktree)))
         (herdr-workspace-focus open)
       (let ((dir (herdr-state-workspace-directory (herdr-state-current)
@@ -757,7 +806,7 @@ others refuse."
                           (cwd . ,dir)
                           (focus . t)))))))
 
-(herdr-dispatch-defverb herdr-dispatch-open-known-project ()
+(herdr-dispatch-defverb herdr-dispatch-open-known-project (&optional target)
   "Open the known project at point as a new workspace.
 
 Reached only from a `herdr-known-project\\=' row, which
@@ -770,14 +819,14 @@ second workspace for a directory that already has one is the exact bug
 guard `herdr-project\\=' makes before it creates.  Both share
 `herdr-cmd-open-workspace-for\\=', which makes that guard, focuses what
 it creates, and goes there under either terminal backend."
-  (let ((root (herdr-dispatch--require 'herdr-known-project
-                                       "a known project")))
-    (herdr-cmd-open-workspace-for root)))
+  (herdr-cmd-open-workspace-for
+   (herdr-dispatch--aimed-at (or target (herdr-dispatch-target-at-point))
+                             'herdr-known-project "a known project")))
 
 ;;; The read-only verbs
 
-(defun herdr-dispatch--main-checkout-at-point ()
-  "Return the path when point is on a repository\\='s own checkout row.
+(defun herdr-dispatch--main-checkout-p (target)
+  "Return non-nil when TARGET is a repository\\='s own checkout row.
 
 `herdr-tree--main-checkout-node\\=' draws the `main\\=' row of an inactive
 project with `herdr-tree--worktree-node\\=', so it is a `herdr-worktree\\='
@@ -789,10 +838,8 @@ business reaching it.
 
 Nil when no record is cached, so such a row still gets the refetch error
 rather than being opened on a guess."
-  (when-let* ((path (herdr-dispatch--value-at-point 'herdr-worktree))
-              (record (herdr-dispatch--worktree-at-point))
-              ((not (herdr-tree-linked-worktree-p record))))
-    path))
+  (when-let* ((record (herdr-dispatch-target-record target)))
+    (not (herdr-tree-linked-worktree-p record))))
 
 (herdr-dispatch-defverb herdr-dispatch-visit ()
   "Go to the thing at point.
@@ -801,35 +848,36 @@ followed to whichever pane herdr lands on, which is the server\\='s
 choice rather than ours.  A known project with no workspace open yet is
 created and focused instead; see `herdr-dispatch-open-known-project\\='.
 So is that project's own `main\\=' checkout row, which names the same
-directory; see `herdr-dispatch--main-checkout-at-point\\='.  A heading
+directory; see `herdr-dispatch--main-checkout-p\\='.  A heading
 has nowhere to go; see `herdr-dispatch--refuse-heading\\='."
-  (cond
-   ((herdr-dispatch--value-at-point 'herdr-pane)
-    (herdr-pane-focus (herdr-dispatch--value-at-point 'herdr-pane)))
-   ((herdr-dispatch--main-checkout-at-point)
-    (herdr-cmd-open-workspace-for (herdr-dispatch--main-checkout-at-point)))
-   ((herdr-dispatch--value-at-point 'herdr-worktree)
-    (herdr-dispatch-open-worktree))
-   ((herdr-dispatch--type-at-point 'herdr-panes)
-    (herdr-dispatch--refuse-heading
-     "a workspace's main group is not somewhere to go"))
-   ((herdr-dispatch--value-at-point 'herdr-known-project)
-    (herdr-dispatch-open-known-project))
-   ((herdr-dispatch--type-at-point 'herdr-known-projects)
-    (herdr-dispatch--refuse-heading
-     "the inactive-projects group is not somewhere to go"))
-   ((herdr-dispatch--value-at-point 'herdr-workspace)
-    (herdr-workspace-focus (herdr-dispatch--value-at-point 'herdr-workspace)))
-   (t (user-error "herdr: nothing at point"))))
+  (let ((target (herdr-dispatch-target-at-point)))
+    (pcase (herdr-dispatch--target-type target)
+      ('herdr-pane (herdr-pane-focus (herdr-dispatch-target-value target)))
+      ('herdr-workspace
+       (herdr-workspace-focus (herdr-dispatch-target-value target)))
+      ('herdr-worktree
+       (if (herdr-dispatch--main-checkout-p target)
+           (herdr-cmd-open-workspace-for (herdr-dispatch-target-value target))
+         (herdr-dispatch-open-worktree target)))
+      ('herdr-known-project (herdr-dispatch-open-known-project target))
+      ('herdr-panes
+       (herdr-dispatch--refuse-heading
+        "a workspace's main group is not somewhere to go"))
+      ('herdr-known-projects
+       (herdr-dispatch--refuse-heading
+        "the inactive-projects group is not somewhere to go"))
+      (_ (user-error "herdr: nothing at point")))))
 
 (herdr-dispatch-defverb herdr-dispatch-prompt ()
   "Prompt the agent at point."
-  (let ((pane (herdr-dispatch--require 'herdr-pane "an agent")))
+  (let ((pane (herdr-dispatch--aimed-at (herdr-dispatch-target-at-point)
+                                        'herdr-pane "an agent")))
     (herdr-agent-prompt (read-string "Prompt: ") pane)))
 
 (herdr-dispatch-defverb herdr-dispatch-read ()
   "Read the pane at point into a buffer."
-  (herdr-pane-read (herdr-dispatch--require 'herdr-pane "a pane")
+  (herdr-pane-read (herdr-dispatch--aimed-at (herdr-dispatch-target-at-point)
+                                             'herdr-pane "a pane")
                    "recent_unwrapped"))
 
 ;;; The mutating verbs
@@ -842,25 +890,26 @@ workspace.  A worktree has no rename operation at all, so it is refused
 rather than allowed to fall through to the repository workspace whose
 list it was expanded from — and neither has the heading that groups
 them; see `herdr-dispatch--refuse-heading\\='."
-  (cond
-   ((herdr-dispatch--value-at-point 'herdr-worktree)
-    (user-error
-     "herdr: a worktree cannot be renamed; rename its branch with git"))
-   ((herdr-dispatch--type-at-point 'herdr-panes)
-    (herdr-dispatch--refuse-heading
-     "a workspace's main group cannot be renamed"))
-   ((herdr-dispatch--value-at-point 'herdr-known-project)
-    (user-error "herdr: a known project has no label of its own to rename"))
-   ((herdr-dispatch--type-at-point 'herdr-known-projects)
-    (herdr-dispatch--refuse-heading
-     "the inactive-projects group cannot be renamed"))
-   ((herdr-dispatch--value-at-point 'herdr-pane)
-    (herdr-pane-rename (read-string "Pane label: ")
-                       (herdr-dispatch--value-at-point 'herdr-pane)))
-   ((herdr-dispatch--value-at-point 'herdr-workspace)
-    (herdr-workspace-rename (read-string "Workspace label: ")
-                            (herdr-dispatch--value-at-point 'herdr-workspace)))
-   (t (user-error "herdr: nothing at point to rename"))))
+  (let ((target (herdr-dispatch-target-at-point)))
+    (pcase (herdr-dispatch--target-type target)
+      ('herdr-pane
+       (herdr-pane-rename (read-string "Pane label: ")
+                          (herdr-dispatch-target-value target)))
+      ('herdr-workspace
+       (herdr-workspace-rename (read-string "Workspace label: ")
+                               (herdr-dispatch-target-value target)))
+      ('herdr-worktree
+       (user-error
+        "herdr: a worktree cannot be renamed; rename its branch with git"))
+      ('herdr-known-project
+       (user-error "herdr: a known project has no label of its own to rename"))
+      ('herdr-panes
+       (herdr-dispatch--refuse-heading
+        "a workspace's main group cannot be renamed"))
+      ('herdr-known-projects
+       (herdr-dispatch--refuse-heading
+        "the inactive-projects group cannot be renamed"))
+      (_ (user-error "herdr: nothing at point to rename")))))
 
 (herdr-dispatch-defverb herdr-dispatch-close ()
   "Close or remove the thing at point.
@@ -875,22 +924,23 @@ expanded from, and removing it would destroy something other than the row
 under point.  The heading that groups the rows is refused outright, for
 the same reason and with more at stake; see
 `herdr-dispatch--refuse-heading\\='."
-  (cond
-   ((herdr-dispatch--value-at-point 'herdr-worktree)
-    (herdr-worktree-remove (herdr-dispatch--worktree-workspace)))
-   ((herdr-dispatch--type-at-point 'herdr-panes)
-    (herdr-dispatch--refuse-heading
-     "a workspace's main group cannot be closed"))
-   ((herdr-dispatch--value-at-point 'herdr-known-project)
-    (user-error "herdr: a known project with no workspace open has nothing to close"))
-   ((herdr-dispatch--type-at-point 'herdr-known-projects)
-    (herdr-dispatch--refuse-heading
-     "the inactive-projects group cannot be closed"))
-   ((herdr-dispatch--value-at-point 'herdr-pane)
-    (herdr-pane-close (herdr-dispatch--value-at-point 'herdr-pane)))
-   ((herdr-dispatch--value-at-point 'herdr-workspace)
-    (herdr-workspace-close (herdr-dispatch--value-at-point 'herdr-workspace)))
-   (t (user-error "herdr: nothing at point to close"))))
+  (let ((target (herdr-dispatch-target-at-point)))
+    (pcase (herdr-dispatch--target-type target)
+      ('herdr-pane (herdr-pane-close (herdr-dispatch-target-value target)))
+      ('herdr-workspace
+       (herdr-workspace-close (herdr-dispatch-target-value target)))
+      ('herdr-worktree
+       (herdr-worktree-remove (herdr-dispatch--worktree-workspace target)))
+      ('herdr-known-project
+       (user-error
+        "herdr: a known project with no workspace open has nothing to close"))
+      ('herdr-panes
+       (herdr-dispatch--refuse-heading
+        "a workspace's main group cannot be closed"))
+      ('herdr-known-projects
+       (herdr-dispatch--refuse-heading
+        "the inactive-projects group cannot be closed"))
+      (_ (user-error "herdr: nothing at point to close")))))
 
 ;;; The create verbs
 
@@ -898,37 +948,43 @@ the same reason and with more at stake; see
   "Create a workspace, prompting for its directory.
 The prompt defaults to the directory of the workspace at point.  The
 label is left to herdr, which names a workspace after its directory."
-  (let* ((default (or (when-let* ((id (herdr-dispatch--value-at-point
-                                       'herdr-workspace)))
+  (let* ((target (herdr-dispatch-target-at-point))
+         (default (or (when-let* ((id (and target
+                                           (herdr-dispatch-target-workspace
+                                            target))))
                         (herdr-state-workspace-directory
                          (herdr-state-current) id))
                       default-directory)))
     (herdr-workspace-create
      (read-directory-name "Workspace directory: " default))))
 
-(defun herdr-dispatch--pane-for-directory-at-point ()
-  "Return a pane for a new terminal in the directory the row at point names.
+(defun herdr-dispatch--pane-for-directory (target)
+  "Return a pane for a new terminal in the directory TARGET names, or nil.
 A directory row — a worktree, the `main\\=' row, an inactive project —
-wins over any enclosing workspace, which would be the repository the user
-was pointing past."
-  (when-let* ((directory (or (herdr-dispatch--value-at-point 'herdr-worktree)
-                             (herdr-dispatch--value-at-point 'herdr-known-project))))
-    (herdr-cmd-pane-in-directory directory)))
+wins over the workspace it sits inside, which would be the repository the
+user was pointing past."
+  (when (memq (herdr-dispatch--target-type target)
+              '(herdr-worktree herdr-known-project))
+    (herdr-cmd-pane-in-directory (herdr-dispatch-target-value target))))
 
-(defun herdr-dispatch--workspace-target ()
-  "Return the workspace id point resolves to, or nil.
-A pane row resolves through its own record; a workspace heading is
-itself.  Nil is refused by `herdr-dispatch--workspace-target-pane\\='."
-  (or (herdr-dispatch--value-at-point 'herdr-workspace)
-      (when-let* ((pane-id (herdr-dispatch--value-at-point 'herdr-pane))
-                  (pane (herdr-state-pane (herdr-state-current) pane-id)))
-        (herdr-pane-workspace-id pane))))
+(defun herdr-dispatch--terminal-workspace (target)
+  "Return the workspace a new terminal at TARGET belongs in, or nil.
 
-(defun herdr-dispatch--workspace-target-pane ()
-  "Return a fresh tab\\='s pane in the workspace at point, or refuse.
+The section it sits in, or - for a pane row drawn outside any workspace
+section, which the agents buffer does - the workspace the pane\\='s own
+record names.  Only `n\\=' asks this: `w\\=' and `%\\=' create things against a
+workspace on screen and refuse a row that shows none, which is what they
+did before there was a resolver to ask."
+  (or (herdr-dispatch-target-workspace target)
+      (when-let* (((eq 'herdr-pane (herdr-dispatch--target-type target)))
+                  (record (herdr-dispatch-target-record target)))
+        (herdr-pane-workspace-id record))))
+
+(defun herdr-dispatch--workspace-target-pane (target)
+  "Return a fresh tab\\='s pane in the workspace TARGET sits in, or refuse.
 `herdr-cmd--new-tab-pane\\=' reads a nil workspace as \"whichever the
 server has focused\", which this buffer must never answer silently."
-  (let ((workspace (herdr-dispatch--workspace-target)))
+  (let ((workspace (and target (herdr-dispatch--terminal-workspace target))))
     (unless workspace
       (user-error "herdr: nothing at point names a workspace to open a terminal in"))
     (herdr-cmd--new-tab-pane workspace)))
@@ -938,19 +994,22 @@ server has focused\", which this buffer must never answer silently."
 A directory row wins; otherwise a fresh tab in the workspace at point.
 A row naming neither is refused rather than sent to the server\\='s
 focused workspace."
-  (when (herdr-dispatch--type-at-point 'herdr-known-projects)
-    (herdr-dispatch--refuse-heading
-     "the inactive-projects group is not a place to open a terminal"))
-  (herdr-cmd--follow-new-pane
-   (or (herdr-dispatch--pane-for-directory-at-point)
-       (herdr-dispatch--workspace-target-pane))))
+  (let ((target (herdr-dispatch-target-at-point)))
+    (when (eq 'herdr-known-projects (herdr-dispatch--target-type target))
+      (herdr-dispatch--refuse-heading
+       "the inactive-projects group is not a place to open a terminal"))
+    (herdr-cmd--follow-new-pane
+     (or (herdr-dispatch--pane-for-directory target)
+         (herdr-dispatch--workspace-target-pane target)))))
 
 (herdr-dispatch-defverb herdr-dispatch-create-worktree ()
   "Create a git worktree from the workspace at point.
 Calls `worktree.create\\=' directly: `herdr-worktree-create\\=' would take
 its `cwd\\=' from `*herdr-agents*\\=' rather than the workspace at point.
 An empty base ref means the current HEAD and is omitted from the call."
-  (let* ((workspace (herdr-dispatch--require 'herdr-workspace "a workspace"))
+  (let* ((target (herdr-dispatch-target-at-point))
+         (workspace (or (and target (herdr-dispatch-target-workspace target))
+                        (user-error "herdr: point is not on a workspace")))
          (branch (read-string "New worktree branch: "))
          (base (read-string
                 (format-prompt "Base ref" "the current HEAD") nil nil ""))
