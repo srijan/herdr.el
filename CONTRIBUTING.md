@@ -146,5 +146,7 @@ Include these items:
 4. The exact message, or a screenshot of the dashboard.
 5. Whether the fault survives a reconcile. Press `g`, then wait five seconds.
 
-Item 5 separates a real fault from the replay effect that
-[Protocol notes](docs/protocol.md#the-server-replays-its-full-event-ring) describes.
+Item 5 separates a real fault from a cache that is merely behind. The cache is repaired by
+comparing it against the server, not by the event stream alone; [Protocol
+notes](docs/protocol.md#the-server-replayed-its-full-event-ring-until-090) says why that
+comparison exists and what herdr 0.9.0 changed about it.

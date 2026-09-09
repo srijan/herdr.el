@@ -78,7 +78,7 @@ that meant about 7.5 firings a second per busy agent, each rebuilding
 the string and calling `force-mode-line-update' across every frame — a
 redisplay of every mode line in Emacs several times a second for text
 that almost never differed: the flicker.  The subscription is gone, but
-the guard stays: bursts still happen (replays, reconciles, status
+the guard stays: bursts still happen (settles, reconciles, status
 refreshes), and only a changed count is worth a redisplay."
   (let ((text (herdr-modeline--segment (herdr-state-current))))
     (unless (equal text herdr-modeline--text)

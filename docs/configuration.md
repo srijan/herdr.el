@@ -97,7 +97,9 @@ herdr.el increases the reconnect delay after each failed attempt. The delay star
 minimum and stops at the maximum. A server that goes away therefore does not cause a loop of
 connection attempts.
 
-`herdr-state-settle-delay` sets when herdr.el first compares its cache against the server. The
-comparison removes the panes that the event replay of the server creates. If you see dead panes
-for more than two seconds, decrease `herdr-term-directory-interval`. That option controls the
-later comparisons. See [Protocol notes](protocol.md#the-server-replays-its-full-event-ring).
+`herdr-state-settle-delay` sets when herdr.el first compares its cache against the server. That
+comparison is what closes the gap between the startup snapshot and the subscribe, and on a herdr
+older than 0.9.0 it is also what removes the panes the event replay creates. If you see dead
+panes for more than two seconds, decrease `herdr-term-directory-interval`, which controls the
+later comparisons. See
+[Protocol notes](protocol.md#the-server-replayed-its-full-event-ring-until-090).

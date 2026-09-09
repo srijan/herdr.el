@@ -45,10 +45,11 @@ alone.  Nil lets `display-buffer\\=' choose another window."
 (defcustom herdr-dispatch-refresh-debounce 0.2
   "Seconds to coalesce dispatcher redraws triggered by events.
 Events arrive in bursts — a reconcile folds many pane changes back to
-back, and a subscribe replays ring history — so redrawing per event
-meant erasing and rebuilding the buffer many times for one visible
-change.  (When `pane.updated\\=' was still subscribed, a single working
-agent kept that up at ten redraws a second indefinitely.)  Short enough
+back, and a settle does it for panes and workspaces at once — so
+redrawing per event meant erasing and rebuilding the buffer many times
+for one visible change.  (When `pane.updated\\=' was still subscribed, a
+single working agent kept that up at ten redraws a second
+indefinitely.)  Short enough
 that the dashboard still reads as live.  Only the hook is debounced:
 \\[herdr-dispatch-refresh] redraws immediately."
   :type 'number

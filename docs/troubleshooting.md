@@ -7,14 +7,15 @@ Each section names a symptom. Read the cause, then do the correction.
 **Symptom.** For one or two seconds after `M-x herdr`, the dashboard shows extra rows. The rows
 read `shell` and `unknown`. The rows then disappear.
 
-**Cause.** The herdr server replays its full event ring to each new subscriber. The replay
-creates panes that closed long ago.
+**Cause.** Your herdr server is older than 0.9.0. Those servers replay their full event ring to
+each new subscriber, which creates panes that closed long ago. herdr 0.9.0 removed the replay,
+so on a current server these rows do not appear at all.
 
-**Correction.** None is necessary. The next reconcile removes the rows. To make the correction
-faster, decrease `herdr-term-directory-interval` from 5.0 seconds.
+**Correction.** None is necessary. The next reconcile removes the rows. Upgrading herdr removes
+the cause.
 
 For the full explanation, see
-[Protocol notes](protocol.md#the-server-replays-its-full-event-ring).
+[Protocol notes](protocol.md#the-server-replayed-its-full-event-ring-until-090).
 
 ## Emacs cannot reach the server
 
