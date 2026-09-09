@@ -369,8 +369,8 @@ are not told about is the same bug one level up."
           (herdr-state--close herdr-state--pane-process))))))
 
 (ert-deftest herdr-state-settle-without-resync-does-not-snapshot ()
-  "The start path snapshots immediately before subscribing, so its
-settle has nothing to re-fetch — one `pane.list\\=' and no more."
+  "The start path has just snapshotted, so its settle re-fetches
+nothing: it reconciles, and does not ask for another snapshot."
   (let (methods)
     (herdr-test-with-server
         (herdr-state-live-test--reconnect-server
@@ -650,6 +650,103 @@ nothing when nothing has changed."
     (should (equal '("w1")
                    (mapcar (lambda (w) (alist-get 'workspace_id w))
                            (herdr-state-workspaces herdr-state--current))))))
+
+(ert-deftest herdr-state-settle-reconciles-workspaces-too ()
+  "The startup window loses events and no replay covers it any more.
+
+herdr 0.9.0 starts a subscription at the sequence its request arrived
+on, so anything the server announced between `session.snapshot\=' and
+the subscribe is gone.  `pane.list\=' repairs panes; without a
+`workspace.list\=' beside it a workspace renamed in that window stays
+wrong until something else happens to reconcile, and
+`herdr-state-reconcile-workspaces\=' has one other caller."
+  (let (methods)
+    (herdr-test-with-server
+        (lambda (req)
+          (let ((method (alist-get 'method req)))
+            (push method methods)
+            (pcase method
+              ("pane.list"
+               (cons (herdr-test-ok req '((type . "pane_list") (panes . []))) nil))
+              ("workspace.list"
+               (cons (herdr-test-ok
+                      req '((type . "workspace_list")
+                            (workspaces . [((workspace_id . "w1")
+                                            (label . "renamed"))])))
+                     nil))
+              (_ (cons (herdr-test-ok req '((type . "ok"))) nil)))))
+      (let ((herdr-state--running t)
+            (herdr-state--pane-process nil)
+            (herdr-state--resubscribe-timer nil)
+            (herdr-state--settle-timer nil)
+            (herdr-state--current
+             (herdr-state-from-snapshot
+              '((workspaces . (((workspace_id . "w1") (label . "stale"))))))))
+        (unwind-protect
+            (progn
+              (herdr-state--settle)
+              (should (member "workspace.list" methods))
+              (should (equal "renamed"
+                             (alist-get 'label
+                                        (car (herdr-state-workspaces
+                                              herdr-state--current))))))
+          (herdr-state--close herdr-state--pane-process))))))
+
+(ert-deftest herdr-state-settle-reconciles-panes-before-workspaces ()
+  "Connection B is realigned against the pane set, so the pane set is
+settled first.  Recorded in reverse, so the list reads newest first."
+  (let (methods)
+    (herdr-test-with-server
+        (lambda (req)
+          (let ((method (alist-get 'method req)))
+            (push method methods)
+            (pcase method
+              ("pane.list"
+               (cons (herdr-test-ok req '((type . "pane_list") (panes . []))) nil))
+              ("workspace.list"
+               (cons (herdr-test-ok req '((type . "workspace_list")
+                                          (workspaces . []))) nil))
+              (_ (cons (herdr-test-ok req '((type . "ok"))) nil)))))
+      (let ((herdr-state--running t)
+            (herdr-state--pane-process nil)
+            (herdr-state--resubscribe-timer nil)
+            (herdr-state--settle-timer nil)
+            (herdr-state--current (herdr-state-empty)))
+        (unwind-protect
+            (progn
+              (herdr-state--settle)
+              (let ((order (nreverse methods)))
+                (should (< (seq-position order "pane.list")
+                           (seq-position order "workspace.list")))))
+          (herdr-state--close herdr-state--pane-process))))))
+
+(ert-deftest herdr-state-settle-keeps-the-cache-when-workspace-list-fails ()
+  "An unanswerable `workspace.list\=' must not read as an empty server.
+
+`herdr-state-reconcile-workspaces\=' already refuses to treat nil as an
+answer; the settle must not defeat that by calling it somewhere the
+refusal cannot take effect."
+  (herdr-test-with-server
+      (lambda (req)
+        (pcase (alist-get 'method req)
+          ("pane.list"
+           (cons (herdr-test-ok req '((type . "pane_list") (panes . []))) nil))
+          ("workspace.list" (cons nil nil))
+          (_ (cons (herdr-test-ok req '((type . "ok"))) nil))))
+    (let ((herdr-state--running t)
+          (herdr-state--pane-process nil)
+          (herdr-state--resubscribe-timer nil)
+          (herdr-state--settle-timer nil)
+          (herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1") (label . "kept"))))))))
+      (unwind-protect
+          (progn
+            (herdr-state--settle)
+            (should (equal '("w1")
+                           (mapcar (lambda (w) (alist-get 'workspace_id w))
+                                   (herdr-state-workspaces herdr-state--current)))))
+        (herdr-state--close herdr-state--pane-process)))))
 
 (provide 'herdr-state-live-test)
 ;;; herdr-state-live-test.el ends here

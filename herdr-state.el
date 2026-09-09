@@ -502,27 +502,29 @@ RESYNC is passed through to `herdr-state--settle\\='."
                      #'herdr-state--settle resync)))
 
 (defun herdr-state--settle (&optional resync)
-  "Settle the cache once the retained events have landed, then realign B.
+  "Reconcile the cache against the server shortly after connecting, then realign B.
+
+Both halves are reconciled, panes and workspaces, because both have a
+gap and neither closes the other's.  A subscription starts at the
+sequence its request arrived on, so whatever the server announced
+between the snapshot and the subscribe is gone; before herdr 0.9.0 a
+retained-event replay happened to cover that window, and now nothing
+does.  `pane.list\\=' and `workspace.list\\=' both take no parameters and
+both answer with everything live, so the pair is authoritative over
+whatever was missed.
+
+What the pair does not restore is order and focus.  Reconciling
+updates and removes workspaces; it does not reorder them, and neither
+list call carries `focused_pane_id\\='.  A `workspace.reordered\\=' or a
+focus change lost in the window therefore survives until the next one
+of its kind.  Both are cosmetic and both need an ordering fact the
+protocol does not give a client.
 
 Non-nil RESYNC replaces the whole cache from `session.snapshot\\=' first,
-and is what the reconnect path passes.  It is not optional there.  A
-disconnect drops events that cannot be replayed, and they are not only
-pane events: a workspace renamed or a tab closed during the gap is
-announced once and never again.  `pane.list\\=' repairs panes and nothing
-else, so without the snapshot a reconnect left the workspace and tab
-halves of the cache wrong for the rest of the session — the dashboard
-showing a stale label and a closed tab lingering as a ghost nothing
-could reach.  `herdr-state-start\\=' needs no RESYNC because it snapshots
-immediately before subscribing.
-
-Reconciling: the replay can carry a `pane.created\\=' for a pane closed
-long ago — a ghost.  It folds correctly only because `pane.created\\='
-precedes `pane.closed\\=' in `herdr-state-global-subscriptions\\=' —
-replayed types are drained in subscription-list order, not
-chronological order — so a ghost is one list edit away at any time,
-and it is a ghost that shows up in every picker and cannot be
-navigated to.  `pane.list\\=' is authoritative and settles it either
-way.
+and is what the reconnect path passes.  It is not optional there: a
+disconnect can span minutes, and reconciling repairs membership while
+the snapshot is what restores focus with it.  `herdr-state-start\\='
+needs no RESYNC because it has just snapshotted.
 
 Realigning connection B afterwards, not before: reconciling is what
 makes the pane set final, and B subscribes the agent slice of it."
@@ -549,7 +551,8 @@ makes the pane set final, and B subscribes the agent slice of it."
                   (herdr-state-from-snapshot
                    (alist-get 'snapshot (herdr-rpc-call "session.snapshot"))))
           (error nil)))
-      (herdr-state-reconcile-panes))
+      (herdr-state-reconcile-panes)
+      (herdr-state-reconcile-workspaces))
     (condition-case nil
         (herdr-state--open-pane-stream)
       (error (herdr-state--schedule-reconnect)))
