@@ -7,7 +7,7 @@ This document tells you how to install herdr.el and how to do the first tasks.
 You must have these items:
 
 - Emacs 28.1 or a later version.
-- [herdr](https://herdr.dev) 0.8.2. This version speaks protocol 20.
+- [herdr](https://herdr.dev) 0.9.0. This version speaks protocol 22.
 - The Emacs packages `ghostel` and `magit-section`. (`magit-section` requires `transient`, which
   Emacs ships from version 28.1.)
 

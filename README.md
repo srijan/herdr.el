@@ -168,7 +168,7 @@ the buffer is an attachment, and `M-x herdr` attaches again.
 ## Requirements
 
 - Emacs 28.1+
-- [herdr](https://herdr.dev) 0.8.2 (protocol 20)
+- [herdr](https://herdr.dev) 0.9.0 (protocol 22)
 - `ghostel`, `magit-section`
 
 Optional, used when present and never required: `marginalia`, `embark`, `consult`, `alert`.

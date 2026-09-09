@@ -31,12 +31,12 @@ For the full explanation, see
 
 ## Emacs warns about the protocol version
 
-**Symptom.** The echo area shows `server speaks protocol N, this package targets 20`.
+**Symptom.** The echo area shows `server speaks protocol N, this package targets 22`.
 
-**Cause.** Your herdr version is not 0.8.2.
+**Cause.** Your herdr version is not 0.9.0.
 
 **Correction.** herdr.el continues to run, and the warning appears one time only. Some commands
-can behave incorrectly. Either install herdr 0.8.2, or set `herdr-protocol-version` to your
+can behave incorrectly. Either install herdr 0.9.0, or set `herdr-protocol-version` to your
 version to stop the warning. The option changes the warning only. It does not change what
 herdr.el sends.
 

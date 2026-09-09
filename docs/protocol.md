@@ -189,8 +189,8 @@ field as volatile. Do not treat it as a label when you compare two panes.
 ## How to read the herdr source
 
 ```bash
-curl -sSL -o herdr.tar.gz https://github.com/herdrdev/herdr/archive/refs/tags/v0.8.2.tar.gz
-tar xzf herdr.tar.gz herdr-0.8.2/src/api
+curl -sSL -o herdr.tar.gz https://github.com/herdrdev/herdr/archive/refs/tags/v0.9.0.tar.gz
+tar xzf herdr.tar.gz herdr-0.9.0/src/api
 ```
 
 Three files answer most questions:
