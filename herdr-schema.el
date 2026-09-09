@@ -19,6 +19,15 @@
 ;; Held for the session, invalidated by server version.  No disk cache:
 ;; `herdr api schema --json' prints the schema bundled in the binary
 ;; without consulting the server, measured at 7ms.
+;;
+;; That last point is also this module's one sharp edge.  There is no
+;; socket method for the schema, so it can only come from the local
+;; binary, and a binary that is a different build from the running
+;; server describes an API nobody is talking to.  Upgrading herdr
+;; without restarting the server is the ordinary way in: the package
+;; manager replaces the file, the running process keeps its loaded
+;; image.  `herdr-schema-matches-server-p' is how to ask, and the
+;; mismatch is said once rather than hidden.
 
 ;;; Code:
 
@@ -30,7 +39,19 @@
   "Parsed schema, or nil when not yet loaded.")
 
 (defvar herdr-schema--cache-version nil
-  "herdr version the cached schema came from.")
+  "Server version the cached schema was fetched alongside.
+
+Not the schema's own provenance.  The schema comes from the local
+binary and this is what the socket answered at the time, so the two
+agree only when the binary and the server are the same build.  It is
+kept because it is the cheap change detector: a `herdr update\=' that
+replaces both shows up here as a different string.  See
+`herdr-schema--cache-protocol\=' for what the schema actually describes.")
+
+(defvar herdr-schema--cache-protocol nil
+  "Protocol the cached schema declares, from the schema itself.")
+
+(defvar herdr-schema--mismatch-warned nil)
 
 ;;; Loading
 
@@ -90,6 +111,39 @@ bounded wait every socket RPC already uses."
   "Return the running server's version string, or nil if unreachable."
   (ignore-errors (alist-get 'version (herdr-rpc-call "ping"))))
 
+(defun herdr-schema--server-protocol ()
+  "Return the running server's protocol number, or nil if unreachable."
+  (ignore-errors (alist-get 'protocol (herdr-rpc-call "ping"))))
+
+(defun herdr-schema-protocol ()
+  "Return the protocol the loaded schema declares.
+This is the binary's answer, not the server's."
+  (alist-get 'protocol (or herdr-schema--cache (herdr-schema))))
+
+(defun herdr-schema-matches-server-p ()
+  "Return non-nil when the loaded schema describes the running server.
+
+There is no socket method for the schema, so it can only come from the
+local `herdr\=' binary.  When that binary is a different build from the
+running server the schema describes an API nobody is talking to, and
+every check made against it answers the wrong question.
+
+An unreachable server is not a mismatch.  `herdr-call\=' reads the
+schema with no server running, and reporting that as a disagreement
+would warn on every one of those."
+  (let ((server (herdr-schema--server-protocol))
+        (schema (herdr-schema-protocol)))
+    (or (null server) (null schema) (equal server schema))))
+
+(defun herdr-schema--warn-on-mismatch ()
+  "Say once when the schema and the server describe different APIs."
+  (unless (or herdr-schema--mismatch-warned (herdr-schema-matches-server-p))
+    (setq herdr-schema--mismatch-warned t)
+    (message
+     "herdr.el: %s speaks protocol %s but the running server speaks %s; \
+schema-driven prompts and drift checks describe the binary, not the server"
+     herdr-executable (herdr-schema-protocol) (herdr-schema--server-protocol))))
+
 (defun herdr-schema ()
   "Return the herdr API schema, fetching it if needed.
 The schema is held for as long as the server reports the version it
@@ -100,10 +154,14 @@ test cannot check yesterday's schema and report no drift."
                herdr-schema--cache-version
                version
                (not (equal version herdr-schema--cache-version)))
-      (setq herdr-schema--cache nil))
+      (setq herdr-schema--cache nil)
+      (setq herdr-schema--mismatch-warned nil))
     (unless herdr-schema--cache
       (herdr-schema--fetch)
-      (setq herdr-schema--cache-version version)))
+      (setq herdr-schema--cache-version version)
+      (setq herdr-schema--cache-protocol
+            (alist-get 'protocol herdr-schema--cache))))
+  (herdr-schema--warn-on-mismatch)
   herdr-schema--cache)
 
 ;;; Navigation
