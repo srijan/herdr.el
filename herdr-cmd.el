@@ -34,7 +34,7 @@
     (herdr-pane-focus            "pane.focus"           "pane_id")
     (herdr-pane-read             "pane.read"            "pane_id" "source" "lines" "format" "strip_ansi")
     (herdr-workspace-create      "workspace.create"     "cwd" "label" "focus")
-    (herdr-workspace-close       "workspace.close"      "workspace_id")
+    (herdr-workspace-close       "workspace.close"      "workspace_id" "close_group")
     (herdr-workspace-focus       "workspace.focus"      "workspace_id")
     (herdr-workspace-rename      "workspace.rename"     "workspace_id" "label")
     (herdr-worktree-create       "worktree.create"      "branch" "base" "cwd" "focus")
@@ -226,16 +226,42 @@ test is enough."
                       (focus . t))))))
 
 (defun herdr-workspace-close (&optional workspace-id)
-  "Close WORKSPACE-ID, prompting when not given."
+  "Close WORKSPACE-ID, prompting when not given.
+
+Since herdr 0.9.0 a workspace with linked worktree workspaces cannot be
+closed alone: the server answers `workspace_group_close_required\=' and
+closes nothing.  That refusal is what asks the second question.
+
+Asking first, with a `worktree.list\=' before the prompt, is the obvious
+alternative and it is worse.  A main checkout\='s own entry carries an
+`open_workspace_id\=' naming the workspace being closed, so a listing
+cannot tell a group from a lone workspace; it would cost a round trip on
+every close including the ones that need nothing; and the server decides
+this without a race, which a preflight cannot."
   (interactive)
   (let* ((workspace (or workspace-id
                         (herdr-select-workspace "Close workspace: ")))
          (description (herdr-cmd--workspace-description workspace)))
-    (if (y-or-n-p (format "Close workspace %s? " description))
-        (progn
-          (herdr-rpc-call "workspace.close" `((workspace_id . ,workspace)))
-          (message "herdr: closed workspace %s" description))
-      (message "herdr: workspace %s left open" description))))
+    (if (not (y-or-n-p (format "Close workspace %s? " description)))
+        (message "herdr: workspace %s left open" description)
+      (condition-case err
+          (progn
+            (herdr-rpc-call "workspace.close" `((workspace_id . ,workspace)))
+            (message "herdr: closed workspace %s" description))
+        (herdr-error
+         ;; Only the group refusal.  Reading every `herdr-error' as a
+         ;; group question turns a permission failure into a prompt and
+         ;; then a close nobody asked for.
+         (unless (equal (herdr-error-code err) "workspace_group_close_required")
+           (signal (car err) (cdr err)))
+         (if (y-or-n-p
+              (format "Workspace %s has linked worktrees; close the group? "
+                      description))
+             (progn
+               (herdr-rpc-call "workspace.close"
+                               `((workspace_id . ,workspace) (close_group . t)))
+               (message "herdr: closed workspace group %s" description))
+           (message "herdr: workspace %s left open" description)))))))
 
 (defun herdr-workspace-focus (&optional workspace-id)
   "Focus WORKSPACE-ID, prompting when not given, and follow it in Emacs."

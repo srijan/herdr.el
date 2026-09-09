@@ -445,6 +445,88 @@ branch — so the no branch was never run at all."
       (should (equal (if answer '("workspace.close") nil) wire))
       (should (string-match-p "w1" (or said ""))))))
 
+(defmacro herdr-cmd-test--group-close (answers responder wire said &rest body)
+  "Run BODY answering confirmations from ANSWERS in order.
+RESPONDER is the fake server. WIRE collects (METHOD . PARAMS) per
+request and SAID the last message. Sequenced answers, because the group
+close asks a second question whose answer must differ from the first."
+  (declare (indent 4) (debug t))
+  ;; Two things this macro gets right that are easy to get wrong.
+  ;; RESPONDER is evaluated once, outside the per-request lambda: a
+  ;; responder that counts calls is a closure over its own state, and
+  ;; building it inside the lambda hands every request a fresh one.  And
+  ;; WIRE is recorded in arrival order rather than pushed and reversed
+  ;; afterwards, because the assertions run inside BODY, where a
+  ;; reversal that happens after BODY has not happened yet.
+  `(let ((remaining ,answers) (responder ,responder) ,wire ,said)
+     (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) (pop remaining)))
+               ((symbol-function 'message)
+                (lambda (fmt &rest args) (setq ,said (apply #'format fmt args)))))
+       (herdr-test-with-server
+           (lambda (req)
+             (setq ,wire
+                   (append ,wire
+                           (list (cons (alist-get 'method req)
+                                       (alist-get 'params req)))))
+             (funcall responder req))
+         ,@body))))
+
+(defun herdr-cmd-test--group-required-once ()
+  "Return a responder refusing the first close as a group, then accepting."
+  (let ((refused nil))
+    (lambda (req)
+      (if (and (equal "workspace.close" (alist-get 'method req)) (not refused))
+          (progn
+            (setq refused t)
+            (cons (herdr-test-err req "workspace_group_close_required"
+                                  "workspace has linked worktree workspaces")
+                  nil))
+        (cons (herdr-test-ok req '((type . "ok"))) nil)))))
+
+(ert-deftest herdr-workspace-close-offers-the-group-when-the-server-refuses ()
+  "herdr 0.9.0 refuses to close a workspace that would take linked
+worktree workspaces with it, answering `workspace_group_close_required\='
+and closing nothing.  The refusal is what asks the second question.
+
+Not a `worktree.list\=' before the first one: a main checkout's own entry
+carries an `open_workspace_id\=' naming the workspace being closed, so a
+listing cannot tell a group from a lone workspace, and the server
+decides this without a race."
+  (herdr-cmd-test--group-close '(t t) (herdr-cmd-test--group-required-once) wire said
+    (herdr-workspace-close "w1")
+    (should (equal '("workspace.close" "workspace.close") (mapcar #'car wire)))
+    (should-not (assq 'close_group (cdr (nth 0 wire))))
+    (should (eq t (alist-get 'close_group (cdr (nth 1 wire)))))
+    (should (equal "w1" (alist-get 'workspace_id (cdr (nth 1 wire)))))
+    (should (string-match-p "group" (or said "")))))
+
+(ert-deftest herdr-workspace-close-declining-the-group-closes-nothing ()
+  "Declining must not fall through to a plain close the server ignores."
+  (herdr-cmd-test--group-close '(t nil) (herdr-cmd-test--group-required-once) wire said
+    (herdr-workspace-close "w1")
+    (should (equal '("workspace.close") (mapcar #'car wire)))
+    (should (string-match-p "left open" (or said "")))))
+
+(ert-deftest herdr-workspace-close-does-not-swallow-other-errors ()
+  "Only the group refusal is handled.  Reading every `herdr-error\=' as a
+group question would turn a permission failure into a second prompt and
+then a close the user never asked for."
+  (herdr-cmd-test--group-close '(t t)
+      (lambda (req) (cons (herdr-test-err req "workspace_not_found" "no such workspace") nil))
+      wire said
+    (should-error (herdr-workspace-close "w1") :type 'herdr-error)
+    (should (equal '("workspace.close") (mapcar #'car wire)))))
+
+(ert-deftest herdr-workspace-close-sends-no-group-flag-for-a-lone-workspace ()
+  "The common case must cost nothing: the same request as before, with
+no extra round trip and no `close_group\=' key at all."
+  (herdr-cmd-test--group-close '(t)
+      (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
+      wire said
+    (herdr-workspace-close "w1")
+    (should (equal '("workspace.close") (mapcar #'car wire)))
+    (should-not (assq 'close_group (cdr (nth 0 wire))))))
+
 (ert-deftest herdr-worktree-remove-removes-only-when-confirmed ()
   "The one verb that deletes a checkout on disk, and it had no test.
 

@@ -97,12 +97,17 @@ the terminal. Use that source when you want to search the result.
 | Command | Method | Function |
 |---|---|---|
 | `herdr-workspace-create` | `workspace.create` | Create a workspace at a directory. |
-| `herdr-workspace-close` | `workspace.close` | Close a workspace. |
+| `herdr-workspace-close` | `workspace.close` | Close a workspace, asking before closing its group. |
 | `herdr-workspace-focus` | `workspace.focus` | Focus a workspace and follow it in Emacs. |
 | `herdr-workspace-rename` | `workspace.rename` | Give a workspace a new label. |
 
 A workspace has a working directory as its key. A workspace stays across a restart of the
 server. herdr.el shows workspaces under both backends.
+
+Closing a workspace that has linked worktree workspaces closes the whole group, and herdr
+refuses to do it unless you say so. `herdr-workspace-close` asks a second question when that
+happens; answering no leaves everything open. A workspace with no worktrees is closed by the
+first answer and never asks twice.
 
 ## Worktrees
 
