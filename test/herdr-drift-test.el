@@ -27,12 +27,23 @@
   (condition-case nil (progn (herdr-rpc-call "ping") t) (herdr-error nil)))
 
 (defmacro herdr-drift-test-with-server (&rest body)
-  "Run BODY, skipping the test when no herdr server is running."
+  "Run BODY, skipping the test when no herdr server is running.
+
+Also skipped when the local binary and the running server are different
+builds.  The schema can only come from `herdr api schema --json\=', so on
+a mismatch these tests would check the curated commands against the
+binary's API while the user talks to the server's — and pass, which is
+worse than not running.  Upgrading herdr without restarting the server
+is the ordinary way into that state, and `herdr-drift-protocol-matches\='
+is what reports it."
   (declare (indent 0) (debug t))
   `(progn
      (skip-unless (herdr-drift-test--server-p))
-     (let ((herdr-schema--cache nil) (herdr-schema--cache-version nil))
+     (let ((herdr-schema--cache nil)
+           (herdr-schema--cache-version nil)
+           (herdr-schema--cache-protocol nil))
        (herdr-schema)
+       (skip-unless (herdr-schema-matches-server-p))
        ,@body)))
 
 (ert-deftest herdr-drift-protocol-matches ()

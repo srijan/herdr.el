@@ -135,15 +135,16 @@ therefore have a buffer without ever appearing on this connection."
       (herdr-state-stop))))
 
 (ert-deftest herdr-state-every-event-notifies-listeners ()
-  "No event is swallowed, replayed ones included.
+  "No event is swallowed, whatever the connection has just been through.
 
 The hook used to be suppressed until the stream fell silent for 0.4s,
-to absorb a replay believed to be about 150 events of history.  But
-the replay is drip-fed from the server's ring at one event per type
-per 100ms tick — it has no silent edge — while the live stream's
-median gap is 0.105s, so on a real timeline that window held the hook
-for 54.3 seconds and swallowed 533 events.  Anything that reintroduces
-a suppression window fails here."
+to absorb the ring replay herdr 0.8.2 began a subscription with.  It
+never worked: the replay was drip-fed at one event per type per 100ms
+tick — no silent edge — while the live stream's median gap is 0.105s,
+so on a real timeline that window held the hook for 54.3 seconds and
+swallowed 533 events.  0.9.0 removed the replay, so there is nothing
+to absorb either.  Anything that reintroduces a suppression window
+fails here."
   (let* ((events nil)
          (herdr-state--current (herdr-state-empty))
          (herdr-state-change-functions
@@ -166,12 +167,14 @@ a suppression window fails here."
 (ert-deftest herdr-state-settle-reconciles-ghost-panes-away ()
   "Connecting must end with the pane set the server actually has.
 
-A fresh `events.subscribe\\=' replays the server's ring history, so it
-can deliver a `pane_created\\=' for a pane that closed minutes ago — a
-ghost.  The replayed `pane_closed\\=' folds it away only because
-`pane.created\\=' happens to be listed before `pane.closed\\=' in
-`herdr-state-global-subscriptions\\='; nothing in the protocol
-guarantees it.  So the settle after connecting reconciles, and rebuilds
+A burst delivered across one server poll arrives in subscription-list
+order rather than in the order the events happened, so a `pane_created\\='
+can land after the `pane_closed\\=' that retires it — a ghost.  It folds
+away only because `pane.created\\=' happens to be listed before
+`pane.closed\\=' in `herdr-state-global-subscriptions\\='; nothing in the
+protocol guarantees it.  Through herdr 0.8.2 the whole 512-event replay
+arrived that way, so the window was hours wide; it is now milliseconds.
+Either way the settle after connecting reconciles, and rebuilds
 connection B afterwards so its per-pane subscriptions name the
 reconciled set rather than the ghost."
   (let (subscribed)
@@ -369,8 +372,8 @@ are not told about is the same bug one level up."
           (herdr-state--close herdr-state--pane-process))))))
 
 (ert-deftest herdr-state-settle-without-resync-does-not-snapshot ()
-  "The start path snapshots immediately before subscribing, so its
-settle has nothing to re-fetch — one `pane.list\\=' and no more."
+  "The start path has just snapshotted, so its settle re-fetches
+nothing: it reconciles, and does not ask for another snapshot."
   (let (methods)
     (herdr-test-with-server
         (herdr-state-live-test--reconnect-server
@@ -395,10 +398,11 @@ settle has nothing to re-fetch — one `pane.list\\=' and no more."
     (cons (herdr-test-ok req `((type . "pane_list") (panes . ,panes))) nil)))
 
 (ert-deftest herdr-state-reconcile-drops-panes-the-server-no-longer-has ()
-  "Ghost panes are the visible symptom of the replay race: a bursty
-replay can end priming early, letting pane_created events for
-long-closed panes land after the settling snapshot.  They then appear in
-every picker and cannot be navigated to."
+  "Ghost panes appear when a pane_created for a pane the server has
+already dropped reaches the cache after the snapshot that would have
+contradicted it.  They then show up in every picker and cannot be
+navigated to.  `pane.list' is what settles it, whatever produced the
+ordering."
   (herdr-test-with-server
       (herdr-state-live-test--pane-list-server
        [((pane_id . "w1:p1") (cwd . "/tmp"))])
@@ -584,8 +588,8 @@ event."
 
 ;;; Reconciling workspaces and tabs against the server
 
-;; Ghost workspaces are the same replay/disconnect-gap class as ghost
-;; panes, but with no periodic repair at all before
+;; Ghost workspaces are the same disconnect and startup-window class as
+;; ghost panes, but with no periodic repair at all before
 ;; `herdr-state-reconcile-workspaces' existed: a missed `workspace.closed'
 ;; had nothing short of a full reconnect to clear it, and a
 ;; long-lived session that never disconnects never reconnects.
@@ -650,6 +654,103 @@ nothing when nothing has changed."
     (should (equal '("w1")
                    (mapcar (lambda (w) (alist-get 'workspace_id w))
                            (herdr-state-workspaces herdr-state--current))))))
+
+(ert-deftest herdr-state-settle-reconciles-workspaces-too ()
+  "The startup window loses events and no replay covers it any more.
+
+herdr 0.9.0 starts a subscription at the sequence its request arrived
+on, so anything the server announced between `session.snapshot\=' and
+the subscribe is gone.  `pane.list\=' repairs panes; without a
+`workspace.list\=' beside it a workspace renamed in that window stays
+wrong until something else happens to reconcile, and
+`herdr-state-reconcile-workspaces\=' has one other caller."
+  (let (methods)
+    (herdr-test-with-server
+        (lambda (req)
+          (let ((method (alist-get 'method req)))
+            (push method methods)
+            (pcase method
+              ("pane.list"
+               (cons (herdr-test-ok req '((type . "pane_list") (panes . []))) nil))
+              ("workspace.list"
+               (cons (herdr-test-ok
+                      req '((type . "workspace_list")
+                            (workspaces . [((workspace_id . "w1")
+                                            (label . "renamed"))])))
+                     nil))
+              (_ (cons (herdr-test-ok req '((type . "ok"))) nil)))))
+      (let ((herdr-state--running t)
+            (herdr-state--pane-process nil)
+            (herdr-state--resubscribe-timer nil)
+            (herdr-state--settle-timer nil)
+            (herdr-state--current
+             (herdr-state-from-snapshot
+              '((workspaces . (((workspace_id . "w1") (label . "stale"))))))))
+        (unwind-protect
+            (progn
+              (herdr-state--settle)
+              (should (member "workspace.list" methods))
+              (should (equal "renamed"
+                             (alist-get 'label
+                                        (car (herdr-state-workspaces
+                                              herdr-state--current))))))
+          (herdr-state--close herdr-state--pane-process))))))
+
+(ert-deftest herdr-state-settle-reconciles-panes-before-workspaces ()
+  "Connection B is realigned against the pane set, so the pane set is
+settled first.  Recorded in reverse, so the list reads newest first."
+  (let (methods)
+    (herdr-test-with-server
+        (lambda (req)
+          (let ((method (alist-get 'method req)))
+            (push method methods)
+            (pcase method
+              ("pane.list"
+               (cons (herdr-test-ok req '((type . "pane_list") (panes . []))) nil))
+              ("workspace.list"
+               (cons (herdr-test-ok req '((type . "workspace_list")
+                                          (workspaces . []))) nil))
+              (_ (cons (herdr-test-ok req '((type . "ok"))) nil)))))
+      (let ((herdr-state--running t)
+            (herdr-state--pane-process nil)
+            (herdr-state--resubscribe-timer nil)
+            (herdr-state--settle-timer nil)
+            (herdr-state--current (herdr-state-empty)))
+        (unwind-protect
+            (progn
+              (herdr-state--settle)
+              (let ((order (nreverse methods)))
+                (should (< (seq-position order "pane.list")
+                           (seq-position order "workspace.list")))))
+          (herdr-state--close herdr-state--pane-process))))))
+
+(ert-deftest herdr-state-settle-keeps-the-cache-when-workspace-list-fails ()
+  "An unanswerable `workspace.list\=' must not read as an empty server.
+
+`herdr-state-reconcile-workspaces\=' already refuses to treat nil as an
+answer; the settle must not defeat that by calling it somewhere the
+refusal cannot take effect."
+  (herdr-test-with-server
+      (lambda (req)
+        (pcase (alist-get 'method req)
+          ("pane.list"
+           (cons (herdr-test-ok req '((type . "pane_list") (panes . []))) nil))
+          ("workspace.list" (cons nil nil))
+          (_ (cons (herdr-test-ok req '((type . "ok"))) nil))))
+    (let ((herdr-state--running t)
+          (herdr-state--pane-process nil)
+          (herdr-state--resubscribe-timer nil)
+          (herdr-state--settle-timer nil)
+          (herdr-state--current
+           (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1") (label . "kept"))))))))
+      (unwind-protect
+          (progn
+            (herdr-state--settle)
+            (should (equal '("w1")
+                           (mapcar (lambda (w) (alist-get 'workspace_id w))
+                                   (herdr-state-workspaces herdr-state--current)))))
+        (herdr-state--close herdr-state--pane-process)))))
 
 (provide 'herdr-state-live-test)
 ;;; herdr-state-live-test.el ends here

@@ -7,11 +7,11 @@
 (require 'herdr-schema)
 
 (defvar herdr-schema-test--fixture
-  (expand-file-name "fixtures/schema-protocol-20.json"
+  (expand-file-name "fixtures/schema-protocol-22.json"
                     (file-name-directory (or load-file-name buffer-file-name))))
 
 (defmacro herdr-schema-test-with-fixture (&rest body)
-  "Run BODY with the captured protocol-20 schema loaded."
+  "Run BODY with the captured protocol-22 schema loaded."
   (declare (indent 0) (debug t))
   `(let ((herdr-schema--cache nil)
          (herdr-schema--cache-version nil))
@@ -21,7 +21,7 @@
 (ert-deftest herdr-schema-exposes-every-method ()
   (herdr-schema-test-with-fixture
     (let ((methods (herdr-schema-methods)))
-      (should (= (length methods) 91))
+      (should (= (length methods) 102))
       (should (member "ping" methods))
       (should (member "pane.read" methods))
       (should (member "events.subscribe" methods))
@@ -163,11 +163,17 @@ find."
         fetched)
     (cl-letf (((symbol-function 'herdr-schema--server-version)
                (lambda () "0.9.0"))
+              ;; A parsed schema, not a sentinel: `herdr-schema' reads
+              ;; the protocol out of what the fetch produced, so a stub
+              ;; that returns something no fetch can return would assert
+              ;; against an implementation this file does not have.
               ((symbol-function 'herdr-schema--fetch)
-               (lambda () (setq fetched t herdr-schema--cache 'fresh))))
+               (lambda ()
+                 (setq fetched t herdr-schema--cache '((protocol . 22))))))
       (herdr-schema)
       (should fetched)
-      (should (equal "0.9.0" herdr-schema--cache-version)))))
+      (should (equal "0.9.0" herdr-schema--cache-version))
+      (should (equal 22 herdr-schema--cache-protocol)))))
 
 (ert-deftest herdr-schema-keeps-a-cache-the-server-still-matches ()
   "Shelling out to herdr on every schema question is the cost this cache
@@ -250,6 +256,74 @@ at any other."
               (delete-file failing))))
       (delete-file stub)
       (delete-directory user-emacs-directory t))))
+
+(ert-deftest herdr-schema-says-when-the-binary-disagrees-with-the-server ()
+  "The schema comes from the local binary; the version came from the socket.
+
+There is no socket method for the schema — only `herdr api schema
+--json' can produce one — so the two halves can describe different
+servers.  Upgrading the binary while the old server keeps running is
+the ordinary way in: brew replaces the file, the running process keeps
+its loaded image, and the cache then holds the new binary's schema
+labelled with the old server's version.  Every drift test downstream
+then checks the curated commands against an API nobody is talking to.
+
+So the protocol the schema declares is recorded, and disagreeing with
+the server is something the package can be asked about rather than
+something it hides."
+  (let* ((herdr-schema--cache nil)
+         (herdr-schema--cache-version nil)
+         (herdr-schema--cache-protocol nil)
+         (stub (herdr-schema-test--stub-executable
+                "printf '{\"protocol\": 22, \"schemas\": {}}'\n")))
+    (unwind-protect
+        (herdr-test-with-server
+            (lambda (req)
+              (cons (herdr-test-ok req '((type . "pong") (version . "0.8.2")
+                                         (protocol . 20)))
+                    nil))
+          (let ((herdr-executable stub))
+            (herdr-schema)
+            ;; The schema is the binary's, and says so.
+            (should (equal 22 (herdr-schema-protocol)))
+            (should-not (herdr-schema-matches-server-p))))
+      (delete-file stub))))
+
+(ert-deftest herdr-schema-agrees-when-binary-and-server-match ()
+  "The ordinary case must not report a mismatch."
+  (let* ((herdr-schema--cache nil)
+         (herdr-schema--cache-version nil)
+         (herdr-schema--cache-protocol nil)
+         (stub (herdr-schema-test--stub-executable
+                "printf '{\"protocol\": 22, \"schemas\": {}}'\n")))
+    (unwind-protect
+        (herdr-test-with-server
+            (lambda (req)
+              (cons (herdr-test-ok req '((type . "pong") (version . "0.9.0")
+                                         (protocol . 22)))
+                    nil))
+          (let ((herdr-executable stub))
+            (herdr-schema)
+            (should (herdr-schema-matches-server-p))))
+      (delete-file stub))))
+
+(ert-deftest herdr-schema-unreachable-server-is-not-a-mismatch ()
+  "No server is a different fact from a disagreeing one.
+
+`herdr-call' works with no server running, reading the binary's schema
+to build a request.  Reporting that as a mismatch would put a warning
+in front of every one of those."
+  (let* ((herdr-schema--cache nil)
+         (herdr-schema--cache-version nil)
+         (herdr-schema--cache-protocol nil)
+         (herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
+         (stub (herdr-schema-test--stub-executable
+                "printf '{\"protocol\": 22, \"schemas\": {}}'\n")))
+    (unwind-protect
+        (let ((herdr-executable stub))
+          (herdr-schema)
+          (should (herdr-schema-matches-server-p)))
+      (delete-file stub))))
 
 (defun herdr-schema-test--stub-executable (body)
   "Write BODY as an executable /bin/sh script and return its path."

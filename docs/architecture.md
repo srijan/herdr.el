@@ -68,8 +68,11 @@ with twelve plain shells about 120 server requests each second.
 The event stream alone cannot keep the cache correct. Two faults break it:
 
 1. A disconnect drops the events that happen during the gap. The server never sends them again.
-2. A new subscription replays the full event ring of the server. The replay creates panes and
-   workspaces that closed long ago.
+2. Startup has the same gap in miniature. A subscription starts at the sequence its request
+   arrived on, so anything the server announced between the snapshot and the subscribe is lost.
+   Through herdr 0.8.2 a replay of the server's event ring happened to cover that window, at the
+   cost of creating panes and workspaces that closed long ago; 0.9.0 removed the replay, and the
+   window with nothing covering it is what remains.
 
 herdr.el therefore compares its cache against the server. Two functions do this:
 

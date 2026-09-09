@@ -168,7 +168,7 @@ the buffer is an attachment, and `M-x herdr` attaches again.
 ## Requirements
 
 - Emacs 28.1+
-- [herdr](https://herdr.dev) 0.8.2 (protocol 20)
+- [herdr](https://herdr.dev) 0.9.0 (protocol 22)
 - `ghostel`, `magit-section`
 
 Optional, used when present and never required: `marginalia`, `embark`, `consult`, `alert`.
@@ -257,10 +257,11 @@ Some early findings were wrong. `docs/protocol.md` keeps each wrong one visible 
 strikethrough beside its correction. Deleting a wrong finding only means the next reader derives
 it again from the same weak evidence, which is how four of them survived as long as they did.
 
-The finding that bites first: `events.subscribe` replays the server's whole 512-event ring to
-every new subscriber, one event per subscribed type per 100ms tick. Events carry no sequence
-number and no timestamp, so a client cannot tell a replay from a live event. The dashboard shows
-a second or two of dead panes after `M-x herdr`, until the next reconcile clears them.
+The finding that bit first was the event replay: through herdr 0.8.2, `events.subscribe` sent
+the server's whole 512-event ring to every new subscriber, and events carry no sequence number
+and no timestamp, so a client could not tell a replay from a live event. herdr 0.9.0 removed it.
+What survives is the shape it forced: herdr.el trusts `pane.list` and `workspace.list` over the
+stream, and reconciles rather than filters.
 
 Everything measured, with the source excerpts and the wrong readings kept visible, is in
 [`docs/protocol.md`](docs/protocol.md).

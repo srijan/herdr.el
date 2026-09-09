@@ -72,15 +72,19 @@ is \"resync\" and DATA is nil.")
 this file says why, and `herdr-state-reconcile-panes\\=' covers what it
 alone carried.
 
-Order matters, so do not sort this.  A fresh subscription replays
-whatever matching events remain in the server's shared ring buffer
-\(512 events in herdr 0.8.2), delivered one per subscribed type per
-100ms tick, with the types drained in the order they are listed here
-rather than in the order the events happened.  A replayed
-`pane.created\\=' for a closed pane therefore folds away only because
-`pane.closed\\=' is listed after it.  `herdr-state-reconcile-panes\\=' is
-what makes that safe rather than lucky, but the ordering is still the
-first line of defence.")
+Order matters, so do not sort this.  The server polls each subscription
+in the order listed here and emits at most one matching event for each
+pass, so a burst delivered across one pass arrives in list order rather
+than in the order the events happened.  A `pane.created\\=' for a pane
+that has already closed therefore folds away only because
+`pane.closed\\=' is listed after it.
+
+Through herdr 0.8.2 this governed the whole 512-event replay a fresh
+subscription began with, and getting it wrong left ghosts from hours
+earlier.  0.9.0 starts a subscription at the sequence its request
+arrived on, so the window is now milliseconds wide.  The ordering stays:
+it costs nothing, and `herdr-state-reconcile-panes\\=' is what makes the
+result right rather than lucky either way.")
 
 ;;; The state object
 
@@ -430,16 +434,19 @@ events use dots, so both spellings appear here deliberately."
 (defcustom herdr-state-settle-delay 0.4
   "Seconds after connecting before the cache is reconciled with the server.
 
-`events.subscribe\\=' replays whatever matching events remain in the
-server's 512-event ring buffer, drip-fed at one event per subscribed
-type per 100ms tick (herdr 0.8.2, api/server.rs).  An earlier comment
-here read a short measurement window — 8 events in 4ms, one
-`pane.updated\\=' — as last-value retention; the drip simply had not
-continued yet.  For the types subscribed now the ring rarely holds more
-than a few of each, so the bulk of the replay lands within this delay,
-and `herdr-state--settle\\='s reconcile makes the result right even when
-a long drip is still arriving: replayed events are folded like live
-ones, and `pane.list\\=' is authoritative over all of them."
+The delay is what the startup gap costs.  A subscription starts at the
+sequence its request arrived on, so whatever the server announced
+between `session.snapshot\\=' and the subscribe is lost, and
+`herdr-state--settle\\=' is what repairs it: `pane.list\\=' and
+`workspace.list\\=' are both authoritative and both take no parameters.
+Until this fires, a workspace renamed in that window reads stale.
+
+Through herdr 0.8.2 this delay had a second job.  A fresh subscription
+replayed the server's 512-event ring, drip-fed at one event per
+subscribed type per 100ms tick, and the value was chosen so the bulk of
+that replay landed inside it.  0.9.0 removed the replay; the value is
+kept because the reconcile it schedules is now the only thing closing
+the gap, and delaying that further buys nothing."
   :type 'number
   :group 'herdr)
 
@@ -479,16 +486,17 @@ See `herdr-state--generation'."
 (defun herdr-state--dispatch (kind data)
   "Fold event KIND with DATA into the cache and notify listeners.
 
-Every event notifies, replayed ones included.  This used to hold the
-hook back until the stream had been silent for 0.4s, to absorb the
-replay a fresh subscription starts with.  But the replay is drip-fed
-from the server's ring at one event per type per 100ms tick, so it has
-no silent edge to detect — while the live stream's median gap between
-events is 0.105s, so a quiet-based window never closed: simulated
-against a real 200-second timeline it held the hook for 54.3 seconds
-and swallowed 533 events to absorb a replay of 8.  That is a minute of
-frozen modeline and dashboard after every connect, which is precisely
-when an agent is most likely to be working."
+Every event notifies, with no quiet window in front of it.  This used
+to hold the hook back until the stream had been silent for 0.4s, to
+absorb the ring replay a fresh subscription began with through herdr
+0.8.2.  It did not work even then: the replay was drip-fed at one event
+per type per 100ms tick and so had no silent edge to detect, while the
+live stream's median gap between events is 0.105s, so a quiet-based
+window never closed.  Simulated against a real 200-second timeline it
+held the hook for 54.3 seconds and swallowed 533 events to absorb a
+replay of 8 — a minute of frozen modeline and dashboard after every
+connect, precisely when an agent is most likely to be working.  0.9.0
+removed the replay, so there is nothing left to absorb either."
   (setq herdr-state--current (herdr-state-reduce herdr-state--current kind data))
   (run-hook-with-args 'herdr-state-change-functions kind data))
 
@@ -502,35 +510,38 @@ RESYNC is passed through to `herdr-state--settle\\='."
                      #'herdr-state--settle resync)))
 
 (defun herdr-state--settle (&optional resync)
-  "Settle the cache once the retained events have landed, then realign B.
+  "Reconcile the cache against the server after connecting, then realign B.
+
+Both halves are reconciled, panes and workspaces, because both have a
+gap and neither closes the other's.  A subscription starts at the
+sequence its request arrived on, so whatever the server announced
+between the snapshot and the subscribe is gone; before herdr 0.9.0 a
+retained-event replay happened to cover that window, and now nothing
+does.  `pane.list\\=' and `workspace.list\\=' both take no parameters and
+both answer with everything live, so the pair is authoritative over
+whatever was missed.
+
+What the pair does not restore is order and focus.  Reconciling
+updates and removes workspaces; it does not reorder them, and neither
+list call carries `focused_pane_id\\='.  A `workspace.reordered\\=' or a
+focus change lost in the window therefore survives until the next one
+of its kind.  Both are cosmetic and both need an ordering fact the
+protocol does not give a client.
 
 Non-nil RESYNC replaces the whole cache from `session.snapshot\\=' first,
-and is what the reconnect path passes.  It is not optional there.  A
-disconnect drops events that cannot be replayed, and they are not only
-pane events: a workspace renamed or a tab closed during the gap is
-announced once and never again.  `pane.list\\=' repairs panes and nothing
-else, so without the snapshot a reconnect left the workspace and tab
-halves of the cache wrong for the rest of the session — the dashboard
-showing a stale label and a closed tab lingering as a ghost nothing
-could reach.  `herdr-state-start\\=' needs no RESYNC because it snapshots
-immediately before subscribing.
-
-Reconciling: the replay can carry a `pane.created\\=' for a pane closed
-long ago — a ghost.  It folds correctly only because `pane.created\\='
-precedes `pane.closed\\=' in `herdr-state-global-subscriptions\\=' —
-replayed types are drained in subscription-list order, not
-chronological order — so a ghost is one list edit away at any time,
-and it is a ghost that shows up in every picker and cannot be
-navigated to.  `pane.list\\=' is authoritative and settles it either
-way.
+and is what the reconnect path passes.  It is not optional there: a
+disconnect can span minutes, and reconciling repairs membership while
+the snapshot is what restores focus with it.  `herdr-state-start\\='
+needs no RESYNC because it has just snapshotted.
 
 Realigning connection B afterwards, not before: reconciling is what
 makes the pane set final, and B subscribes the agent slice of it."
   (setq herdr-state--settle-timer nil)
   (when herdr-state--running
-    ;; The replayed pane events have already queued a debounced rebuild
-    ;; of B through `herdr-state--note-pane-set-change'; drop it, since
-    ;; the rebuild below is the same work against a better pane set.
+    ;; Events arriving since the subscribe have already queued a
+    ;; debounced rebuild of B through `herdr-state--note-pane-set-change';
+    ;; drop it, since the rebuild below is the same work against a
+    ;; better pane set.
     (when herdr-state--resubscribe-timer
       (cancel-timer herdr-state--resubscribe-timer)
       (setq herdr-state--resubscribe-timer nil))
@@ -549,7 +560,8 @@ makes the pane set final, and B subscribes the agent slice of it."
                   (herdr-state-from-snapshot
                    (alist-get 'snapshot (herdr-rpc-call "session.snapshot"))))
           (error nil)))
-      (herdr-state-reconcile-panes))
+      (herdr-state-reconcile-panes)
+      (herdr-state-reconcile-workspaces))
     (condition-case nil
         (herdr-state--open-pane-stream)
       (error (herdr-state--schedule-reconnect)))
@@ -743,11 +755,13 @@ without changing what B should watch."
     (condition-case nil
         (progn
           (herdr-state--open-streams)
-          ;; A disconnect of any length loses events that cannot be
-          ;; replayed, and they are not only pane events — so this
-          ;; settle takes a full snapshot rather than reconciling panes
-          ;; alone.  Reconnecting without one left every workspace and
-          ;; tab change made during the gap missing for good.
+          ;; A disconnect of any length loses events that are never
+          ;; sent again — so this settle takes a full snapshot rather
+          ;; than reconciling alone.  The reconcile repairs membership
+          ;; for panes and workspaces; the snapshot is what restores
+          ;; focus, which neither list call carries.  Reconnecting
+          ;; without one left every workspace and tab change made
+          ;; during the gap missing for good.
           (herdr-state--schedule-settle t)
           (setq herdr-state--reconnect-delay nil))
       ;; Plain `error', not `herdr-error': `process-send-string' signals
@@ -772,9 +786,12 @@ without changing what B should watch."
   "Make the cached pane set match the server, and refresh directories.
 
 The event stream cannot keep the cache right on its own.  A `cd\\=' is
-never announced, and a fresh `events.subscribe\\=' replays the server's
-event ring, so a `pane_created\\=' for a long-closed pane arrives as
-news.  One `pane.list\\=' is authoritative and answers both.
+never announced, and a subscription starts at the sequence its request
+arrived on, so whatever happened between the snapshot and the subscribe
+is never sent.  One `pane.list\\=' is authoritative and answers both.
+Through herdr 0.8.2 there was a third reason: a fresh subscription
+replayed the server's event ring, so a `pane_created\\=' for a
+long-closed pane arrived as news.
 
 Returns non-nil when anything significant changed.  A record drifting
 only in volatile fields is refreshed without running the change hook, so
@@ -842,7 +859,7 @@ cannot pronounce it stale."
 Panes get this from `herdr-state-reconcile-panes' every poll; workspaces
 never did, because nothing periodic called `workspace.list' the way the
 pane poll calls `pane.list'.  A missed
-`workspace.closed' — the same disconnect-window and ring-replay gaps
+`workspace.closed' — the same disconnect and startup-window gaps
 `herdr-state-reconcile-panes' defends panes against — then leaves a
 ghost workspace in the cache indefinitely: not just until the next
 poll, since there is no next poll for it, but until the next full
@@ -883,10 +900,10 @@ and updates in a single pass.  Returns non-nil when anything changed."
 (defun herdr-state-refresh ()
   "Replace the cache from a fresh snapshot, leaving subscriptions alone.
 
-Lighter than `herdr-state-resync\\=', which also rebuilds the per-pane
-event connection and so triggers another replay.  This is what the
-pickers use: the cache can drift, and a picker offering panes that no
-longer exist is worse than one extra round trip."
+Lighter than `herdr-state-resync\\=', which also tears down and rebuilds
+the per-pane event connection.  This is what the pickers use: the cache
+can drift, and a picker offering panes that no longer exist is worse
+than one extra round trip."
   (when-let* ((snapshot (ignore-errors
                           (alist-get 'snapshot
                                      (herdr-rpc-call "session.snapshot")))))

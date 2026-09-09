@@ -38,7 +38,7 @@
 (declare-function project-root "project" (project))
 (declare-function project-current "project" (&optional maybe-prompt directory))
 
-(defcustom herdr-protocol-version 20
+(defcustom herdr-protocol-version 22
   "Protocol version this package was written against.
 A mismatch warns once rather than refusing to run: declining to work
 because herdr bumped a minor is worse than one command misbehaving."

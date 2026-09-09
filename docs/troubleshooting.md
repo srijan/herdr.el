@@ -7,14 +7,15 @@ Each section names a symptom. Read the cause, then do the correction.
 **Symptom.** For one or two seconds after `M-x herdr`, the dashboard shows extra rows. The rows
 read `shell` and `unknown`. The rows then disappear.
 
-**Cause.** The herdr server replays its full event ring to each new subscriber. The replay
-creates panes that closed long ago.
+**Cause.** Your herdr server is older than 0.9.0. Those servers replay their full event ring to
+each new subscriber, which creates panes that closed long ago. herdr 0.9.0 removed the replay,
+so on a current server these rows do not appear at all.
 
-**Correction.** None is necessary. The next reconcile removes the rows. To make the correction
-faster, decrease `herdr-term-directory-interval` from 5.0 seconds.
+**Correction.** None is necessary. The next reconcile removes the rows. Upgrading herdr removes
+the cause.
 
 For the full explanation, see
-[Protocol notes](protocol.md#the-server-replays-its-full-event-ring).
+[Protocol notes](protocol.md#the-server-replayed-its-full-event-ring-until-090).
 
 ## Emacs cannot reach the server
 
@@ -31,12 +32,12 @@ For the full explanation, see
 
 ## Emacs warns about the protocol version
 
-**Symptom.** The echo area shows `server speaks protocol N, this package targets 20`.
+**Symptom.** The echo area shows `server speaks protocol N, this package targets 22`.
 
-**Cause.** Your herdr version is not 0.8.2.
+**Cause.** Your herdr version is not 0.9.0.
 
 **Correction.** herdr.el continues to run, and the warning appears one time only. Some commands
-can behave incorrectly. Either install herdr 0.8.2, or set `herdr-protocol-version` to your
+can behave incorrectly. Either install herdr 0.9.0, or set `herdr-protocol-version` to your
 version to stop the warning. The option changes the warning only. It does not change what
 herdr.el sends.
 

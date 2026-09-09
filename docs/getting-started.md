@@ -7,7 +7,7 @@ This document tells you how to install herdr.el and how to do the first tasks.
 You must have these items:
 
 - Emacs 28.1 or a later version.
-- [herdr](https://herdr.dev) 0.8.2. This version speaks protocol 20.
+- [herdr](https://herdr.dev) 0.9.0. This version speaks protocol 22.
 - The Emacs packages `ghostel` and `magit-section`. (`magit-section` requires `transient`, which
   Emacs ships from version 28.1.)
 
@@ -64,9 +64,10 @@ The command does these operations in sequence:
 3. It connects the event stream.
 4. It opens the dashboard in the buffer `*herdr-agents*`.
 
-For one or two seconds, the dashboard can show panes that do not exist. The panes have the
-status `unknown`. This is a known effect of the herdr server. The dashboard corrects itself.
-For the cause, see [Protocol notes](protocol.md#the-server-replays-its-full-event-ring).
+On a herdr older than 0.9.0, the dashboard can show panes that do not exist for one or two
+seconds. The panes have the status `unknown`, and the dashboard corrects itself. herdr 0.9.0
+removed the cause. For the explanation, see
+[Protocol notes](protocol.md#the-server-replayed-its-full-event-ring-until-090).
 
 ## Step 4: Read the dashboard
 

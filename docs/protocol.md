@@ -34,12 +34,20 @@ alists from one alist. A list gives you a rejected `events.subscribe`.
 `events.subscribe` is the one long-lived call. It acknowledges with
 `{"result":{"type":"subscription_started"}}` and then streams.
 
-### The server replays its full event ring
+### The server replayed its full event ring, until 0.9.0
 
-The server holds a ring of 512 events. It gives a new subscriber **all of them**. It drips them
-out at one event for each subscribed type every 100 milliseconds.
+**Since herdr 0.9.0 there is no replay.** A subscription starts at the sequence its request
+arrived on, so it sees what happens from then and nothing older. Events emitted while the
+subscription is still being set up are kept, which upstream pins with a test named
+`lifecycle_subscription_skips_history_but_keeps_setup_window_events`.
 
-Two earlier readings of this were wrong:
+The rest of this section is what 0.8.2 did. It stays because the client still carries defences
+built for it, and because deleting a finding only means the next reader derives it again.
+
+Through 0.8.2 the server held a ring of 512 events and gave a new subscriber **all of them**,
+dripped out at one event for each subscribed type every 100 milliseconds.
+
+Two earlier readings of that were wrong:
 
 - ~~`events.subscribe` answers with the last retained event of each subscribed type, and nothing
   older.~~
@@ -48,41 +56,56 @@ Two earlier readings of this were wrong:
 Both readings measured inside a window that was shorter than the replay. An earlier count of
 "8 events in 4 milliseconds" was the first tick only.
 
-The cause is in `src/api/subscriptions.rs` of herdr 0.8.2. Each plain event subscription starts
-at sequence zero. Line 179 shows one of about two dozen identical arms:
+The cause was in `src/api/subscriptions.rs`. In 0.8.2 each plain event subscription started at
+sequence zero, in about two dozen identical arms:
 
 ```rust
+// herdr 0.8.2
 Subscription::PaneCreated {} => Ok(Self::Event(ActiveEventSubscription {
     event_kind: EventKind::PaneCreated,
     last_sequence: 0,                       // replays the whole ring
 })),
 ```
 
-Line 259 shows the per-pane subscription, which is correct:
+The per-pane subscription was already correct, which is why connection B never made ghost panes
+and connection A always did:
 
 ```rust
 Subscription::PaneAgentStatusChanged { .. } => {
     let last_sequence = event_hub.current_sequence();   // starts at now
 ```
 
-This is a fault in herdr, not a design choice. The correction is one line for each arm. It also
-explains why connection B never makes ghost panes and connection A always does.
+This document called that a fault rather than a design choice, and said the correction was one
+line for each arm. 0.9.0 made it. The two dozen arms became one helper taking a start sequence
+the caller captures when the request arrives:
+
+```rust
+// herdr 0.9.0
+let event_subscription = |event_kind| {
+    Self::Event(ActiveEventSubscription {
+        event_kind,
+        last_sequence: event_start_sequence,   // captured at request arrival
+    })
+};
+```
 
 Measured against a live 0.8.2 server, with the 18 subscriptions that herdr.el uses: 253 events
 in 5 seconds, and the stream had not stopped. The ring still held events from workspaces that
-closed hours before. The `pane.created` events outlast the `pane.closed` events, so some
-replayed panes get no closing event. Those panes stay until the next `pane.list` reconcile.
+closed hours before. The `pane.created` events outlasted the `pane.closed` events, so some
+replayed panes got no closing event and stayed until the next `pane.list` reconcile. For one or
+two seconds after `M-x herdr`, the dashboard showed dead panes with the status `unknown`.
 
-A client cannot remove the replay. Three facts block every method:
+A client could not remove the replay, which is why herdr.el reconciles rather than filters.
+`EventEnvelope` serializes to `{event, data}` and carries no sequence number and no timestamp,
+so a replayed event has the same shape as a live one; `events.wait` used the same constructor
+and inherited the same fault; and `events.subscribe` accepts `subscriptions: [{type}]` only,
+with no cursor. None of that changed in 0.9.0. What changed is that there is no history to tell
+apart.
 
-1. `EventEnvelope` serializes to `{event, data}`. It carries no sequence number and no
-   timestamp. A replayed event therefore has the same shape as a live event.
-2. `events.wait` uses the same constructor. It inherits the same fault, so it matches historical
-   events.
-3. `events.subscribe` accepts `subscriptions: [{type}]` only. There is no cursor.
-
-The visible effect: for one or two seconds after `M-x herdr`, the dashboard shows dead panes with
-the status `unknown`. The next reconcile removes them.
+**What the removal cost the client.** The replay used to cover the window between
+`session.snapshot` and the subscribe in `herdr-state-start`. Nothing covers it now, so the
+settle reconciles workspaces as well as panes. Order and focus are not restored by either list
+call; see `herdr-state--settle`.
 
 ### `pane_updated` is coupled to output
 
@@ -189,8 +212,8 @@ field as volatile. Do not treat it as a label when you compare two panes.
 ## How to read the herdr source
 
 ```bash
-curl -sSL -o herdr.tar.gz https://github.com/herdrdev/herdr/archive/refs/tags/v0.8.2.tar.gz
-tar xzf herdr.tar.gz herdr-0.8.2/src/api
+curl -sSL -o herdr.tar.gz https://github.com/herdrdev/herdr/archive/refs/tags/v0.9.0.tar.gz
+tar xzf herdr.tar.gz herdr-0.9.0/src/api
 ```
 
 Three files answer most questions:
