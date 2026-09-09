@@ -255,7 +255,16 @@ U1 is independent and lands first, because it is the smallest and it repairs a l
 
 1. Replace each raw read with the module's accessor. `herdr-state` included: it resolves a pane through `herdr-pane-id` already and should resolve a workspace the same way. Seven reads bind the record to a name the enforcement test cannot see, so migrate them from this list rather than from the test's output: `herdr-cmd.el` binds it as `existing` and as `open`, `herdr-select.el` binds it as `w` when mapping workspace ids, `herdr-tree--workspace-repository` binds it as `parent`, and `herdr-state-reconcile-workspaces` binds it as `w` three times.
 2. Fix the dashboard heading. `herdr-tree.el` falls back with a plain `or`, so an empty label renders as no name. It becomes an identity lookup.
-3. Collapse the display conventions onto one accessor. Five surfaces format a workspace five ways, and three of them put a different quantity in parentheses: the dashboard shows a checkout count, the picker annotation shows the record's pane count, and the main group counts panes. Keep each surface's own column layout and quantity. Take the displayed name from identity, which is never empty, on every surface without exception - the dashboard, both pickers, the place annotation and the confirmations. A surface that took the name instead would print nothing for an unlabelled workspace, which is the defect this unit removes, moved. Any accessor returning the raw label stays separate and is not a display accessor.
+3. Collapse the display conventions onto one accessor, under a rule that survives contact with the surfaces. The rule is not "identity everywhere": it is **no surface renders a workspace as nameless**. Where a surface prints one field for the workspace, that field is identity. Where a surface already prints the id as its own token, the name field keeps the raw label and may be empty, because the row is named already and identity there would print the id twice. Keep each surface's own column layout and quantity - the dashboard shows a checkout count, the picker annotation shows the record's pane count.
+
+   The four surfaces split three ways:
+
+   - `herdr-tree.el:432`, the dashboard heading, prints `(or label id)` and nothing else identifying. **Identity applies.** This is the empty-label defect step 2 fixes.
+   - `herdr-select--workspace-candidate` builds the row as the id followed by `herdr-select--annotate-workspace`, whose first column is `(or label "")`. **The column stays as it is.** Identity here renders an unlabelled `w2F` as `w2F  w2F  3 panes` - the id twice, in exactly the case this unit exists to fix.
+   - `herdr-select--place-candidate` leads with the place, which is a workspace id *or* a directory path, and delegates its annotation to the same function. **The column stays as it is** for both. A path-shaped place whose workspace is unlabelled reads `~/proj    3 panes`, which names the row by its path and is better than an id, not worse.
+   - `herdr-cmd--workspace-description` already answers `label (id)` or a bare id. **It is already correct and does not change.** Switching it to identity would either drop the parenthesised id that makes a confirmation unambiguous, or produce `w2F (w2F)`.
+
+   Any accessor returning the raw label stays separate and is not a display accessor.
 4. Add the enforcement test, modelled on the pane one: scan every package source except the new module for a field read off a variable named `workspace`, and report offenders as file and line.
 5. Leave `herdr-state-workspace-directory` and `herdr-state-workspace-for-directory` where they are. They walk the pane list, so they need the cache.
 
@@ -267,8 +276,10 @@ U1 is independent and lands first, because it is the smallest and it repairs a l
 - The enforcement test reports no offender across the package sources.
 - A workspace with an empty label renders in the dashboard heading as its id, not as a blank.
 - A workspace with a label renders as that label.
-- The picker annotation and the dashboard heading show the same name for the same workspace, asserted for a labelled workspace and again for an unlabelled one. The unlabelled case is the one that regresses if a surface takes the name rather than the identity.
-- A confirmation prompt names a workspace the same way after the change as before, for a workspace that has a label.
+- For a labelled workspace, the dashboard heading and the picker row both show the label.
+- For an unlabelled workspace, the dashboard heading shows the id, and the picker row contains the id exactly once. Asserted on the whole rendered row, not on the annotation in isolation: the rule is about what a reader sees, and the annotation alone cannot answer it.
+- The place picker renders a path-shaped place and an id-shaped place, each for an unlabelled workspace, and neither row repeats its leading token.
+- A confirmation prompt names a workspace the same way after the change as before, both for a labelled workspace and for an unlabelled one. `herdr-cmd--workspace-description` is unchanged by this unit and the test is what says so.
 - A workspace absent from the cache still annotates without signalling.
 - `herdr-state-workspace-for-directory` still finds a workspace by its root, with and without a trailing slash.
 
