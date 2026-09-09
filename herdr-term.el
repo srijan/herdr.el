@@ -353,12 +353,7 @@ signal anywhere in the poll clears it.")
 
 (defun herdr-term--poll-directories ()
   "Refresh pane directories, then point buffers at them.
-Also the only periodic caller of `herdr-state-reconcile-workspaces': no
-event reliably announces a workspace's removal, so a missed
-`workspace.closed' leaves a ghost until something reconciles.
-`herdr-state--settle' is the other caller and covers startup and
-reconnect, so what is left to this poll is the long-lived session that
-never disconnects - which is the one this defends."
+Also the only periodic caller of `herdr-state-reconcile-workspaces'."
   ;; Guarded on the stream only, not on a herdr buffer existing: pruning
   ;; panes the server no longer has matters most when no buffers are
   ;; open, because that is when the pickers are used.
