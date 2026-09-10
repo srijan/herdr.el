@@ -54,10 +54,10 @@ herdr.el assumes one server throughout. One socket path, one event stream pair, 
 - R3. A remote server's control socket is reachable without the user configuring SSH forwarding.
 - R4. No connection is attempted until the user asks for one.
 - R5. A connection that drops is retried while the user still wants it, and stops being retried when they disconnect it.
-- R6. A server that is unreachable degrades only itself. Every other server stays usable, the local one included.
+- R6. A server that is unreachable, or reachable and silent, degrades only itself. Every other server stays usable, the local one included, which is a claim about editor time and not only about cache contents.
 - R7. Every structure keyed by an id distinguishes two servers that issued the same id.
 - R8. A command acts on the server the object at point came from, not on a global current server.
-- R9. A failure to connect says which server, and says what failed, in terms a user can act on.
+- R9. A failure to connect says which server, and says what was observed, in terms a user can act on - never a cause that was inferred rather than seen.
 - R10. A user who has one local server sees no new configuration and no behaviour change.
 
 ### Scope Boundaries
@@ -82,7 +82,7 @@ herdr.el assumes one server throughout. One socket path, one event stream pair, 
 
 ### Key Technical Decisions
 
-- KTD1. **A connection is an explicit argument at the transport layer and a resolver at the top.** This is the shape `jsonrpc.el` and `eglot.el` settled on and it is the one this package should copy rather than reinvent. `jsonrpc-request` takes its connection as the first argument, with no ambient default anywhere in the transport. `eglot` keeps a hash of servers by project, caches one per buffer, exposes `eglot-current-server` as a function rather than a variable, and dynamically rebinds the cached server only at async dispatch, where the buffer that started a request may be gone by the time its reply lands. Applied here: `herdr-rpc-call` and `herdr-rpc-call-async` gain a connection argument, the resolver answers from the object at point or the buffer, and the dynamic rebind exists only around async callbacks. The resolver has to arrive with the argument, not after it: interactive commands are invoked from `M-x` and keybindings with no connection in hand, and timer callbacks run in an empty dynamic extent, so a transport that demands an argument no caller can supply is a package that does not run. U2 therefore ships a resolver that answers the sole connection, and U3 widens the same function rather than introducing one. An ambient special variable read by the transport was considered and rejected: it makes every call site correct by default and every bug invisible. Governs R8, R10.
+- KTD1. **A connection is an explicit argument at the transport layer and a resolver at the top.** This is the shape `jsonrpc.el` and `eglot.el` settled on and it is the one this package should copy rather than reinvent. `jsonrpc-request` takes its connection as the first argument, with no ambient default anywhere in the transport. `eglot` keeps a hash of servers by project, caches one per buffer, exposes `eglot-current-server` as a function rather than a variable, and dynamically rebinds the cached server only at async dispatch, where the buffer that started a request may be gone by the time its reply lands. Applied here: `herdr-rpc-call` and `herdr-rpc-call-async` gain a connection argument, the resolver answers from the object at point or the buffer, and the dynamic rebind exists only around async callbacks. A resolver answers *initiating* an action; it must never answer a callback. Anything deferred - a retry, a repair tick, a resubscribe, a reconnect, a tunnel sentinel, an async reply - captures its connection and its generation at the moment it is scheduled and carries both to the moment it fires. `herdr-cmd.el:92` already captures a generation and a pane id for exactly this reason and captures no connection; that is the shape to extend, not to copy. Resolving late is how a retry scheduled against one server lands on whichever server the user happened to look at in between, and it fails silently because the id exists on both. The resolver has to arrive with the argument, not after it: interactive commands are invoked from `M-x` and keybindings with no connection in hand, and timer callbacks run in an empty dynamic extent, so a transport that demands an argument no caller can supply is a package that does not run. U2 therefore ships a resolver that answers the sole connection, and U4 widens the same function rather than introducing one. An ambient special variable read by the transport was considered and rejected: it makes every call site correct by default and every bug invisible. Governs R8, R10.
 - KTD2. **A connection is a struct, and an id is qualified by pairing it with one.** `cl-defstruct` rather than EIEIO, because nothing here dispatches generically on connection type; the local and remote cases differ in how the socket is obtained, not in how it is spoken to. The struct holds a name, a socket path, the SSH target when there is one, the tunnel process when there is one, the two event stream processes, the state cache, and the liveness the reconnect logic reads. Ids are not rewritten into composite strings: a qualified reference is the pair of a connection and the server's own id, so nothing has to parse a separator out of an id whose shape the server owns. The struct is mutable, so it is never itself part of a key: it carries an immutable token, allocated once at construction and never written again, and that token is what a composite key holds. The package already keys an `equal` hash table by bare pane id (`herdr-modeline.el:133`), and `equal` on a struct compares fields, so a key holding the struct would compare two freshly built connections equal and would stop finding an entry the moment a process or a cache slot changed under it. Governs R7.
 - KTD3. **The tunnel forwards the remote unix socket to a local unix socket.** OpenSSH supports `-L local_socket:remote_socket` directly, so `make-network-process :family 'local` connects to a forwarded path exactly as it connects to the real one, and no TCP port has to be allocated, guessed, or defended. One `ssh -N` process per remote connection, its local socket under a short directory this package owns, torn down with the connection. Two consequences follow from how OpenSSH actually behaves. It binds the local socket as soon as the tunnel is set up and only dials the remote socket when something connects to the local one, so the socket appearing proves nothing about the remote server; a connection is up when a `ping` answers through it, not before. And `sun_path` is 104 bytes on macOS, so the local socket lives under a short base directory with a name derived from the connection rather than under a descriptive path that a long connection name can push past the limit. The alternative of forwarding to a local TCP port was rejected: it adds port selection and a listening socket on the loopback interface that anything on the machine can reach. Governs R3, R9.
 - KTD4. **Remote terminals go through TRAMP and never through the tunnel.** ghostel already spawns with `make-process :file-handler` when `default-directory` is remote, which is what makes a remote shell work today. A remote pane's terminal buffer therefore gets a TRAMP `default-directory` for its server's host and runs `herdr terminal attach` there. The tunnel carries the control plane only, which is also why it can stay one small socket rather than a data path. Governs R2.
@@ -94,13 +94,13 @@ herdr.el assumes one server throughout. One socket path, one event stream pair, 
 
 - herdr ids are per-server counters, and 0.9.0 documents the scoping rather than leaving it to be measured: its multi-machine guide states that workspace, tab and pane ids and agent names are scoped to one server and that two machines may each contain a `w1:p1`. This is the plan's load-bearing fact.
 - `ssh -L local_socket:remote_socket` carries the herdr protocol unchanged. The forwarding is byte-transparent and the protocol is one request per connection over NDJSON, so nothing in it depends on the peer's address. **Unverified against a live remote herdr; the first unit measures it before anything is built on it.**
-- `herdr machine list --json` prints the saved profiles with their opaque id, label, SSH target, remote session and enabled state, which is what 0.9.0's guide says the catalog holds. **The exact JSON shape is unverified: the local herdr is 0.8.2 and has no `machine` subcommand.**
+- `herdr machine list --json` prints the saved profiles with their opaque id, label, SSH target, remote session and enabled state, which is what 0.9.0's guide says the catalog holds. **Verified only as far as an empty catalog goes: `herdr machine list --json` against the installed 0.9.0 answers `[]`. The row shape for a non-empty catalog is still unverified here and is declared in upstream `src/cli/machine.rs`.**
 - Protocol 22 is what the package targets, and the upgrade plan has landed. Every record read here is the one that plan verified unchanged.
 - The ownership refactors have landed, so the worktree cache has an interface whose key constructor is the single place a server has to be added, and the workspace record has a module whose accessors are the single place a qualified reference has to be understood.
 
 ### Sequencing
 
-U1 measures the tunnel before anything depends on it, because KTD3 is the one decision here with an unverified premise. U2 makes the connection a value and keeps exactly one of them, which is the largest change and the one that must leave behaviour identical. U3 adds the registry and the resolver. U4 adds the remote connection and its tunnel. U5 makes the dashboard and the pickers show several servers. U6 adds the catalog reader, last, because it is the only unit a user can do without.
+U1 measures the tunnel before anything depends on it, because KTD3 is the one decision here with an unverified premise. U2 makes the connection a value and keeps exactly one of them, which is the largest change and the one that must leave behaviour identical. U3 makes repair asynchronous while there is still only one connection to get it wrong on - it lands before the registry rather than after, because the first moment two connections exist is the first moment a synchronous repair can stall one on behalf of another. U4 adds the registry and the resolver. U5 adds the remote connection and its tunnel. U6 makes the dashboard and the pickers show several servers. U7 adds the catalog reader, last, because it is the only unit a user can do without.
 
 ---
 
@@ -113,7 +113,7 @@ U1 measures the tunnel before anything depends on it, because KTD3 is the one de
 **Approach:**
 
 1. Bring up a herdr 0.9.0 server on a second machine.
-2. Forward its socket: `ssh -N -L /tmp/herdr-probe.sock:$HOME/.config/herdr/herdr.sock <target>`.
+2. Ask the remote for the socket path first - `ssh <target> herdr session list --json` names it per session - then forward that absolute path: `ssh -N -L /tmp/herdr-probe.sock:<remote path> <target>`. Do not write `$HOME` into the forward: the local shell expands it, so a macOS client forwards to `/Users/...` on a Linux server and the probe fails for a reason that has nothing to do with what it is measuring. This is the same mistake U5 step 1 exists to prevent, and a measurement unit that makes it measures nothing.
 3. Drive `ping`, `session.snapshot` and a long-lived `events.subscribe` through the forwarded path, and hold the subscription open across an idle period longer than the SSH keepalive interval.
 4. Record what happens when the remote server stops, when the SSH connection drops, and when the local socket file is left behind by a killed `ssh`. Record separately what a connection through a tunnel whose *remote* socket does not exist looks like from `herdr-rpc-call`, because that is the case R9 has to tell apart from an authentication failure and OpenSSH does not surface it at forward-setup time.
 5. Confirm how the remote socket path is discovered for a named session, and how that session is named to `herdr terminal attach`.
@@ -128,7 +128,7 @@ U1 measures the tunnel before anything depends on it, because KTD3 is the one de
 
 - `herdr-rpc.el` - the struct, the connect and call functions.
 - `herdr-state.el` - the cache and the two event streams become per-connection.
-- `herdr-cmd.el` (15), `herdr-state.el` (8), `herdr-dispatch.el` (3), `herdr-schema.el` (2), `herdr-term.el` (2), `herdr-call.el` (1), `herdr-select.el` (1), `herdr.el` (1) - the thirty-three `herdr-rpc-call` sites outside the tests.
+- Every `herdr-rpc-call` site outside the tests, in `herdr-cmd.el`, `herdr-state.el`, `herdr-dispatch.el`, `herdr-schema.el`, `herdr-term.el`, `herdr-call.el`, `herdr-select.el` and `herdr.el`. Find them with a grep at the time, and do not trust a count written here: this list has already gone stale twice, once when the group close added a call and once when the schema provenance did.
 - `herdr-modeline.el` and `herdr-tree.el` - no RPC call sites, but both read the session cache, which moves into the struct.
 - The corresponding test files.
 
@@ -138,8 +138,9 @@ U1 measures the tunnel before anything depends on it, because KTD3 is the one de
 2. Give `herdr-rpc-connect`, `herdr-rpc-call` and `herdr-rpc-call-async` a connection argument. Take it first, as `jsonrpc.el` does, so a forgotten argument is a wrong-type error rather than a call against the wrong server.
 3. Move the module-level state in `herdr-state.el` into the struct: the cache, both processes, the reconnect and settle and resubscribe timers, the generation, and the running flag.
 4. Move the four worktree globals in `herdr-dispatch.el` into the struct, through the interface the refactor plan gave them.
-4a. Make the schema cache per-connection. The upgrade plan already gave it a provenance: `herdr-schema-protocol` reports what the loaded schema declares and `herdr-schema-matches-server-p` says whether that describes the running server, so a local binary disagreeing with a local server is now detected and said once. That is not enough here. A remote server's schema cannot come from the local binary at all, and one global cache cannot hold two servers' schemas, so the cache moves into the connection and is fetched by running `herdr api schema --json` on the connection's own host - over TRAMP for a remote one, which `make-process :file-handler` already supports. The mismatch warning then names the connection rather than the package.
-5. Add `herdr-current-connection` in this unit, answering the sole connection, and let interactive commands and timer callbacks resolve through it. This is the function U3 widens; it is not a temporary shim and it is not an ambient variable the transport reads.
+4a. Give the protocol check per-connection state too, not only the schema. `herdr--check-protocol` guards itself with a single global `herdr--protocol-warned` (`herdr.el:48`) and only `herdr-start` calls it, so a second server's protocol is never checked and the first mismatch silences every later one. Each connection carries its own warned flag and runs the check once its handshake succeeds. The schema mismatch warning does not cover this: curated commands never load a schema.
+4b. Make the schema cache per-connection. The upgrade plan already gave it a provenance: `herdr-schema-protocol` reports what the loaded schema declares and `herdr-schema-matches-server-p` says whether that describes the running server, so a local binary disagreeing with a local server is now detected and said once. That is not enough here. A remote server's schema cannot come from the local binary at all, and one global cache cannot hold two servers' schemas, so the cache moves into the connection and is fetched by running `herdr api schema --json` on the connection's own host - over TRAMP for a remote one, which `make-process :file-handler` already supports. The mismatch warning then names the connection rather than the package.
+5. Add `herdr-current-connection` in this unit, answering the sole connection, and let interactive commands resolve through it at the point of action. Timer callbacks do not: they take the connection they captured when scheduled. With one connection the difference is invisible, which is why the contract is written now rather than when it starts to matter. This is the function U4 widens; it is not a temporary shim and it is not an ambient variable the transport reads.
 6. Thread the connection through every call site. This unit adds no way to make a second one.
 
 **Test scenarios:**
@@ -151,7 +152,33 @@ U1 measures the tunnel before anything depends on it, because KTD3 is the one de
 
 **Done when:** the package behaves exactly as it does today and nothing reads a global socket path except the local constructor.
 
-### U3 - The registry and the resolver
+### U3 - Repair goes asynchronous
+
+**Goal:** A server that accepts connections and never answers costs its own freshness and nothing else.
+
+**Files:**
+
+- `herdr-state.el` - the repair pair, the settle, and the reconnect hydration.
+- `test/herdr-state-live-test.el` - the overlap and cancellation tests.
+
+**Approach:**
+
+1. Convert the repair pair the refactor plan extracted from synchronous `herdr-rpc-call` to `herdr-rpc-call-async`, per KTD7. This is the unit that pays for KTD7's promise; without it, isolation is a claim about data and not about time, and one wedged server freezes the editor for every connection's repair in turn.
+2. Give the conversion a continuation, because the settle depends on ordering the synchronous version gave it for free: it realigns connection B against the pane set the repair just settled. The realignment moves into the repair's completion, not the line after the call.
+3. Carry a per-connection in-flight guard and a generation, following the worktree cache's shape. A reply that arrives after its connection was disconnected, reconnected, or stopped is dropped rather than folded.
+4. Leave the on-demand repair entry point synchronous where a user is waiting for the answer they asked for. Asynchrony is for the cadence, not for a keystroke.
+
+**Test scenarios:**
+
+- A remote that accepts the connection and never replies leaves the local connection's dashboard responsive throughout a repair cycle, a debounce and a reconnect.
+- Two connections repairing at once do not serialise into one editor stall.
+- A repair reply landing after its connection was disconnected changes no cache.
+- A repair reply landing after its connection reconnected under a new generation is dropped.
+- The settle still realigns connection B against the reconciled pane set, now from the continuation.
+
+**Done when:** a silent remote cannot stall a healthy connection, asserted by a test that fails when the call is made synchronous again.
+
+### U4 - The registry and the resolver
 
 **Goal:** More than one connection can exist, and every command knows which one it is acting on.
 
@@ -168,7 +195,7 @@ U1 measures the tunnel before anything depends on it, because KTD3 is the one de
 3. Expose the resolver as a function, not a variable, following `eglot-current-server`. It answers from the object at point in the dashboard, from the buffer's own connection in a terminal buffer, and from the sole connection when there is only one.
 4. Dynamically rebind the resolved connection around async dispatch only, following `eglot`'s rebind at its dispatch site. Nothing else in the package may read it ambiently.
 5. Qualify the pane-to-buffer alist, and every other structure the refactor plan left keyed by a bare id, by pairing the id with its connection per KTD2.
-6. Give the `WorktreeInfo` record the ownership the refactor plan deliberately exempted it from. It carries `open_workspace_id`, a bare workspace id read raw in `herdr-tree.el` and `herdr-dispatch.el`, and that field is exactly what U5's path-lookup guard has to disambiguate. The refactor plan named this as an untouched prerequisite this work inherits; this is where it is paid.
+6. Give the `WorktreeInfo` record the ownership the refactor plan deliberately exempted it from. It carries `open_workspace_id`, a bare workspace id read raw in `herdr-tree.el` and `herdr-dispatch.el`, and that field is exactly what U6's path-lookup guard has to disambiguate. The refactor plan named this as an untouched prerequisite this work inherits; this is where it is paid.
 7. Add `herdr-connect` and `herdr-disconnect`. Disconnecting stops the retries; a drop does not.
 
 **Test scenarios:**
@@ -183,7 +210,7 @@ U1 measures the tunnel before anything depends on it, because KTD3 is the one de
 
 **Done when:** two fake servers with deliberately colliding ids, different records and separately recorded requests behave as two servers throughout. Two connections to the same real server is the tempting cheap version and it is not a test of this: both see the same records and the same focus, identical data hides mis-routing, and attaching twice to one pane hits herdr's own exclusivity rather than anything this unit built.
 
-### U4 - The remote connection and its tunnel
+### U5 - The remote connection and its tunnel
 
 **Goal:** A user names an SSH target and gets a connection.
 
@@ -199,21 +226,25 @@ U1 measures the tunnel before anything depends on it, because KTD3 is the one de
 2. Put the local socket under a short directory this package owns, named from the connection so two remotes cannot collide, and remove a stale socket left by a killed `ssh` before binding. Keep the whole path well under 104 bytes, which is macOS's `sun_path` limit and the tighter of the two platforms; a long connection name is hashed rather than spelled out.
 3. Tie the tunnel's lifetime to the connection: the sentinel that notices the tunnel died is what triggers the same reconnect path a dropped stream triggers, so there is one retry mechanism rather than two.
 4. Give a remote connection's terminal buffers a TRAMP `default-directory` for the target per KTD4, and let ghostel do the rest. Two existing paths translate paths the wrong way once a connection can be remote, and both are this unit's to fix. `herdr-term.el:409` points a buffer's `default-directory` at the pane's reported working directory, which for a remote pane is a path on the remote host: assigning it verbatim strips the buffer's remoteness and silently retargets it at a local path that usually does not exist. And `herdr-cmd.el:223`, `:267` and `:307` send `expand-file-name` of a local directory as `cwd`, which from a TRAMP buffer produces `/ssh:host:/path` and hands the server a filename it cannot use. One direction needs the remote prefix added, the other needs it removed; `file-remote-p` and `file-local-name` are the two halves.
-5. Report failures per R9 by pairing the handshake's outcome with the `ssh` process's own exit and stderr. The three cases arrive differently: authentication fails with `ssh` exiting non-zero and saying so, a remote without herdr leaves the tunnel up and the `ping` unanswered, and a wrong socket path closes the connection on first use so the `ping` returns the transport's `empty_response` rather than a timeout. Distinguishing them needs both signals, which is why the handshake is part of bringing the connection up rather than a check bolted on after.
+
+   The inventory is wider than the terminal buffers, and the two sites below were both reproduced rather than reasoned about. `herdr-dispatch--fetch-known-worktrees` passes each known-project root through `expand-file-name` and hands the result to the server as the request directory (`herdr-dispatch.el:627`); a TRAMP root survives that unchanged and reaches the server as `/ssh:host:/srv/project/`. And `herdr-dispatch-create-workspace` (`herdr-dispatch.el:948`) defaults its prompt to the directory of the workspace at point and reads it with `read-directory-name`, which treats a remote path as a *local* one - so completion browses the wrong machine, and no amount of prefix-stripping afterwards repairs a path chosen against the wrong filesystem. Fix them at the boundary: add the prefix where a path meets the filesystem or the user, strip it where a path meets an RPC.
+5. Report what was observed, not a cause that cannot be observed. OpenSSH dials the path it was given and does not inspect whether herdr is installed, so a missing installation and a wrong socket path fail the forwarded connection identically; the transport can tell a closure from a timeout and no more. The three reportable states are therefore: SSH itself failed, which `ssh` exits non-zero and explains on stderr; the remote socket did not answer; and the server answered but not the handshake. A missing installation is diagnosed only by an explicit remote executable check, which is a separate thing this unit may add and must not infer.
 
 **Test scenarios:**
 
 - The tunnel command is built correctly for a bare host, a `user@host`, and an SSH config alias.
 - A connection whose `ssh` exits immediately reports the SSH failure and does not leave a half-open connection in the registry.
+- A tunnel to a path with no listener and a tunnel to a host with no herdr produce the same reported state, because nothing observable separates them. The test says so, so that nobody re-invents the distinction.
 - A stale local socket file does not stop a reconnect.
 - A remote pane's terminal buffer has a remote `default-directory` and a local pane's does not, and syncing a remote pane's reported directory keeps the buffer remote rather than pointing it at a local path of the same name.
-- Creating a workspace from a TRAMP buffer sends the remote-local path as `cwd`, not the `/ssh:host:` filename.
+- Creating a workspace from a TRAMP buffer sends the remote-local path as `cwd`, not the `/ssh:host:` filename, and its directory prompt completes against the remote filesystem rather than the local one.
+- A known-project root belonging to a remote connection reaches that server as a server-local path, not as a TRAMP filename.
 - The connection is not reported up until a `ping` answers, and a tunnel whose remote socket does not exist reports a distinct failure from one whose SSH did not authenticate.
 - Disconnecting kills the `ssh` process and removes the local socket.
 
 **Done when:** a remote server's workspaces appear and one of its panes opens as a terminal.
 
-### U5 - Show several servers
+### U6 - Show several servers
 
 **Goal:** One dashboard, every connection, each attributable.
 
@@ -228,20 +259,21 @@ U1 measures the tunnel before anything depends on it, because KTD3 is the one de
 
 1. Build the tree from every connection, with the server as the outermost level. A single connection renders without that level, so R10 holds and nobody with one server sees a new row.
 2. Merge in the dashboard's refresh and nowhere else, per KTD6.
-3. Qualify picker candidates by server when more than one is connected, following whatever the refactor plan settled for how identity is printed, and not duplicating what the row already shows.
-4. Show a connection that is down as itself, dimmed and labelled, rather than as an absence. An empty dashboard and an unreachable server are different facts.
-5. Make the modeline summarise across connections without letting one wedged server stall the summary.
+3. Give the known-project roots an owner. The dashboard takes one global list today and asks every connection about all of it, so A's roots reach B and two servers holding the same path are indistinguishable. A root belongs to the connection whose host it is on; a purely local root belongs to the local connection. Without this the worktree path lookup has nothing to disambiguate with, which is the guard U6 owes.
+4. Qualify picker candidates by server when more than one is connected, following whatever the refactor plan settled for how identity is printed, and not duplicating what the row already shows.
+5. Show a connection that is down as itself, dimmed and labelled, rather than as an absence. An empty dashboard and an unreachable server are different facts.
+6. Make the modeline summarise across connections without letting one wedged server stall the summary.
 
 **Test scenarios:**
 
 - Two connections with colliding workspace ids render as two subtrees and navigate to the right one.
 - One connection down leaves the other's subtree fully navigable.
 - A single connection renders with no server level at all.
-- A worktree path reported by two servers resolves to the connection it came from. This is the harder of the two collision guards the refactor plan deferred here, because the path lookup searches every listing flattened together and has no tiebreak; it gets its own test.
+- A worktree path reported by two servers resolves to the connection it came from, and a known-project root is only ever asked of the connection that owns it. This is the harder of the two collision guards the refactor plan deferred here, because the path lookup searches every listing flattened together and has no tiebreak; it gets its own test.
 
 **Done when:** the two collision guards the refactor plan deferred to this work are both written and both pass.
 
-### U6 - Read the machine catalog
+### U7 - Read the machine catalog
 
 **Goal:** A user who already saved machines with `herdr machine` does not describe them again.
 
@@ -269,7 +301,7 @@ U1 measures the tunnel before anything depends on it, because KTD3 is the one de
 ## Verification Contract
 
 - The suite is green with one connection at every unit boundary, and the single-server path is byte-identical in the requests it sends.
-- Two connections to the same local server behave as two servers throughout the dashboard, the pickers and the terminals.
+- Two independent fake servers with colliding ids, different records and separately recorded requests behave as two servers throughout the dashboard, the pickers, the terminals and the destructive commands. Not two connections to one real server: both would see the same records and the same focus, identical data hides mis-routing, and attaching twice to one pane hits herdr's own exclusivity rather than anything this plan built.
 - A remote server over SSH shows its workspaces and opens a pane as a terminal.
 - Killing the remote server leaves the local dashboard fully usable and the remote subtree labelled as down.
 - Emacs starts with a configured remote that is unreachable, in the time it starts today, because nothing connected.
@@ -278,16 +310,16 @@ U1 measures the tunnel before anything depends on it, because KTD3 is the one de
 
 | Requirement | Unit | Evidence |
 |---|---|---|
-| R1 | U5 | Two servers render in one dashboard, each attributable. |
-| R2 | U4 | A remote pane opens as a terminal over TRAMP. |
-| R3 | U1, U4 | The forwarded socket carries the protocol, measured in U1. |
-| R4 | U3 | Startup opens no connection but the local one. |
-| R5 | U3, U4 | A drop retries; a disconnect does not. |
-| R6 | U5 | One connection down leaves the others navigable. |
-| R7 | U3, U5 | Both collision guards pass. |
-| R8 | U3 | A command acts on the connection of the object at point. |
-| R9 | U4 | Three distinct failures produce three distinct messages. |
-| R10 | U2, U5 | One connection renders and behaves as it does today. |
+| R1 | U6 | Two servers render in one dashboard, each attributable. |
+| R2 | U5 | A remote pane opens as a terminal over TRAMP. |
+| R3 | U1, U5 | The forwarded socket carries the protocol, measured in U1. |
+| R4 | U4 | Startup opens no connection but the local one. |
+| R5 | U4, U5 | A drop retries; a disconnect does not. |
+| R6 | U3, U6 | A silent remote stalls nothing; a connection down leaves the others navigable. |
+| R7 | U4, U6 | Both collision guards pass. |
+| R8 | U4 | A command acts on the connection of the object at point, and a callback on the one it captured. |
+| R9 | U5 | The three observable failure states are reported distinctly, and no cause is inferred beyond them. |
+| R10 | U2, U6 | One connection renders and behaves as it does today. |
 
 ## Risks
 
