@@ -501,6 +501,17 @@ Neither answered nor already in flight."
   (not (or (assoc key herdr-dispatch--worktrees)
            (member key herdr-dispatch--worktrees-pending))))
 
+(defun herdr-dispatch--worktrees-in-flight-p (key)
+  "Return non-nil when KEY\\='s request has gone out and not been answered.
+The marker is what stops the next of many refreshes asking again."
+  (and (member key herdr-dispatch--worktrees-pending) t))
+
+(defun herdr-dispatch--worktrees-epoch ()
+  "Return the generation a request issued now would carry.
+A reply from any other epoch was invalidated in flight and is dropped
+whole.  The number itself is storage; that it moved is the contract."
+  herdr-dispatch--worktrees-generation)
+
 (defun herdr-dispatch--worktrees-unanswered-reason (key)
   "Return why KEY was cached without an answer, or nil.
 `error\\=' waits for \\[herdr-dispatch-refresh]; `no-directory\\=' is retried
@@ -663,15 +674,14 @@ replaces it is either an answer or a failure, and neither is retried
 here."
   (dolist (workspace (herdr-state-workspaces state))
     (let* ((id (herdr-workspace-id workspace))
+           (key (herdr-dispatch--worktree-key-for-workspace id))
            (directory (herdr-state-workspace-directory state id)))
       (when (and directory
                  (eq 'no-directory
-                     (alist-get id herdr-dispatch--worktrees-unanswered
-                                nil nil #'equal)))
-        (herdr-dispatch--forget-one-worktrees id))
-      (unless (or (assoc id herdr-dispatch--worktrees)
-                  (member id herdr-dispatch--worktrees-pending))
-        (herdr-dispatch--fetch-worktrees id directory)))))
+                     (herdr-dispatch--worktrees-unanswered-reason key)))
+        (herdr-dispatch--forget-one-worktrees key))
+      (when (herdr-dispatch--worktrees-wanted-p key)
+        (herdr-dispatch--fetch-worktrees key directory)))))
 
 (defun herdr-dispatch--request-known-project-worktrees (known-project-roots)
   "Ask for the worktrees of every root in KNOWN-PROJECT-ROOTS with none cached.
@@ -685,10 +695,10 @@ handles specially for a workspace with no panes yet — no-directory,
 retried once a directory exists — and it cannot arise here, so there is
 nothing to mirror from it."
   (dolist (root known-project-roots)
-    (unless (or (assoc root herdr-dispatch--worktrees)
-                (member root herdr-dispatch--worktrees-pending))
-      (herdr-dispatch--fetch-worktrees
-       root (file-name-as-directory (expand-file-name root))))))
+    (let ((key (herdr-dispatch--worktree-key-for-root root)))
+      (when (herdr-dispatch--worktrees-wanted-p key)
+        (herdr-dispatch--fetch-worktrees
+         key (file-name-as-directory (expand-file-name root)))))))
 
 (defun herdr-dispatch--retry-unanswered-worktrees ()
   "Forget every workspace that has no answer, and ask again.
@@ -754,10 +764,10 @@ on an event that fires when a workspace closes and at no other time."
 
 A worktree section carries only its path as its value; the branch, and
 whether herdr has already opened it as a workspace, live in the cached
-record.  Resolved once, into `herdr-dispatch-target\='\='s RECORD, so two
-verbs on the same row cannot disagree about which worktree it names.
+record.  Resolved once, into the RECORD of `herdr-dispatch-target\=', so
+two verbs on the same row cannot disagree about which worktree it names.
 
-Searches every workspace\='s listing flattened together, because a row
+Searches every listing flattened together, because a row
 knows its path and not which listing answered for it."
   (seq-find (lambda (candidate)
               (equal path (alist-get 'path candidate)))
@@ -1228,7 +1238,7 @@ agent is working."
       (let* ((state (herdr-state-current))
              (known-roots (herdr-dispatch--known-project-roots))
              (header (herdr-dispatch--header state))
-             (tree (herdr-tree-build state herdr-dispatch--worktrees
+             (tree (herdr-tree-build state (herdr-dispatch--worktrees-listings)
                                      known-roots)))
         (when (or force
                   (not (equal header herdr-dispatch--rendered-header))
