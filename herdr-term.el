@@ -372,11 +372,15 @@ then points the buffers at it."
         (when-let* ((pane (herdr-state-pane state (car cell))))
           (herdr-term--set-directory (cdr cell) pane))))))
 
-(defun herdr-term--on-state-change (_kind _data)
-  "Resync terminal buffers after a cache change."
+(defun herdr-term--on-state-change (kind _data)
+  "Resync terminal buffers after a cache change.
+Nudges a repair for every event but \"reconcile\", which is a repair
+reporting what it just changed: nudging another one there pays two round
+trips to be told nothing moved."
   (herdr-term--sync-buffers)
   (herdr-term--sync-directories)
-  (herdr-term--schedule-directory-refresh))
+  (unless (equal kind "reconcile")
+    (herdr-term--schedule-directory-refresh)))
 
 ;;; Interface
 

@@ -570,6 +570,25 @@ already attached."
           (should-not herdr-term--directory-debounce-timer))
       (cancel-timer debounce))))
 
+(ert-deftest herdr-term-a-reconcile-event-nudges-no-further-repair ()
+  "A repair fires \"reconcile\" when it changed something.  Re-arming the
+debounce there sent a second repair 0.4s later that found nothing, so
+every real change cost two extra round trips on the main thread."
+  (let ((herdr-term-track-directory t)
+        (herdr-term--buffers nil)
+        (herdr-term--directory-debounce-timer nil)
+        (armed 0))
+    (cl-letf (((symbol-function 'run-at-time)
+               (lambda (&rest _) (cl-incf armed) 'armed))
+              ((symbol-function 'herdr-term--sync-buffers) #'ignore)
+              ((symbol-function 'herdr-term--sync-directories) #'ignore))
+      (herdr-term--on-state-change "reconcile" nil)
+      (should (zerop armed))
+      ;; Every other event still nudges one: a `cd' reaches the cache
+      ;; only through a repair.
+      (herdr-term--on-state-change "layout_updated" nil)
+      (should (= 1 armed)))))
+
 ;;; Directory tracking is a display option and nothing more
 
 (ert-deftest herdr-term-track-directory-off-still-repairs-the-cache ()
