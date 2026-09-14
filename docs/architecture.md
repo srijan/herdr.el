@@ -16,6 +16,7 @@ Each file has one duty.
 | `herdr-call.el` | The generic caller for every server method. |
 | `herdr-schema.el` | The reader for the JSON Schema of the server. |
 | `herdr-pane.el` | The pane record: its fields, and the two names built from them. |
+| `herdr-workspace.el` | The workspace record: its fields, and the two names built from them. |
 | `herdr-select.el` | The `completing-read` pickers. |
 | `herdr-tree.el` | The dashboard tree, as data only. |
 | `herdr-dispatch.el` | The dashboard renderer, and its verbs. |
@@ -96,7 +97,8 @@ workspaces collect for the life of a session.
 
 The dashboard has two layers. The split is the reason that the test suite can cover it.
 
-`herdr-tree.el` is pure. It requires `herdr-state.el` and `herdr-pane.el` only. `herdr-tree-build` takes a state and
+`herdr-tree.el` is pure. It requires `herdr-state.el`, `herdr-pane.el` and `herdr-workspace.el` only.
+`herdr-tree-build` takes a state and
 returns a nested list of nodes. Each node has this shape:
 
 ```elisp

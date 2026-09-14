@@ -613,7 +613,7 @@ event."
                              ((workspace_id . "w9") (label . "ghost"))))))))
       (should (herdr-state-reconcile-workspaces))
       (should (equal '("w1")
-                     (mapcar (lambda (w) (alist-get 'workspace_id w))
+                     (mapcar (lambda (w) (herdr-workspace-id w))
                              (herdr-state-workspaces herdr-state--current)))))))
 
 (ert-deftest herdr-state-reconcile-workspaces-adds-and-updates ()
@@ -631,7 +631,7 @@ event."
                                                                     'workspace_id w)))
                                           (herdr-state-workspaces
                                            herdr-state--current)))))
-      (should (seq-find (lambda (w) (equal "w2" (alist-get 'workspace_id w)))
+      (should (seq-find (lambda (w) (equal "w2" (herdr-workspace-id w)))
                         (herdr-state-workspaces herdr-state--current))))))
 
 (ert-deftest herdr-state-reconcile-workspaces-reports-no-change-when-in-sync ()
@@ -652,7 +652,7 @@ nothing when nothing has changed."
           '((workspaces . (((workspace_id . "w1"))))))))
     (should-not (herdr-state-reconcile-workspaces))
     (should (equal '("w1")
-                   (mapcar (lambda (w) (alist-get 'workspace_id w))
+                   (mapcar (lambda (w) (herdr-workspace-id w))
                            (herdr-state-workspaces herdr-state--current))))))
 
 (ert-deftest herdr-state-settle-reconciles-workspaces-too ()
@@ -748,7 +748,7 @@ refusal cannot take effect."
           (progn
             (herdr-state--settle)
             (should (equal '("w1")
-                           (mapcar (lambda (w) (alist-get 'workspace_id w))
+                           (mapcar (lambda (w) (herdr-workspace-id w))
                                    (herdr-state-workspaces herdr-state--current)))))
         (herdr-state--close herdr-state--pane-process)))))
 

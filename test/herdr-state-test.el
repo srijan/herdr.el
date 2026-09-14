@@ -195,9 +195,9 @@ went on showing the old name."
                                      (workspace_id . "w1")
                                      (label . "api")))))
     (let ((workspace (car (herdr-state-workspaces next))))
-      (should (equal "api" (alist-get 'label workspace)))
+      (should (equal "api" (herdr-workspace-label workspace)))
       ;; A rename carries nothing else, so nothing else may be lost.
-      (should (equal 3 (alist-get 'pane_count workspace))))
+      (should (equal 3 (herdr-workspace-pane-count workspace))))
     ;; Pure, as ever.
     (should (equal "web" (alist-get 'label (car (herdr-state-workspaces state)))))))
 
@@ -223,7 +223,7 @@ went on showing the old name."
 
 (defun herdr-state-test--ws-order (state)
   "Return STATE's workspace ids in list order."
-  (mapcar (lambda (w) (alist-get 'workspace_id w))
+  (mapcar (lambda (w) (herdr-workspace-id w))
           (herdr-state-workspaces state)))
 
 (ert-deftest herdr-state-reduce-workspace-moved-places-it-by-insert-index ()
@@ -248,9 +248,9 @@ riding along on it."
                 (herdr-state-test--ws-seed) "workspace_moved"
                 `((workspace_id . "w2") (insert_index . 0)
                   (workspaces . [((workspace_id . "w2") (label . "renamed"))]))))
-         (w2 (seq-find (lambda (w) (equal "w2" (alist-get 'workspace_id w)))
+         (w2 (seq-find (lambda (w) (equal "w2" (herdr-workspace-id w)))
                        (herdr-state-workspaces next))))
-    (should (equal "renamed" (alist-get 'label w2)))
+    (should (equal "renamed" (herdr-workspace-label w2)))
     (should (equal '("w2" "w1" "w3" "w4") (herdr-state-test--ws-order next)))))
 
 (ert-deftest herdr-state-reduce-workspace-moved-forward-pins-an-unverified-reading ()
@@ -325,10 +325,10 @@ arrays."
                 `((workspace_ids . ["w3"])
                   (before_workspace_id . "w1")
                   (workspaces . [((workspace_id . "w3") (label . "renamed"))]))))
-         (w3 (seq-find (lambda (w) (equal "w3" (alist-get 'workspace_id w)))
+         (w3 (seq-find (lambda (w) (equal "w3" (herdr-workspace-id w)))
                        (herdr-state-workspaces next))))
     (should (equal '("w3" "w1" "w2" "w4") (herdr-state-test--ws-order next)))
-    (should (equal "renamed" (alist-get 'label w3)))))
+    (should (equal "renamed" (herdr-workspace-label w3)))))
 
 (ert-deftest herdr-state-reduce-workspace-reordered-is-pure ()
   "Reordering must not mutate the state it was handed."

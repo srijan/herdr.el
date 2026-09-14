@@ -69,6 +69,37 @@ the workspace with no name at all."
   (should (equal "web" (herdr-workspace-name
                         '((workspace_id . "w1") (label . "web"))))))
 
+;;; One reader
+
+(defun herdr-workspace-test--sources ()
+  "Return the package's own source files, `herdr-workspace.el' excluded."
+  (seq-remove (lambda (file)
+                (equal "herdr-workspace.el" (file-name-nondirectory file)))
+              (directory-files herdr-workspace-test--source-directory t
+                               "\\`herdr.*\\.el\\'")))
+
+(ert-deftest herdr-workspace-is-the-only-file-that-reads-a-workspace-record ()
+  "The wire lives in one file, and this is what keeps it there.
+
+The rule is narrow on purpose: a variable called `workspace' holds a
+workspace record, and only `herdr-workspace.el' may read a field off
+one.  It cannot catch a record bound to some other name, so it is a
+floor, not a proof."
+  (let (offenders)
+    (dolist (file (herdr-workspace-test--sources))
+      (with-temp-buffer
+        (insert-file-contents file)
+        (goto-char (point-min))
+        ;; `workspace)' and `workspace nil)' and a line break between
+        ;; them: the three-argument form and a wrapped call are the two
+        ;; ways the pane version of this regexp was walked past.
+        (while (re-search-forward
+                "(alist-get[ \t\n]+'[a-z_]+[ \t\n]+workspace[ \t\n)]" nil t)
+          (push (format "%s:%d" (file-name-nondirectory file)
+                        (line-number-at-pos))
+                offenders))))
+    (should-not offenders)))
+
 ;;; A leaf
 
 (ert-deftest herdr-workspace-requires-no-herdr-module ()

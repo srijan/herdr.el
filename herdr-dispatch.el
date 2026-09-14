@@ -28,6 +28,7 @@
 (require 'herdr-state)
 (require 'herdr-rpc)
 (require 'herdr-cmd)
+(require 'herdr-workspace)
 
 (defcustom herdr-dispatch-buffer-name "*herdr-agents*"
   "Name of the dispatcher buffer."
@@ -599,7 +600,7 @@ pane list rather than a round trip, and it cannot loop: the entry that
 replaces it is either an answer or a failure, and neither is retried
 here."
   (dolist (workspace (herdr-state-workspaces state))
-    (let* ((id (alist-get 'workspace_id workspace))
+    (let* ((id (herdr-workspace-id workspace))
            (directory (herdr-state-workspace-directory state id)))
       (when (and directory
                  (eq 'no-directory

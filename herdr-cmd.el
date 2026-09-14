@@ -26,6 +26,7 @@
 (require 'herdr-select)
 (require 'herdr-term)
 (require 'herdr-pane)
+(require 'herdr-workspace)
 
 
 (defconst herdr-cmd-methods
@@ -345,7 +346,7 @@ about."
                        (herdr-state-current) root)))
       (progn
         (herdr-rpc-call "workspace.focus"
-                        `((workspace_id . ,(alist-get 'workspace_id existing))))
+                        `((workspace_id . ,(herdr-workspace-id existing))))
         (herdr-term-select-focused))
     (or (herdr-cmd--follow-new-pane (herdr-cmd--create-workspace-pane root))
         (herdr-term-select-focused))))
@@ -366,7 +367,7 @@ as N full-width tabs beats N slivers of one tab."
   "Return a pane for a new terminal in DIRECTORY, opening a workspace if needed."
   (if-let* ((open (herdr-state-workspace-for-directory
                    (herdr-state-current) directory)))
-      (herdr-cmd--new-tab-pane (alist-get 'workspace_id open))
+      (herdr-cmd--new-tab-pane (herdr-workspace-id open))
     (herdr-cmd--create-workspace-pane directory)))
 
 (defun herdr-new-terminal (&optional place)

@@ -41,6 +41,7 @@
 (require 'subr-x)
 (require 'herdr-rpc)
 (require 'herdr-pane)
+(require 'herdr-workspace)
 
 (defcustom herdr-state-reconnect-min 1.0
   "Initial delay, in seconds, before retrying a dropped event stream."
@@ -121,7 +122,7 @@ result right rather than lucky either way.")
 
 (defun herdr-state-workspace (state id)
   "Return the workspace in STATE whose id is ID, or nil."
-  (seq-find (lambda (workspace) (equal id (alist-get 'workspace_id workspace)))
+  (seq-find (lambda (workspace) (equal id (herdr-workspace-id workspace)))
             (herdr-state-workspaces state)))
 
 (defun herdr-state-workspace-label (state id)
@@ -130,8 +131,7 @@ Nil for a workspace the cache has no record of, and for one the server
 labelled with an empty string: both mean the same thing to a caller, and
 each has its own fallback - a buffer name wants the workspace id, a
 confirmation wants the workspace id in parentheses."
-  (when-let* ((label (alist-get 'label (herdr-state-workspace state id))))
-    (unless (string-empty-p label) label)))
+  (herdr-workspace-label (herdr-state-workspace state id)))
 
 (defun herdr-state-agents (state)
   "Return the panes in STATE with a detected or reported agent."
@@ -185,7 +185,7 @@ dispatcher has never seen a pane in."
     (seq-find (lambda (workspace)
                 (equal root
                        (herdr-state-workspace-directory
-                        state (alist-get 'workspace_id workspace))))
+                        state (herdr-workspace-id workspace))))
               (herdr-state-workspaces state))))
 
 (defun herdr-state-pane-ids (state)
@@ -352,7 +352,7 @@ events use dots, so both spellings appear here deliberately."
            (setf (herdr-state-workspaces next)
                  (herdr-state--upsert (herdr-state-workspaces state)
                                       'workspace_id
-                                      (alist-get 'workspace_id workspace)
+                                      (herdr-workspace-id workspace)
                                       workspace))
            next)))
 
@@ -383,7 +383,7 @@ events use dots, so both spellings appear here deliberately."
          (dolist (workspace (append (alist-get 'workspaces data) nil))
            (setq workspaces
                  (herdr-state--upsert workspaces 'workspace_id
-                                      (alist-get 'workspace_id workspace)
+                                      (herdr-workspace-id workspace)
                                       workspace)))
          (setq workspaces
                (herdr-state--move-within workspaces 'workspace_id
@@ -417,7 +417,7 @@ events use dots, so both spellings appear here deliberately."
          (setf (herdr-state-workspaces next)
                (herdr-state--upsert (herdr-state-workspaces next)
                                     'workspace_id
-                                    (alist-get 'workspace_id workspace)
+                                    (herdr-workspace-id workspace)
                                     workspace)))
        (setf (herdr-state-workspaces next)
              (herdr-state--reorder-block
@@ -931,9 +931,8 @@ and updates in a single pass.  Returns non-nil when anything changed."
   (when-let* ((workspaces (ignore-errors
                             (alist-get 'workspaces
                                        (herdr-rpc-call "workspace.list")))))
-    (let* ((live-ids (mapcar (lambda (w) (alist-get 'workspace_id w))
-                             workspaces))
-           (stale (seq-remove (lambda (w) (member (alist-get 'workspace_id w)
+    (let* ((live-ids (mapcar #'herdr-workspace-id workspaces))
+           (stale (seq-remove (lambda (w) (member (herdr-workspace-id w)
                                                   live-ids))
                               (herdr-state-workspaces herdr-state--current)))
            (changed nil))
@@ -942,10 +941,10 @@ and updates in a single pass.  Returns non-nil when anything changed."
         (setq herdr-state--current
               (herdr-state-reduce herdr-state--current "workspace_closed"
                                   `((workspace_id
-                                     . ,(alist-get 'workspace_id workspace))))))
+                                     . ,(herdr-workspace-id workspace))))))
       (dolist (workspace workspaces)
-        (let* ((id (alist-get 'workspace_id workspace))
-               (known (seq-find (lambda (w) (equal id (alist-get 'workspace_id w)))
+        (let* ((id (herdr-workspace-id workspace))
+               (known (seq-find (lambda (w) (equal id (herdr-workspace-id w)))
                                 (herdr-state-workspaces herdr-state--current))))
           (unless (equal known workspace)
             (setq changed t)
