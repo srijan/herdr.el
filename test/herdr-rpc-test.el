@@ -68,7 +68,6 @@ spinning on a socket whose answer had already arrived."
 
 (ert-deftest herdr-rpc-call-without-server-signals-no-server ()
   (let* ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
-         (herdr-connection--sole (herdr-connection-local))
          (herdr-connection--sole (herdr-connection-local)))
     (let ((err (should-error (herdr-rpc-call (herdr-current-connection) "ping") :type 'herdr-error)))
       (should (equal (herdr-error-code err) "no_server")))))

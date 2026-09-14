@@ -120,14 +120,14 @@ CATEGORY tags the completion table."
   "Read a pane id, defaulting the prompt to PROMPT.
 Refreshes first: a picker listing panes that no longer exist is worse
 than one extra round trip, and the cache can drift."
-  (herdr-state-refresh)
+  (herdr-state-refresh (herdr-current-connection))
   (herdr-select--read-row (or prompt "Pane: ")
                           (herdr-state-pane-ids (herdr-state-current))
                           #'herdr-select--pane-candidate 'herdr-pane))
 
 (defun herdr-select-agent (&optional prompt)
   "Read the pane id of an agent, defaulting the prompt to PROMPT."
-  (herdr-state-refresh)
+  (herdr-state-refresh (herdr-current-connection))
   (herdr-select--read-row (or prompt "Agent: ")
                           (mapcar (lambda (pane) (herdr-pane-id pane))
                                   (herdr-state-agents (herdr-state-current)))
@@ -172,7 +172,7 @@ path, and a path can contain a space."
   "Read where to open a terminal: an open workspace id, or a project directory.
 PROMPT overrides the default.  Known projects stay in the list when open so
 completion can match their paths instead of only their opaque workspace ids."
-  (herdr-state-refresh)
+  (herdr-state-refresh (herdr-current-connection))
   (let* ((state (herdr-state-current))
          (workspaces (mapcar #'herdr-workspace-id
                              (herdr-state-workspaces state)))
@@ -190,7 +190,7 @@ the candidate."
 
 (defun herdr-select-workspace (&optional prompt)
   "Read a workspace id, defaulting the prompt to PROMPT."
-  (herdr-state-refresh)
+  (herdr-state-refresh (herdr-current-connection))
   (herdr-select--read-row (or prompt "Workspace: ")
                           (mapcar #'herdr-workspace-id
                                   (herdr-state-workspaces
@@ -302,7 +302,7 @@ where you were.  Those panes stay reachable from the dashboard and from
     :items ,(lambda ()
               (let ((herdr-rpc-timeout (min herdr-rpc-timeout
                                             herdr-rpc-background-timeout)))
-                (herdr-state-reconcile-panes))
+                (herdr-state-reconcile-panes (herdr-current-connection)))
               (herdr-select-panes-with-buffers))))
 
 (with-eval-after-load 'consult

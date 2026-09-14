@@ -126,10 +126,10 @@ is what reports it."
   "A change made over RPC must reach the cache through the event stream."
   :tags '(:live)
   (skip-unless (herdr-drift-test--server-p))
-  (herdr-state-stop)
+  (herdr-state-stop (herdr-current-connection))
   (unwind-protect
       (progn
-        (herdr-state-start)
+        (herdr-state-start (herdr-current-connection))
         (let ((deadline (+ (float-time) 6)))
           (while (< (float-time) deadline) (accept-process-output nil 0.1)))
         (let ((pane (alist-get 'pane_id
@@ -148,7 +148,7 @@ is what reports it."
                         (herdr-state-pane (herdr-state-current) pane))
               (accept-process-output nil 0.1)))
           (should-not (herdr-state-pane (herdr-state-current) pane))))
-    (herdr-state-stop)))
+    (herdr-state-stop (herdr-current-connection))))
 
 (provide 'herdr-drift-test)
 ;;; herdr-drift-test.el ends here

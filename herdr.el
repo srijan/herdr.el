@@ -68,8 +68,8 @@ some commands may misbehave"
   (let ((connection (herdr-current-connection)))
     (herdr-term-ensure connection)
     (herdr--check-protocol connection)
-    (unless (herdr-state-running-p)
-      (herdr-state-start))
+    (unless (herdr-state-running-p connection)
+      (herdr-state-start connection))
     ;; Twice: the second pass has the cache, which is what decides what to
     ;; attach.
     (herdr-term-ensure connection)))
@@ -80,7 +80,7 @@ some commands may misbehave"
 The herdr server keeps running; agents are unaffected."
   (interactive)
   (herdr-term-teardown)
-  (herdr-state-stop))
+  (herdr-state-stop (herdr-current-connection)))
 
 ;;;###autoload
 (defun herdr-project ()

@@ -47,7 +47,7 @@ wrong workspace and creating one in the wrong directory are the two ways
 this goes wrong while still sending the right method."
   (dolist (case '(("/tmp/project/" "workspace.focus" workspace_id "w1")
                   ("/tmp/nowhere/" "workspace.create" cwd "/tmp/nowhere/")))
-    (let ((herdr-state--current (herdr-project-test--state))
+    (let ((herdr-connection--sole (herdr-test-connection (herdr-project-test--state)))
           (default-directory (nth 0 case))
           wire params)
       (cl-letf (((symbol-function 'herdr-start) #'ignore)
@@ -68,7 +68,7 @@ this goes wrong while still sending the right method."
       (should (equal (list (nth 1 case)) wire))
       (should (equal (nth 3 case) (alist-get (nth 2 case) params)))))
   ;; A created workspace is named for the directory it is rooted in.
-  (let ((herdr-state--current (herdr-project-test--state))
+  (let ((herdr-connection--sole (herdr-test-connection (herdr-project-test--state)))
         (default-directory "/tmp/nowhere/")
         params)
     (cl-letf (((symbol-function 'herdr-start) #'ignore)
@@ -90,7 +90,7 @@ this goes wrong while still sending the right method."
 (ert-deftest herdr-project-prefers-the-project-root-over-the-default-directory ()
   "A command run from a file deep in a tree should reach the tree's
 workspace, not make one for the subdirectory it happened to be in."
-  (let ((herdr-state--current (herdr-project-test--state))
+  (let ((herdr-connection--sole (herdr-test-connection (herdr-project-test--state)))
         (default-directory "/tmp/project/src/deep/")
         wire params)
     (cl-letf (((symbol-function 'herdr-start) #'ignore)
@@ -231,10 +231,10 @@ command."
 again: a second event stream would double every event the cache folds."
   (let (starts ensures)
     (cl-letf (((symbol-function 'herdr-term-ensure)
-               (lambda (_connection ) (push t ensures)))
+               (lambda (_connection) (push t ensures)))
               ((symbol-function 'herdr--check-protocol) #'ignore)
-              ((symbol-function 'herdr-state-running-p) (lambda () t))
-              ((symbol-function 'herdr-state-start) (lambda () (push t starts))))
+              ((symbol-function 'herdr-state-running-p) (lambda (_connection) t))
+              ((symbol-function 'herdr-state-start) (lambda (_connection) (push t starts))))
       (herdr-start)
       (should-not starts)
       (should (= 2 (length ensures))))))
@@ -244,10 +244,10 @@ again: a second event stream would double every event the cache folds."
 been primed."
   (let (starts ensures)
     (cl-letf (((symbol-function 'herdr-term-ensure)
-               (lambda (_connection ) (push t ensures)))
+               (lambda (_connection) (push t ensures)))
               ((symbol-function 'herdr--check-protocol) #'ignore)
-              ((symbol-function 'herdr-state-running-p) (lambda () nil))
-              ((symbol-function 'herdr-state-start) (lambda () (push t starts))))
+              ((symbol-function 'herdr-state-running-p) (lambda (_connection) nil))
+              ((symbol-function 'herdr-state-start) (lambda (_connection) (push t starts))))
       (herdr-start)
       (should (= 1 (length starts)))
       (should (= 2 (length ensures))))))
@@ -257,7 +257,7 @@ been primed."
 are gone, or buffers attached to a stream that has stopped."
   (let (torn stopped)
     (cl-letf (((symbol-function 'herdr-term-teardown) (lambda () (push t torn)))
-              ((symbol-function 'herdr-state-stop) (lambda () (push t stopped))))
+              ((symbol-function 'herdr-state-stop) (lambda (_connection) (push t stopped))))
       (herdr-stop))
     (should torn)
     (should stopped)))

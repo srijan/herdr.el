@@ -458,45 +458,22 @@ answering."
   :type '(choice number (const :tag "Never repair" nil))
   :group 'herdr)
 
-(defvar herdr-state--current (herdr-state-empty)
-  "The live cache.")
-
-(defvar herdr-state--settle-timer nil)
-(defvar herdr-state--repair-timer nil)
-
-(defvar herdr-state--repairing nil
-  "Non-nil while a repair's RPCs are in flight.
-Let-bound, not set, so a signal anywhere in the repair clears it.")
-
-(defvar herdr-state--global-process nil)
-(defvar herdr-state--pane-process nil)
-(defvar herdr-state--reconnect-delay nil)
-(defvar herdr-state--reconnect-timer nil)
-(defvar herdr-state--resubscribe-timer nil)
-(defvar herdr-state--running nil)
-
-(defvar herdr-state--generation 0
-  "Bumped by `herdr-state-start' and `herdr-state-stop'.
-
-Distinguishes the session an in-flight async request or a pending
-timer chain was begun for from whatever session happens to be running
-by the time it acts.  `herdr-state--running' cannot do this alone: a
-stop followed by a quick restart makes it true again before a request
-issued under the old session gets a reply, so a callback gated only on
-it merges a stale result into the new session's cache — see
-`herdr-state--refresh-statuses' and, outside this file,
-`herdr-cmd--select-pane-when-ready'.")
-
-(defun herdr-state-generation ()
+(defun herdr-state-generation (connection)
   "Return the current session generation.
-See `herdr-state--generation'."
-  herdr-state--generation)
+See the generation slot."
+  (herdr-connection-generation connection))
 
-(defun herdr-state-current ()
-  "Return the live cache."
-  herdr-state--current)
+(defun herdr-state-current (&optional connection)
+  "Return CONNECTION\='s cache, or the current connection\='s.
+The optional argument is what lets a renderer ask for one server while
+a command asks for whichever it is acting on."
+  (let ((connection (or connection (herdr-current-connection))))
+    ;; A connection that has never hydrated reads as an empty session
+    ;; rather than as nil, which is what the global it replaced did.
+    (or (herdr-connection-cache connection)
+        (setf (herdr-connection-cache connection) (herdr-state-empty)))))
 
-(defun herdr-state--dispatch (kind data)
+(defun herdr-state--dispatch (connection kind data)
   "Fold event KIND with DATA into the cache and notify listeners.
 
 Every event notifies, with no quiet window in front of it.  This used
@@ -510,69 +487,78 @@ held the hook for 54.3 seconds and swallowed 533 events to absorb a
 replay of 8 — a minute of frozen modeline and dashboard after every
 connect, precisely when an agent is most likely to be working.  0.9.0
 removed the replay, so there is nothing left to absorb either."
-  (setq herdr-state--current (herdr-state-reduce herdr-state--current kind data))
+  (setf (herdr-connection-cache connection) (herdr-state-reduce (herdr-state-current connection) kind data))
   (run-hook-with-args 'herdr-state-change-functions kind data))
 
-(defun herdr-state-repair ()
+(defun herdr-state-repair (connection)
   "Reconcile the cached pane set, then the workspace set.
 Returns non-nil when it ran.  `herdr-rpc-call\\=' services due timers while
 it waits, so a caller that finds one in flight gets nil and decides for
 itself: the timer skips its tick, `herdr-state--settle\\=' defers.  The
 guard covers the paths that arrive on a timer, not the on-demand
 reconciles in `herdr-select\\=' and `herdr-dispatch\\=', which must not skip."
-  (when (and herdr-state--running (not herdr-state--repairing))
-    (let ((reconnecting herdr-state--reconnect-timer)
-          (herdr-state--repairing t)
+  (when (and (herdr-connection-running connection) (not (herdr-connection-repairing connection)))
+    (let ((reconnecting (herdr-connection-reconnect-timer connection))
           (herdr-rpc-timeout (min herdr-rpc-timeout
                                   herdr-rpc-background-timeout)))
-      (herdr-state-reconcile-panes)
-      ;; A `pane.list\=' that just failed has scheduled a reconnect, so
-      ;; `workspace.list\=' would spend a second background timeout on the
-      ;; same wedged socket for an answer that is not coming either.
-      (unless (and (null reconnecting) herdr-state--reconnect-timer)
-        (herdr-state-reconcile-workspaces))
+      ;; `unwind-protect' rather than a binding, now that the guard is a
+      ;; slot: a signal anywhere in the pair has to clear it either way.
+      (setf (herdr-connection-repairing connection) t)
+      (unwind-protect
+          (progn
+            (herdr-state-reconcile-panes connection)
+            ;; A `pane.list\=' that just failed has scheduled a reconnect,
+            ;; so `workspace.list\=' would spend a second background
+            ;; timeout on the same wedged socket for an answer that is not
+            ;; coming either.
+            (unless (and (null reconnecting) (herdr-connection-reconnect-timer connection))
+              (herdr-state-reconcile-workspaces connection)))
+        (setf (herdr-connection-repairing connection) nil))
       t)))
 
-(defun herdr-state--arm-repair-timer ()
+(defun herdr-state--arm-repair-timer (connection)
   "Begin the periodic repair, unless it is already running or disabled.
 A repeating timer rather than an idle one: idle timers never fire while
 something keeps Emacs busy, which is when a wedged server most needs
 noticing."
   (when (and herdr-state-repair-interval
-             (not herdr-state--repair-timer))
-    (setq herdr-state--repair-timer
+             (not (herdr-connection-repair-timer connection)))
+    (setf (herdr-connection-repair-timer connection)
+          ;; The connection travels with the timer.  A callback fires in
+          ;; an empty extent, so anything it resolves there is whatever
+          ;; the user last looked at rather than what armed it.
           (run-at-time herdr-state-repair-interval
                        herdr-state-repair-interval
-                       #'herdr-state-repair))))
+                       #'herdr-state-repair connection))))
 
-(defun herdr-state--release ()
+(defun herdr-state--release (connection)
   "Close the event streams and cancel every timer the session armed."
-  (dolist (proc (list herdr-state--global-process herdr-state--pane-process))
+  (dolist (proc (list (herdr-connection-global-process connection) (herdr-connection-pane-process connection)))
     (herdr-state--close proc))
-  (dolist (timer (list herdr-state--reconnect-timer
-                       herdr-state--resubscribe-timer
-                       herdr-state--settle-timer
-                       herdr-state--repair-timer))
+  (dolist (timer (list (herdr-connection-reconnect-timer connection)
+                       (herdr-connection-resubscribe-timer connection)
+                       (herdr-connection-settle-timer connection)
+                       (herdr-connection-repair-timer connection)))
     (when timer (cancel-timer timer)))
-  (setq herdr-state--global-process nil
-        herdr-state--pane-process nil
-        herdr-state--pane-stream-ids nil
-        herdr-state--reconnect-timer nil
-        herdr-state--resubscribe-timer nil
-        herdr-state--settle-timer nil
-        herdr-state--repair-timer nil
-        herdr-state--reconnect-delay nil))
+  (setf (herdr-connection-global-process connection) nil
+        (herdr-connection-pane-process connection) nil
+        (herdr-connection-pane-stream-ids connection) nil
+        (herdr-connection-reconnect-timer connection) nil
+        (herdr-connection-resubscribe-timer connection) nil
+        (herdr-connection-settle-timer connection) nil
+        (herdr-connection-repair-timer connection) nil
+        (herdr-connection-reconnect-delay connection) nil))
 
-(defun herdr-state--schedule-settle (&optional resync)
+(defun herdr-state--schedule-settle (connection &optional resync)
   "Arrange the one post-connect settle, replacing any pending one.
 RESYNC is passed through to `herdr-state--settle\\='."
-  (when herdr-state--settle-timer
-    (cancel-timer herdr-state--settle-timer))
-  (setq herdr-state--settle-timer
+  (when (herdr-connection-settle-timer connection)
+    (cancel-timer (herdr-connection-settle-timer connection)))
+  (setf (herdr-connection-settle-timer connection)
         (run-at-time herdr-state-settle-delay nil
-                     #'herdr-state--settle resync)))
+                     #'herdr-state--settle connection resync)))
 
-(defun herdr-state--settle (&optional resync)
+(defun herdr-state--settle (connection &optional resync)
   "Reconcile the cache against the server after connecting, then realign B.
 
 Both halves are reconciled, panes and workspaces, because both have a
@@ -599,19 +585,19 @@ needs no RESYNC because it has just snapshotted.
 
 Realigning connection B afterwards, not before: reconciling is what
 makes the pane set final, and B subscribes the agent slice of it."
-  (setq herdr-state--settle-timer nil)
-  (when herdr-state--running
-    (if herdr-state--repairing
+  (setf (herdr-connection-settle-timer connection) nil)
+  (when (herdr-connection-running connection)
+    (if (herdr-connection-repairing connection)
         ;; Fired inside another repair's wait.  Try again rather than
         ;; subscribing B against a pane set nothing has settled.
-        (herdr-state--schedule-settle resync)
+        (herdr-state--schedule-settle connection resync)
       ;; Events arriving since the subscribe have already queued a
       ;; debounced rebuild of B through `herdr-state--note-pane-set-change';
       ;; drop it, since the rebuild below is the same work against a
       ;; better pane set.
-      (when herdr-state--resubscribe-timer
-        (cancel-timer herdr-state--resubscribe-timer)
-        (setq herdr-state--resubscribe-timer nil))
+      (when (herdr-connection-resubscribe-timer connection)
+        (cancel-timer (herdr-connection-resubscribe-timer connection))
+        (setf (herdr-connection-resubscribe-timer connection) nil))
       ;; The settle runs on a timer, so its synchronous calls are bound to
       ;; the background timeout: a wedged server costs the refresh, not
       ;; ten seconds of frozen editor that nobody asked for.  Plain
@@ -623,20 +609,20 @@ makes the pane set final, and B subscribes the agent slice of it."
         (let ((herdr-rpc-timeout (min herdr-rpc-timeout
                                       herdr-rpc-background-timeout)))
           (condition-case nil
-              (setq herdr-state--current
+              (setf (herdr-connection-cache connection)
                     (herdr-state-from-snapshot
                      (alist-get 'snapshot (herdr-rpc-call (herdr-current-connection) "session.snapshot"))))
             (error nil))))
-      (herdr-state-repair)
+      (herdr-state-repair connection)
       (condition-case nil
-          (herdr-state--open-pane-stream)
-        (error (herdr-state--schedule-reconnect)))
+          (herdr-state--open-pane-stream connection)
+        (error (herdr-state--schedule-reconnect connection)))
       ;; Announce after the pane set is final, so a listener that redraws
       ;; from the whole cache does it once and sees everything.
       (when resync
         (run-hook-with-args 'herdr-state-change-functions "resync" nil)))))
 
-(defun herdr-state--handle-line (line)
+(defun herdr-state--handle-line (connection line)
   "Handle one NDJSON LINE from an event connection."
   (let ((payload (ignore-errors (herdr-rpc-decode line))))
     (when payload
@@ -646,16 +632,16 @@ makes the pane set final, and B subscribes the agent slice of it."
          ;; reduce against a kind nothing understands.
          ((and (null kind) (alist-get 'result payload)) nil)
          ((null kind) nil)
-         (t (herdr-state--dispatch kind (alist-get 'data payload))))))))
+         (t (herdr-state--dispatch connection kind (alist-get 'data payload))))))))
 
-(defun herdr-state--filter (proc chunk)
+(defun herdr-state--filter (connection proc chunk)
   "Accumulate CHUNK on PROC and handle each complete line."
   (let ((buffered (concat (or (process-get proc 'herdr-pending) "") chunk)))
     (while (string-match "\n" buffered)
       (let ((line (substring buffered 0 (match-beginning 0))))
         (setq buffered (substring buffered (match-end 0)))
         (unless (string-blank-p line)
-          (herdr-state--handle-line line))))
+          (herdr-state--handle-line connection line))))
     ;; Whatever is left is a partial line; hold it until its newline lands.
     (process-put proc 'herdr-pending buffered)))
 
@@ -669,20 +655,26 @@ every subsequent event."
     (process-put proc 'herdr-intentional t)
     (delete-process proc)))
 
-(defun herdr-state--sentinel (proc _event)
+(defun herdr-state--sentinel (connection proc _event)
   "Schedule a reconnect when PROC's event stream ends unexpectedly."
-  (when (and herdr-state--running
+  (when (and (herdr-connection-running connection)
              (not (process-get proc 'herdr-intentional))
              (memq (process-status proc) '(closed failed exit signal)))
-    (herdr-state--schedule-reconnect)))
+    (herdr-state--schedule-reconnect connection)))
 
-(defun herdr-state--subscribe (name subscriptions)
+(defun herdr-state--subscribe (connection name subscriptions)
   "Open an event connection called NAME carrying SUBSCRIPTIONS.
 Closes its own process if the subscribe signals: until this returns the
 process is in no variable, so nothing else could close it."
-  (let ((proc (herdr-rpc-connect (herdr-current-connection)
-                                 name #'herdr-state--filter
-                                 #'herdr-state--sentinel)))
+  (let ((proc (herdr-rpc-connect
+               connection name
+               ;; Captured, not resolved: a filter and a sentinel fire
+               ;; long after this returns, and by then whichever server
+               ;; the user last looked at is not this one.
+               (lambda (proc chunk)
+                 (herdr-state--filter connection proc chunk))
+               (lambda (proc event)
+                 (herdr-state--sentinel connection proc event)))))
     (condition-case err
         (progn
           (process-put proc 'herdr-pending "")
@@ -693,13 +685,7 @@ process is in no variable, so nothing else could close it."
       (error (herdr-state--close proc)
              (signal (car err) (cdr err))))))
 
-(defvar herdr-state--pane-stream-ids nil
-  "Pane ids connection B was last built against.
-What `herdr-state--note-pane-set-change\\=' compares the cache with to
-decide that B needs rebuilding.  Assigned only after a successful
-subscribe, so a failed rebuild keeps looking stale and is retried.")
-
-(defun herdr-state--watched-pane-ids ()
+(defun herdr-state--watched-pane-ids (connection)
   "Return ids of the panes connection B should subscribe to.
 
 The agent panes, not every pane — attachment widened to
@@ -712,29 +698,30 @@ subscribing every pane meant a session with a dozen plain shells paid
 ~120 server-side requests a second to watch statuses nothing here
 displays."
   (mapcar (lambda (pane) (herdr-pane-id pane))
-          (herdr-state-agents herdr-state--current)))
+          (herdr-state-agents (herdr-state-current connection))))
 
-(defun herdr-state--pane-subscriptions ()
+(defun herdr-state--pane-subscriptions (connection)
   "Return per-pane status subscriptions for the watched panes.
 A vector, because `subscriptions' is a JSON array."
   (herdr-rpc-array
    (mapcar (lambda (id) `((type . "pane.agent_status_changed") (pane_id . ,id)))
-           (herdr-state--watched-pane-ids))))
+           (herdr-state--watched-pane-ids connection))))
 
-(defun herdr-state--open-pane-stream ()
+(defun herdr-state--open-pane-stream (connection)
   "Rebuild connection B against the watched pane set."
-  (herdr-state--close herdr-state--pane-process)
-  (setq herdr-state--pane-process nil)
-  (let ((ids (herdr-state--watched-pane-ids))
-        (subscriptions (herdr-state--pane-subscriptions)))
+  (herdr-state--close (herdr-connection-pane-process connection))
+  (setf (herdr-connection-pane-process connection) nil)
+  (let ((ids (herdr-state--watched-pane-ids connection))
+        (subscriptions (herdr-state--pane-subscriptions connection)))
     (when (> (length subscriptions) 0)
-      (setq herdr-state--pane-process
-            (herdr-state--subscribe "herdr-events-panes" subscriptions)))
+      (setf (herdr-connection-pane-process connection)
+            (herdr-state--subscribe connection
+ "herdr-events-panes" subscriptions)))
     ;; After the subscribe, which can signal: a B that failed to open
     ;; must keep comparing as stale so the next event retries it.
-    (setq herdr-state--pane-stream-ids ids)))
+    (setf (herdr-connection-pane-stream-ids connection) ids)))
 
-(defun herdr-state--resubscribe-panes ()
+(defun herdr-state--resubscribe-panes (connection)
   "Rebuild connection B, then refresh statuses the rebuild may have missed.
 
 The set is re-checked at fire time because a rebuild has a gap in it
@@ -744,19 +731,19 @@ the streams open, so the first events schedule a rebuild that the
 settle then performs itself, against a better pane set, moments later.
 Re-checking turns that duplicate into a no-op instead of a second
 teardown."
-  (setq herdr-state--resubscribe-timer nil)
-  (when (and herdr-state--running
-             (not (seq-set-equal-p (herdr-state--watched-pane-ids)
-                                   herdr-state--pane-stream-ids)))
+  (setf (herdr-connection-resubscribe-timer connection) nil)
+  (when (and (herdr-connection-running connection)
+             (not (seq-set-equal-p (herdr-state--watched-pane-ids connection)
+                                   (herdr-connection-pane-stream-ids connection))))
     ;; Plain `error': see the matching handler in `herdr-state--settle'.
     (condition-case nil
-        (herdr-state--open-pane-stream)
-      (error (herdr-state--schedule-reconnect)))
+        (herdr-state--open-pane-stream connection)
+      (error (herdr-state--schedule-reconnect connection)))
     ;; A rebuild has a gap.  The snapshot carries agent_status for every
     ;; pane, so refreshing from it closes the gap without replaying.
-    (herdr-state--refresh-statuses)))
+    (herdr-state--refresh-statuses connection)))
 
-(defun herdr-state--refresh-statuses ()
+(defun herdr-state--refresh-statuses (connection)
   "Merge agent statuses from a fresh snapshot into the cache, async.
 
 Asynchronous because this runs from the resubscribe timer, which fires
@@ -769,21 +756,21 @@ refresh, and the next reconcile or event repairs the same state.
 The request carries no handle for `herdr-state-stop' to cancel, so the
 generation captured here is what keeps a reply arriving after a
 stop-then-restart from merging the old session's statuses into the
-new one: `herdr-state--running' alone would already be true again by
+new one: the running flag alone would already be true again by
 then."
-  (let ((generation herdr-state--generation))
+  (let ((generation (herdr-connection-generation connection)))
     (ignore-errors
       (herdr-rpc-call-async
        (herdr-current-connection)
        "session.snapshot" nil
        (lambda (result _error)
-         (when-let* (((= generation herdr-state--generation))
-                     (herdr-state--running)
+         (when-let* (((= generation (herdr-connection-generation connection)))
+                     ((herdr-connection-running connection))
                      (snapshot (alist-get 'snapshot result)))
            (dolist (pane (alist-get 'panes snapshot))
-             (setq herdr-state--current
+             (setf (herdr-connection-cache connection)
                    (herdr-state--merge-pane
-                    herdr-state--current (herdr-pane-id pane)
+                    (herdr-state-current connection) (herdr-pane-id pane)
                     (seq-filter #'cdr
                                 (list (cons 'agent_status
                                             (herdr-pane-status pane))
@@ -791,7 +778,7 @@ then."
            (run-hook-with-args 'herdr-state-change-functions "resync" nil)))
        herdr-rpc-background-timeout))))
 
-(defun herdr-state--note-pane-set-change (_kind _data)
+(defun herdr-state--note-pane-set-change (connection _kind _data)
   "Rebuild connection B, debounced, when the watched pane set drifted.
 
 A set comparison rather than a dispatch on event kind, because B now
@@ -803,32 +790,32 @@ excluded — correct while B named every pane, a missed rebuild once it
 stopped.  Comparing the sets is immune to the enumeration going stale
 again.  Order-insensitive, since a reconcile may reorder the cache
 without changing what B should watch."
-  (when (and herdr-state--running
-             (not (seq-set-equal-p (herdr-state--watched-pane-ids)
-                                   herdr-state--pane-stream-ids)))
-    (when herdr-state--resubscribe-timer
-      (cancel-timer herdr-state--resubscribe-timer))
-    (setq herdr-state--resubscribe-timer
-          (run-at-time 0.3 nil #'herdr-state--resubscribe-panes))))
+  (when (and (herdr-connection-running connection)
+             (not (seq-set-equal-p (herdr-state--watched-pane-ids connection)
+                                   (herdr-connection-pane-stream-ids connection))))
+    (when (herdr-connection-resubscribe-timer connection)
+      (cancel-timer (herdr-connection-resubscribe-timer connection)))
+    (setf (herdr-connection-resubscribe-timer connection)
+          (run-at-time 0.3 nil #'herdr-state--resubscribe-panes connection))))
 
-(defun herdr-state--schedule-reconnect ()
+(defun herdr-state--schedule-reconnect (connection)
   "Arrange to reopen the event streams after a backoff."
-  (unless herdr-state--reconnect-timer
-    (setq herdr-state--reconnect-delay
+  (unless (herdr-connection-reconnect-timer connection)
+    (setf (herdr-connection-reconnect-delay connection)
           (min herdr-state-reconnect-max
-               (* 2 (or herdr-state--reconnect-delay
+               (* 2 (or (herdr-connection-reconnect-delay connection)
                         (/ herdr-state-reconnect-min 2)))))
-    (setq herdr-state--reconnect-timer
-          (run-at-time herdr-state--reconnect-delay nil
-                       #'herdr-state--reconnect))))
+    (setf (herdr-connection-reconnect-timer connection)
+          (run-at-time (herdr-connection-reconnect-delay connection) nil
+                       #'herdr-state--reconnect connection))))
 
-(defun herdr-state--reconnect ()
+(defun herdr-state--reconnect (connection)
   "Reopen the event streams and resync, since missed events cannot replay."
-  (setq herdr-state--reconnect-timer nil)
-  (when herdr-state--running
+  (setf (herdr-connection-reconnect-timer connection) nil)
+  (when (herdr-connection-running connection)
     (condition-case nil
         (progn
-          (herdr-state--open-streams)
+          (herdr-state--open-streams connection)
           ;; A disconnect of any length loses events that are never
           ;; sent again — so this settle takes a full snapshot rather
           ;; than reconciling alone.  The reconcile repairs membership
@@ -836,27 +823,27 @@ without changing what B should watch."
           ;; focus, which neither list call carries.  Reconnecting
           ;; without one left every workspace and tab change made
           ;; during the gap missing for good.
-          (herdr-state--schedule-settle t)
-          (setq herdr-state--reconnect-delay nil))
+          (herdr-state--schedule-settle connection t)
+          (setf (herdr-connection-reconnect-delay connection) nil))
       ;; Plain `error', not `herdr-error': `process-send-string' signals
       ;; a plain error when the peer closes between connect and send
       ;; (the case herdr-dispatch.el documents), and the timer variable
       ;; was already cleared above — an escaping signal here lost the
       ;; attempt with no reconnect scheduled, only a timer backtrace.
-      (error (herdr-state--schedule-reconnect)))))
+      (error (herdr-state--schedule-reconnect connection)))))
 
-(defun herdr-state--open-streams ()
+(defun herdr-state--open-streams (connection)
   "Open connection A, and connection B if there are panes to watch."
-  (herdr-state--close herdr-state--global-process)
-  (setq herdr-state--global-process
-        (herdr-state--subscribe
+  (herdr-state--close (herdr-connection-global-process connection))
+  (setf (herdr-connection-global-process connection)
+        (herdr-state--subscribe connection
          "herdr-events-global"
          (herdr-rpc-array
           (mapcar (lambda (type) `((type . ,type)))
                   herdr-state-global-subscriptions))))
-  (herdr-state--open-pane-stream))
+  (herdr-state--open-pane-stream connection))
 
-(defun herdr-state-reconcile-panes ()
+(defun herdr-state-reconcile-panes (connection)
   "Make the cached pane set match the server, and refresh directories.
 
 The event stream cannot keep the cache right on its own.  A `cd\\=' is
@@ -879,36 +866,36 @@ Capture the cached ids BEFORE the call.  `herdr-rpc-call\\='s wait
 services the event-stream filters, so the cache can gain a pane while
 the reply is in flight, and a reply built before that pane existed
 cannot pronounce it stale."
-  (let ((known-ids (herdr-state-pane-ids herdr-state--current))
-        (generation herdr-state--generation))
+  (let ((known-ids (herdr-state-pane-ids (herdr-state-current connection)))
+        (generation (herdr-connection-generation connection)))
     (when-let* ((panes (condition-case nil
                            (alist-get 'panes (herdr-rpc-call (herdr-current-connection) "pane.list"))
-                         (error (when herdr-state--running
-                                  (herdr-state--schedule-reconnect))
+                         (error (when (herdr-connection-running connection)
+                                  (herdr-state--schedule-reconnect connection))
                                 nil)))
                 ;; The wait services due timers, so the session can stop
                 ;; underneath this call.  A reply from a session that is
                 ;; gone must not repopulate the cache `herdr-state-stop\='
                 ;; just emptied.
-                ((equal generation herdr-state--generation)))
+                ((equal generation (herdr-connection-generation connection))))
       (let* ((live-ids (mapcar (lambda (pane) (herdr-pane-id pane)) panes))
              (cached-ids (seq-filter (lambda (id) (member id known-ids))
-                                     (herdr-state-pane-ids herdr-state--current)))
+                                     (herdr-state-pane-ids (herdr-state-current connection))))
              (stale (seq-remove (lambda (id) (member id live-ids)) cached-ids))
              (changed nil))
         (dolist (id stale)
           (setq changed t)
-          (setq herdr-state--current
-                (herdr-state-reduce herdr-state--current "pane_closed"
+          (setf (herdr-connection-cache connection)
+                (herdr-state-reduce (herdr-state-current connection) "pane_closed"
                                     `((pane_id . ,id)))))
         (dolist (pane panes)
           (let* ((id (herdr-pane-id pane))
-                 (known (herdr-state-pane herdr-state--current id)))
+                 (known (herdr-state-pane (herdr-state-current connection) id)))
             (cond
              ((null known)
               (setq changed t)
-              (setq herdr-state--current
-                    (herdr-state-reduce herdr-state--current "pane_created"
+              (setf (herdr-connection-cache connection)
+                    (herdr-state-reduce (herdr-state-current connection) "pane_created"
                                         `((pane . ,pane)))))
              ((herdr-pane-differs-p known pane)
               ;; Replace the record rather than patching cwd alone: an
@@ -918,22 +905,22 @@ cannot pronounce it stale."
               ;; Claude in: herdr relabels it `claude' of its own accord
               ;; a few seconds later.
               (setq changed t)
-              (setq herdr-state--current
-                    (herdr-state-reduce herdr-state--current "pane_updated"
+              (setf (herdr-connection-cache connection)
+                    (herdr-state-reduce (herdr-state-current connection) "pane_updated"
                                         `((pane . ,pane)))))
              ((not (equal known pane))
               ;; Volatile-only drift: refresh the record but stay
               ;; silent, so titles track the server at poll cadence
               ;; without the hook redrawing everything per poll.  See
               ;; `herdr-pane-significant-fields'.
-              (setq herdr-state--current
-                    (herdr-state-reduce herdr-state--current "pane_updated"
+              (setf (herdr-connection-cache connection)
+                    (herdr-state-reduce (herdr-state-current connection) "pane_updated"
                                         `((pane . ,pane))))))))
         (when changed
           (run-hook-with-args 'herdr-state-change-functions "reconcile" nil))
         changed))))
 
-(defun herdr-state-reconcile-workspaces ()
+(defun herdr-state-reconcile-workspaces (connection)
   "Make the cached workspace set match the server.
 
 Panes get this from `herdr-state-reconcile-panes' every poll; workspaces
@@ -949,37 +936,37 @@ in the dispatcher, the modeline, and every picker for the rest of the
 `workspace.list', like `pane.list', takes no required parameters and
 answers with every live workspace, so one call resolves both closures
 and updates in a single pass.  Returns non-nil when anything changed."
-  (when-let* ((generation herdr-state--generation)
+  (when-let* ((generation (herdr-connection-generation connection))
               (workspaces (ignore-errors
                             (alist-get 'workspaces
                                        (herdr-rpc-call (herdr-current-connection) "workspace.list"))))
               ;; See `herdr-state-reconcile-panes\=': same stop-mid-wait.
-              ((equal generation herdr-state--generation)))
+              ((equal generation (herdr-connection-generation connection))))
     (let* ((live-ids (mapcar #'herdr-workspace-id workspaces))
            (stale (seq-remove (lambda (w) (member (herdr-workspace-id w)
                                                   live-ids))
-                              (herdr-state-workspaces herdr-state--current)))
+                              (herdr-state-workspaces (herdr-state-current connection))))
            (changed nil))
       (dolist (workspace stale)
         (setq changed t)
-        (setq herdr-state--current
-              (herdr-state-reduce herdr-state--current "workspace_closed"
+        (setf (herdr-connection-cache connection)
+              (herdr-state-reduce (herdr-state-current connection) "workspace_closed"
                                   `((workspace_id
                                      . ,(herdr-workspace-id workspace))))))
       (dolist (workspace workspaces)
         (let* ((id (herdr-workspace-id workspace))
                (known (seq-find (lambda (w) (equal id (herdr-workspace-id w)))
-                                (herdr-state-workspaces herdr-state--current))))
+                                (herdr-state-workspaces (herdr-state-current connection)))))
           (unless (equal known workspace)
             (setq changed t)
-            (setq herdr-state--current
-                  (herdr-state-reduce herdr-state--current "workspace_updated"
+            (setf (herdr-connection-cache connection)
+                  (herdr-state-reduce (herdr-state-current connection) "workspace_updated"
                                       `((workspace . ,workspace)))))))
       (when changed
         (run-hook-with-args 'herdr-state-change-functions "reconcile" nil))
       changed)))
 
-(defun herdr-state-refresh ()
+(defun herdr-state-refresh (connection)
   "Replace the cache from a fresh snapshot, leaving subscriptions alone.
 
 Lighter than `herdr-state-resync\\=', which also tears down and rebuilds
@@ -989,70 +976,78 @@ than one extra round trip."
   (when-let* ((snapshot (ignore-errors
                           (alist-get 'snapshot
                                      (herdr-rpc-call (herdr-current-connection) "session.snapshot")))))
-    (setq herdr-state--current (herdr-state-from-snapshot snapshot))
+    (setf (herdr-connection-cache connection) (herdr-state-from-snapshot snapshot))
     (run-hook-with-args 'herdr-state-change-functions "refresh" nil)
-    herdr-state--current))
+    (herdr-state-current connection)))
 
-(defun herdr-state-resync ()
+(defun herdr-state-resync (connection)
   "Refetch the snapshot and rebuild per-pane subscriptions."
   (interactive)
-  (setq herdr-state--current
+  (setf (herdr-connection-cache connection)
         (herdr-state-from-snapshot
          (alist-get 'snapshot (herdr-rpc-call (herdr-current-connection) "session.snapshot"))))
-  (herdr-state--open-pane-stream)
+  (herdr-state--open-pane-stream connection)
   (run-hook-with-args 'herdr-state-change-functions "resync" nil)
-  herdr-state--current)
+  (herdr-state-current connection))
 
-(defun herdr-state-start ()
+(defun herdr-state-start (connection)
   "Hydrate the cache and begin following the event stream."
-  (unless herdr-state--running
-    (setq herdr-state--running t)
-    (setq herdr-state--generation (1+ herdr-state--generation))
-    (add-hook 'herdr-state-change-functions #'herdr-state--note-pane-set-change)
+  (unless (herdr-connection-running connection)
+    (setf (herdr-connection-running connection) t)
+    (setf (herdr-connection-generation connection) (1+ (herdr-connection-generation connection)))
+    ;; A closure, kept in the connection, because the hook is called
+    ;; with the event and not with the connection whose cache moved.
+    (setf (herdr-connection-notify connection)
+          (lambda (kind data)
+            (herdr-state--note-pane-set-change connection kind data)))
+    (add-hook 'herdr-state-change-functions
+              (herdr-connection-notify connection))
     (condition-case err
         (progn
-          (setq herdr-state--current
+          (setf (herdr-connection-cache connection)
                 (herdr-state-from-snapshot
                  (alist-get 'snapshot (herdr-rpc-call (herdr-current-connection) "session.snapshot"))))
           ;; Announce the snapshot immediately so consumers paint
           ;; something true before any event arrives.
           (run-hook-with-args 'herdr-state-change-functions "resync" nil)
-          (herdr-state--arm-repair-timer)
-          (herdr-state--open-streams)
-          (herdr-state--schedule-settle))
+          (herdr-state--arm-repair-timer connection)
+          (herdr-state--open-streams connection)
+          (herdr-state--schedule-settle connection))
       ;; Plain `error', not `herdr-error': `herdr-state--open-streams'
       ;; reaches `process-send-string' through the same subscribe path
       ;; `herdr-state--settle' and `herdr-state--reconnect' widened their
       ;; handlers for — the peer can close between connect and send and
       ;; signal a plain error.  Catching only `herdr-error' here let that
-      ;; escape the rollback, leaving `herdr-state--running' stuck at t
+      ;; escape the rollback, leaving the running slot stuck at t
       ;; with no stream open and `herdr-start''s own `unless' skipping
       ;; every later retry.
       ;; The rollback releases everything the attempt acquired: the
       ;; repair timer is armed and connection A opened before the point
       ;; a failure is most likely.  The generation stays bumped.
       (error
-       (setq herdr-state--running nil)
-       (remove-hook 'herdr-state-change-functions #'herdr-state--note-pane-set-change)
-       (herdr-state--release)
+       (setf (herdr-connection-running connection) nil)
+       (remove-hook 'herdr-state-change-functions
+                    (herdr-connection-notify connection))
+       (herdr-state--release connection)
        (signal (car err) (cdr err))))))
 
-(defun herdr-state-stop ()
+(defun herdr-state-stop (connection)
   "Stop following the event stream and drop the cache."
-  (setq herdr-state--running nil)
-  (setq herdr-state--generation (1+ herdr-state--generation))
-  (remove-hook 'herdr-state-change-functions #'herdr-state--note-pane-set-change)
-  (herdr-state--release)
-  (setq herdr-state--current (herdr-state-empty))
+  (setf (herdr-connection-running connection) nil)
+  (setf (herdr-connection-generation connection) (1+ (herdr-connection-generation connection)))
+  (remove-hook 'herdr-state-change-functions
+               (herdr-connection-notify connection))
+  (herdr-state--release connection)
+  (setf (herdr-connection-cache connection) (herdr-state-empty))
   ;; Listeners hold their own view of the cache just dropped.  Without
   ;; this the modeline advertised the dead session's agent counts until
   ;; the mode was toggled — stale, and actionable-looking, for agents
   ;; Emacs is no longer following.
   (run-hook-with-args 'herdr-state-change-functions "resync" nil))
 
-(defun herdr-state-running-p ()
+(defun herdr-state-running-p (connection)
   "Return non-nil when the event stream is being followed."
-  (and herdr-state--running t))
+  (and (herdr-connection-running connection) t))
 
 (provide 'herdr-state)
 ;;; herdr-state.el ends here

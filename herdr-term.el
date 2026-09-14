@@ -346,11 +346,14 @@ then points the buffers at it."
   (when herdr-term-track-directory
     (when herdr-term--directory-debounce-timer
       (cancel-timer herdr-term--directory-debounce-timer))
-    (setq herdr-term--directory-debounce-timer
-          (run-at-time herdr-term-directory-debounce nil
-                       (lambda ()
-                         (setq herdr-term--directory-debounce-timer nil)
-                         (herdr-state-repair))))))
+    ;; The connection is captured here, where the debounce is armed, not
+    ;; read when it fires: a timer callback runs in an empty extent.
+    (let ((connection (herdr-current-connection)))
+      (setq herdr-term--directory-debounce-timer
+            (run-at-time herdr-term-directory-debounce nil
+                         (lambda ()
+                           (setq herdr-term--directory-debounce-timer nil)
+                           (herdr-state-repair connection)))))))
 
 (defun herdr-term--cancel-directory-debounce ()
   "Cancel a pending debounced refresh."

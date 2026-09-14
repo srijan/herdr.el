@@ -441,7 +441,7 @@ Seeing a correct tree alongside the message is the difference between
     (herdr-error
      (let ((code (herdr-error-code err)))
        (when (equal code "not_found")
-         (herdr-state-reconcile-panes)
+         (herdr-state-reconcile-panes (herdr-current-connection))
          (herdr-dispatch-refresh))
        (message "herdr: %s%s" (herdr-error-message err)
                 (if (equal code "no_server")

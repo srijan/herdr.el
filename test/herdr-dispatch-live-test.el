@@ -36,7 +36,7 @@ create path that leaks is caught here rather than in the user\\='s session."
                                              (focus . t)))))))
     (unwind-protect
         (progn
-          (herdr-state-resync)
+          (herdr-state-resync (herdr-current-connection))
           (should (herdr-state-workspace-directory (herdr-state-current)
                                                    workspace)))
       (herdr-rpc-call (herdr-current-connection) "workspace.close" `((workspace_id . ,workspace))))

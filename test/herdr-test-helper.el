@@ -11,6 +11,12 @@
 
 (require 'json)
 (require 'ert)
+(require 'cl-lib)
+;; The connection struct and its `setf' expanders have to exist before
+;; `herdr-test-with-state' expands, or the seeds compile to a call to a
+;; setter function that was never defined.
+(require 'herdr-rpc)
+(require 'herdr-state)
 
 ;; macOS caps unix socket paths near 104 bytes and the standard temp
 ;; directory is already long, so build paths under /tmp directly.
@@ -50,16 +56,22 @@ real server sends after every non-subscription request."
 
 (defmacro herdr-test-with-server (responder &rest body)
   "Run BODY talking to a fake server using RESPONDER.
-Binds the sole connection as well as `herdr-socket-path', because the
-transport reads its socket from the connection it is handed and not from
-the variable."
+Points the current connection at the fake socket as well as binding
+`herdr-socket-path', because the transport reads its socket from the
+connection it is handed and not from the variable."
   (declare (indent 1) (debug t))
   `(let* ((path (herdr-test-socket-path))
-          (server (herdr-test-start-server path ,responder)))
+          (server (herdr-test-start-server path ,responder))
+          ;; The connection already in scope, pointed at the fake socket
+          ;; rather than replaced: a test that seeded a cache means to
+          ;; keep it, and binding a fresh connection would drop it.
+          (connection (herdr-current-connection))
+          (previous (herdr-connection-socket-path connection)))
      (unwind-protect
-         (let* ((herdr-socket-path path)
-                (herdr-connection--sole (herdr-connection-local)))
+         (let ((herdr-socket-path path))
+           (setf (herdr-connection-socket-path connection) path)
            ,@body)
+       (setf (herdr-connection-socket-path connection) previous)
        (ignore-errors (delete-process server))
        (ignore-errors (delete-file path)))))
 
@@ -74,6 +86,40 @@ the variable."
   (concat (json-serialize `((id . ,(alist-get 'id request))
                             (error . ((code . ,code) (message . ,message)))))
           "\n"))
+
+(defmacro herdr-test-with-state (seeds &rest body)
+  "Run BODY with the sole connection seeded from SEEDS.
+SEEDS is a plist of connection slots, so a test that used to bind
+`herdr-state--running\=' and friends seeds them here instead: the session
+state lives in the connection now, and a global is exactly what this
+removes."
+  (declare (indent 1) (debug t))
+  `(let ((herdr-connection--sole (herdr-test-connection)))
+     ,@(let ((rest seeds) forms)
+         (while rest
+           (let ((slot (pop rest)) (value (pop rest)))
+             (push `(setf (,(intern (format "herdr-connection-%s"
+                                            (substring (symbol-name slot) 1)))
+                           herdr-connection--sole)
+                          ,value)
+                   forms)))
+         (nreverse forms))
+     ,@body))
+
+(defun herdr-test-connection (&optional cache)
+  "Return a fresh connection whose session cache is CACHE.
+The drop-in for what used to be a `herdr-state--current' binding: the
+cache lives in the connection now, so a test seeds one rather than a
+global.
+
+Inherits the socket of whatever connection is already current, so
+seeding inside `herdr-test-with-server' still talks to the fake server
+rather than silently reaching for the real one."
+  (let ((connection (herdr-connection-local)))
+    (setf (herdr-connection-socket-path connection)
+          (herdr-connection-socket-path (herdr-current-connection)))
+    (setf (herdr-connection-cache connection) (or cache (herdr-state-empty)))
+    connection))
 
 (provide 'herdr-test-helper)
 ;;; herdr-test-helper.el ends here

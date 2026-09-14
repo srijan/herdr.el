@@ -88,19 +88,22 @@ focus instead.  A cache miss waits for reconciliation rather than
 failing, since creation was announced on the event stream."
   (when pane-id
     (unless (herdr-term-select-pane pane-id)
-      (herdr-cmd--select-pane-when-ready pane-id))))
+      (herdr-cmd--select-pane-when-ready (herdr-current-connection) pane-id))))
 
-(defun herdr-cmd--select-pane-when-ready (pane-id)
-  "Select PANE-ID's buffer as soon as reconciliation has built it.
-Gated on `herdr-state-generation', captured at the first attempt.  The
-chain keeps no handle for `herdr-stop' to cancel, so without the gate a
-stop-and-restart leaves it selecting buffers for the old session."
-  (let ((generation (herdr-state-generation)))
+(defun herdr-cmd--select-pane-when-ready (connection pane-id)
+  "Select PANE-ID's buffer on CONNECTION once reconciliation has built it.
+Gated on the generation, captured at the first attempt along with the
+connection.  The chain keeps no handle for `herdr-stop' to cancel, so
+without the gate a stop-and-restart leaves it selecting buffers for the
+old session — and without the captured connection a retry scheduled
+against one server lands on whichever the user looked at next, silently,
+because the id exists on both."
+  (let ((generation (herdr-state-generation connection)))
     (letrec ((attempts 0)
              (check
               (lambda ()
                 (setq attempts (1+ attempts))
-                (when (= generation (herdr-state-generation))
+                (when (= generation (herdr-state-generation connection))
                   (cond
                    ((herdr-term-select-pane pane-id))
                    ((< attempts 20) (run-at-time 0.25 nil check)))))))
@@ -149,7 +152,7 @@ moved to match."
   (let ((pane (or pane-id (herdr-select-pane "Focus pane: "))))
     (herdr-rpc-call (herdr-current-connection) "pane.focus" `((pane_id . ,pane)))
     (or (herdr-term-select-pane pane)
-        (herdr-cmd--select-pane-when-ready pane))
+        (herdr-cmd--select-pane-when-ready (herdr-current-connection) pane))
     pane))
 
 (defun herdr-cmd--follow-focus ()
@@ -161,7 +164,7 @@ may not hold it yet, since the focus change arrives on the event stream,
 so a miss waits for reconciliation instead of failing."
   (or (herdr-term-select-focused)
       (when-let* ((pane (herdr-cmd--current-pane-id)))
-        (herdr-cmd--select-pane-when-ready pane))))
+        (herdr-cmd--select-pane-when-ready (herdr-current-connection) pane))))
 
 (defun herdr-cmd-read-text (result)
   "Return the terminal text carried by a read RESULT.

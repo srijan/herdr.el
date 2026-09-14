@@ -29,7 +29,7 @@
   (declare (indent 0) (debug t))
   `(let ((herdr-schema--cache nil)
          (herdr-schema--cache-version nil)
-         (herdr-state--current (herdr-state-from-snapshot nil))
+         (herdr-connection--sole (herdr-test-connection (herdr-state-from-snapshot nil)))
          (current-prefix-arg nil))
      (herdr-schema-load-file herdr-call-test--fixture)
      ,@body))
@@ -89,8 +89,7 @@ tolerate."
 Both halves are asserted, because a mutation that always picks — or
 never picks — leaves the other branch looking right."
   (herdr-call-test-with-schema
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot '((panes . (((pane_id . "w1:p1"))))))))
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot '((panes . (((pane_id . "w1:p1")))))))
       (cl-letf (((symbol-function 'herdr-select-pane)
                  (lambda (&rest _) "picked"))
                 ((symbol-function 'herdr-schema-read-param)
@@ -108,8 +107,7 @@ picker branch has to map that back to nil itself, or an optional
 pane_id/target left blank goes out as an explicit empty string instead
 of being left off the request."
   (herdr-call-test-with-schema
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot '((panes . (((pane_id . "w1:p1"))))))))
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot '((panes . (((pane_id . "w1:p1")))))))
       (cl-letf (((symbol-function 'herdr-select-pane) (lambda (&rest _) "")))
         (should-not (herdr-call--read-value "pane.read" "pane_id"))))))
 

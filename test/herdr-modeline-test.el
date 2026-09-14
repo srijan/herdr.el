@@ -6,6 +6,7 @@
 (require 'cl-lib)
 (require 'herdr-tree)
 (require 'herdr-modeline)
+(require 'herdr-test-helper)
 
 (defun herdr-modeline-test--state (&rest specs)
   "Build a state from SPECS, each (ID AGENT STATUS)."
@@ -99,12 +100,10 @@ invert unnoticed."
         ;; together, and the unchanged-skip compares against this half.
         (herdr-modeline--text "stale"))
     (cl-letf (((symbol-function 'force-mode-line-update) #'ignore))
-      (let ((herdr-state--current
-             (herdr-modeline-test--state '("w1:p1" "claude" "idle"))))
+      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "idle")))
         (herdr-modeline--refresh)
         (should (equal "" herdr-modeline-string)))
-      (let ((herdr-state--current
-             (herdr-modeline-test--state '("w1:p1" "claude" "blocked"))))
+      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "blocked")))
         (herdr-modeline--refresh)
         (should (string-prefix-p " herdr:" herdr-modeline-string))
         ;; The keymap is what makes the count clickable; stripping the
@@ -136,15 +135,13 @@ redisplay, and a refresh that changes the counts costs another."
         (updates 0))
     (cl-letf (((symbol-function 'force-mode-line-update)
                (lambda (&rest _) (cl-incf updates))))
-      (let ((herdr-state--current
-             (herdr-modeline-test--state '("w1:p1" "claude" "blocked"))))
+      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "blocked")))
         (herdr-modeline--refresh)
         (should (= 1 updates))
         (herdr-modeline--refresh)
         (should (= 1 updates)))
-      (let ((herdr-state--current
-             (herdr-modeline-test--state '("w1:p1" "claude" "blocked")
-                                         '("w1:p2" "codex" "blocked"))))
+      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "blocked")
+                                         '("w1:p2" "codex" "blocked")))
         (herdr-modeline--refresh)
         (should (= 2 updates))
         (should (string-prefix-p " herdr:" herdr-modeline-string))))))
@@ -168,29 +165,24 @@ transition into a status nobody asked to hear about."
         notified)
     (cl-letf (((symbol-function 'herdr-notify--send)
                (lambda (title body) (push (cons title body) notified))))
-      (let ((herdr-state--current
-             (herdr-modeline-test--state '("w1:p1" "claude" "working"))))
+      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "working")))
         (herdr-notify--maybe))
       (should-not notified)
-      (let ((herdr-state--current
-             (herdr-modeline-test--state '("w1:p1" "claude" "blocked"))))
+      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "blocked")))
         (herdr-notify--maybe))
       (should (= 1 (length notified)))
       (should (string-match-p "claude" (car (car notified))))
       (should (string-match-p "blocked" (car (car notified))))
       ;; Seen again is not another transition.
-      (let ((herdr-state--current
-             (herdr-modeline-test--state '("w1:p1" "claude" "blocked"))))
+      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "blocked")))
         (herdr-notify--maybe))
       (should (= 1 (length notified)))
       ;; A transition into a status nobody asked about stays quiet, but
       ;; is still recorded, so the next one back is a transition again.
-      (let ((herdr-state--current
-             (herdr-modeline-test--state '("w1:p1" "claude" "idle"))))
+      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "idle")))
         (herdr-notify--maybe))
       (should (= 1 (length notified)))
-      (let ((herdr-state--current
-             (herdr-modeline-test--state '("w1:p1" "claude" "done"))))
+      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "done")))
         (herdr-notify--maybe))
       (should (= 2 (length notified))))))
 
@@ -214,16 +206,14 @@ would be swallowed as though it were another first sighting."
         notified)
     (cl-letf (((symbol-function 'herdr-notify--send)
                (lambda (&rest _) (push t notified))))
-      (let ((herdr-state--current
-             (herdr-modeline-test--state '("w1:p1" "claude" "blocked")
-                                       '("w1:p2" "codex" "done"))))
+      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "blocked")
+                                       '("w1:p2" "codex" "done")))
         (herdr-notify--maybe))
       (should-not notified)
       (should (= 2 (hash-table-count herdr-notify--last-status)))
       ;; And the transition that follows is still news.
-      (let ((herdr-state--current
-             (herdr-modeline-test--state '("w1:p1" "claude" "done")
-                                       '("w1:p2" "codex" "done"))))
+      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "done")
+                                       '("w1:p2" "codex" "done")))
         (herdr-notify--maybe))
       (should (= 1 (length notified))))))
 
@@ -243,8 +233,7 @@ asked about."
         notified)
     (cl-letf (((symbol-function 'herdr-notify--send)
                (lambda (&rest _) (push t notified))))
-      (let ((herdr-state--current
-             (herdr-modeline-test--state '("w1:p1" "claude" "blocked"))))
+      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "blocked")))
         (herdr-notify--maybe))
       (should-not notified)
       (should (= 0 (hash-table-count herdr-notify--last-status))))))

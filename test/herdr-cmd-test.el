@@ -137,7 +137,7 @@ of the command silently going nowhere."
   (let (deferred)
     (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) nil))
               ((symbol-function 'herdr-cmd--select-pane-when-ready)
-               (lambda (pane) (setq deferred pane))))
+               (lambda (_connection pane) (setq deferred pane))))
       (herdr-test-with-server
           (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
         (herdr-pane-focus "w1:p7")
@@ -161,7 +161,7 @@ rather than the command going silently nowhere."
     (cl-letf (((symbol-function 'herdr-term-select-focused) (lambda () nil))
               ((symbol-function 'herdr-cmd--current-pane-id) (lambda () "w1:p4"))
               ((symbol-function 'herdr-cmd--select-pane-when-ready)
-               (lambda (pane) (setq deferred pane))))
+               (lambda (_connection pane) (setq deferred pane))))
       (herdr-cmd--follow-focus)
       (should (equal "w1:p4" deferred)))))
 
@@ -200,7 +200,7 @@ is armed."
   (let (deferred reported)
     (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) nil))
               ((symbol-function 'herdr-cmd--select-pane-when-ready)
-               (lambda (pane) (setq deferred pane)))
+               (lambda (_connection pane) (setq deferred pane)))
               ((symbol-function 'herdr-rpc-call)
                (lambda (_connection method &rest _)
                  (when (equal method "pane.report_agent") (setq reported t)))))
@@ -216,7 +216,7 @@ empty; a pane already in the cache must not also be handed to it."
       (cl-letf (((symbol-function 'herdr-term-select-pane)
                  (lambda (_) select-succeeds))
                 ((symbol-function 'herdr-cmd--select-pane-when-ready)
-                 (lambda (pane) (setq deferred pane))))
+                 (lambda (_connection pane) (setq deferred pane))))
         (herdr-cmd--follow-new-pane "w1:p9")
         (should (equal (unless select-succeeds "w1:p9") deferred))))))
 
@@ -268,20 +268,13 @@ list and a body that still stopped at the first command to raise, which
 is the very case this sentence describes."
   (let (missing)
     (dolist (entry herdr-cmd-methods)
-      (let ((command (nth 0 entry))
-            (method (nth 1 entry))
-            (inhibit-interaction t)
-            ;; Enough of a session for every picker to have something to
-            ;; offer: one pane running an agent, one bare shell.
-            (herdr-state--current
-             (herdr-state-from-snapshot
+      (herdr-test-with-state (:cache (herdr-state-from-snapshot
               '((workspaces . (((workspace_id . "w1") (label . "ws"))))
                 (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
                            (tab_id . "w1:t1") (agent . "claude")
                            (agent_status . "idle") (cwd . "/tmp"))
                           ((pane_id . "w1:p2") (workspace_id . "w1")
-                           (tab_id . "w1:t1") (cwd . "/tmp")))))))
-            wire)
+                           (tab_id . "w1:t1") (cwd . "/tmp")))))))(let* ((command (nth 0 entry)) (method (nth 1 entry)) (inhibit-interaction t) (wire nil))
         (ert-info ((format "%s -> %s" command method))
           (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "x"))
                     ((symbol-function 'herdr-state-refresh) #'ignore)
@@ -331,7 +324,7 @@ is the very case this sentence describes."
                  (push (list command method (error-message-string err))
                        missing))))))
         (unless (or (member method wire) (assq command missing))
-          (push (list command method (nreverse wire)) missing))))
+          (push (list command method (nreverse wire)) missing)))))
     (should-not missing)))
 
 ;;; Confirmations must not be left on screen
@@ -379,14 +372,10 @@ received are."
 (ert-deftest herdr-pane-close-names-the-pane-in-its-confirmation ()
   "The human-readable identity leads, while the exact id stays visible."
   (dolist (answer '(t nil))
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((workspaces . (((workspace_id . "w1") (label . "project"))))
               (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
-                         (agent . "codex")))))))
-          question
-          said
-          wire)
+                         (agent . "codex")))))))(let* ((question nil) (said nil) (wire nil))
       (cl-letf (((symbol-function 'y-or-n-p)
                  (lambda (prompt) (setq question prompt) answer))
                 ((symbol-function 'message)
@@ -401,8 +390,8 @@ received are."
                          "herdr: closed codex@project (w1:p1)"
                        "herdr: codex@project (w1:p1) left open")
                      said))
-      (should (equal (if answer '("pane.close") nil) wire))))
-  (let ((herdr-state--current (herdr-state-from-snapshot nil))
+      (should (equal (if answer '("pane.close") nil) wire)))))
+  (let ((herdr-connection--sole (herdr-test-connection (herdr-state-from-snapshot nil)))
         question
         said)
     (cl-letf (((symbol-function 'y-or-n-p)
@@ -418,22 +407,20 @@ received are."
 doing - rather than in a second vocabulary one keystroke later.  Falls
 back to the identity for a pane doing nothing nameable, because a prompt
 has to say something."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
           '((workspaces . (((workspace_id . "w1") (label . "project"))))
             (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
                        (agent . "codex")
                        (terminal_title_stripped . "Fix the reconcile order"))
                       ((pane_id . "w1:p2") (workspace_id . "w1")
-                       (agent . "codex")))))))
-        question)
+                       (agent . "codex")))))))(let* ((question nil))
     (cl-letf (((symbol-function 'y-or-n-p)
                (lambda (prompt) (setq question prompt) nil))
               ((symbol-function 'message) #'ignore))
       (herdr-pane-close "w1:p1")
       (should (equal "Close pane Fix the reconcile order (w1:p1)? " question))
       (herdr-pane-close "w1:p2")
-      (should (equal "Close pane codex@project (w1:p2)? " question)))))
+      (should (equal "Close pane codex@project (w1:p2)? " question))))))
 
 (ert-deftest herdr-workspace-close-closes-only-when-confirmed ()
   "A workspace takes every tab and pane in it, so declining must send
@@ -558,13 +545,8 @@ types it as a boolean."
 pane prompts settled on, in the prompt where getting it wrong takes every
 tab in the workspace."
   (dolist (answer '(t nil))
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w1") (label . "lantern")))))))
-          question
-          said
-          params
-          wire)
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1") (label . "lantern")))))))(let* ((question nil) (said nil) (params nil) (wire nil))
       (cl-letf (((symbol-function 'y-or-n-p)
                  (lambda (prompt) (setq question prompt) answer))
                 ((symbol-function 'message)
@@ -583,16 +565,12 @@ tab in the workspace."
                          "herdr: closed workspace lantern (w1)"
                        "herdr: workspace lantern (w1) left open")
                      said))
-      (should (equal (if answer '("workspace.close") nil) wire)))))
+      (should (equal (if answer '("workspace.close") nil) wire))))))
 
 (ert-deftest herdr-worktree-remove-names-the-workspace-in-its-confirmation ()
   "The verb that deletes a checkout on disk says which one."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot
-          '((workspaces . (((workspace_id . "w3") (label . "beacon-fix")))))))
-        question
-        said
-        params)
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+          '((workspaces . (((workspace_id . "w3") (label . "beacon-fix")))))))(let* ((question nil) (said nil) (params nil))
     (cl-letf (((symbol-function 'yes-or-no-p)
                (lambda (prompt) (setq question prompt) t))
               ((symbol-function 'message)
@@ -604,14 +582,13 @@ tab in the workspace."
         (herdr-worktree-remove "w3")))
     (should (equal "Remove worktree workspace beacon-fix (w3)? " question))
     (should (equal "herdr: removed worktree beacon-fix (w3)" said))
-    (should (equal "w3" (alist-get 'workspace_id params)))))
+    (should (equal "w3" (alist-get 'workspace_id params))))))
 
 (ert-deftest herdr-workspace-description-falls-back-to-the-bare-id ()
   "A workspace the cache has no record of, and one the server labelled with
 an empty string, both leave the id to speak for itself."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot
-          '((workspaces . (((workspace_id . "w2") (label . ""))))))))
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+          '((workspaces . (((workspace_id . "w2") (label . "")))))))
     (should (equal "w2" (herdr-cmd--workspace-description "w2")))
     (should (equal "w9" (herdr-cmd--workspace-description "w9")))))
 
@@ -649,7 +626,7 @@ directory's own name."
                (lambda (_connection method params)
                  (push (cons method params) calls)
                  '((root_pane . ((pane_id . "w7:p1")))))))
-      (let ((herdr-state--current (herdr-state-empty)))
+      (let ((herdr-connection--sole (herdr-test-connection (herdr-state-empty))))
         (should (equal "w7:p1" (herdr-cmd-pane-in-directory "/tmp/fresh/")))
         (should (equal '(("workspace.create" . ((cwd . "/tmp/fresh/")
                                                 (label . "fresh")
@@ -679,7 +656,7 @@ pins them to one call."
                      (lambda (_connection method params)
                        (push (cons method params) calls)
                        '((root_pane . ((pane_id . "w7:p1")))))))
-            (let ((herdr-state--current (herdr-state-empty)))
+            (let ((herdr-connection--sole (herdr-test-connection (herdr-state-empty))))
               (funcall (cdr probe))
               (if (eq (car probe) 'going)
                   (setq going (reverse calls))
@@ -697,11 +674,10 @@ pins them to one call."
                (lambda (_connection method params)
                  (push (cons method params) calls)
                  '((root_pane . ((pane_id . "w9:p2")))))))
-      (let ((herdr-state--current
-             (herdr-state-from-snapshot
+      (herdr-test-with-state (:cache (herdr-state-from-snapshot
               '((workspaces . (((workspace_id . "w9"))))
                 (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
-                           (cwd . "/tmp/open"))))))))
+                           (cwd . "/tmp/open")))))))
         (should (equal "w9:p2" (herdr-cmd-pane-in-directory "/tmp/open")))
         (should (equal '(("tab.create" . ((workspace_id . "w9")
                                           (cwd . nil)
@@ -719,11 +695,10 @@ is a directory."
                  '((root_pane . ((pane_id . "w9:p2"))))))
               ((symbol-function 'herdr-cmd--follow-new-pane)
                (lambda (pane) (setq followed pane))))
-      (let ((herdr-state--current
-             (herdr-state-from-snapshot
+      (herdr-test-with-state (:cache (herdr-state-from-snapshot
               '((workspaces . (((workspace_id . "w9"))))
                 (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
-                           (cwd . "/tmp/open"))))))))
+                           (cwd . "/tmp/open")))))))
         (herdr-new-terminal "w9")
         (should (equal "tab.create" (car (car calls))))
         (should (equal "w9" (alist-get 'workspace_id (cdr (car calls)))))
@@ -740,7 +715,7 @@ it first."
                  '((root_pane . ((pane_id . "w7:p1"))))))
               ((symbol-function 'herdr-cmd--follow-new-pane)
                (lambda (pane) (setq followed pane))))
-      (let ((herdr-state--current (herdr-state-empty)))
+      (let ((herdr-connection--sole (herdr-test-connection (herdr-state-empty))))
         (herdr-new-terminal "/tmp/fresh/")
         (should (equal "workspace.create" (car (car calls))))
         (should (equal "w7:p1" followed))))))
@@ -752,20 +727,19 @@ it first."
 A restart mid-chain (a new generation) must turn every further attempt
 into a no-op instead of an action, or a chain begun for one session
 could go on to select a buffer belonging to a different, later one."
-  (let ((herdr-state--generation 1)
-        (scheduled nil))
+  (herdr-test-with-state (:generation 1)(let* ((scheduled nil))
     (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (&rest _) nil))
               ((symbol-function 'run-at-time)
                (lambda (_secs _repeat fn) (setq scheduled fn) 'timer)))
-      (herdr-cmd--select-pane-when-ready "w1:p1")
+      (herdr-cmd--select-pane-when-ready (herdr-current-connection) "w1:p1")
       (should scheduled)
       ;; Same generation: the chain keeps retrying.
       (let ((fn scheduled)) (setq scheduled nil) (funcall fn))
       (should scheduled)
       ;; The session was stopped and restarted mid-chain.
-      (setq herdr-state--generation 2)
+      (setf (herdr-connection-generation (herdr-current-connection)) 2)
       (let ((fn scheduled)) (setq scheduled nil) (funcall fn))
-      (should-not scheduled))))
+      (should-not scheduled)))))
 
 (provide 'herdr-cmd-test)
 ;;; herdr-cmd-test.el ends here

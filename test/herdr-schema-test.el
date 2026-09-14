@@ -162,7 +162,7 @@ find."
         (herdr-schema--cache-version "0.8.0")
         fetched)
     (cl-letf (((symbol-function 'herdr-schema--server-version)
-               (lambda (_connection ) "0.9.0"))
+               (lambda (_connection) "0.9.0"))
               ;; A parsed schema, not a sentinel: `herdr-schema' reads
               ;; the protocol out of what the fetch produced, so a stub
               ;; that returns something no fetch can return would assert
@@ -187,13 +187,13 @@ The stub copies its answer for that reason: handed the same object, an
         (herdr-schema--cache-version "0.9.0")
         fetched)
     (cl-letf (((symbol-function 'herdr-schema--server-version)
-               (lambda (_connection ) (copy-sequence "0.9.0")))
+               (lambda (_connection) (copy-sequence "0.9.0")))
               ((symbol-function 'herdr-schema--fetch)
                (lambda () (setq fetched t))))
       (herdr-schema)
       (should-not fetched))
     ;; An unreachable server is not evidence that the cache is stale.
-    (cl-letf (((symbol-function 'herdr-schema--server-version) (lambda (_connection ) nil))
+    (cl-letf (((symbol-function 'herdr-schema--server-version) (lambda (_connection) nil))
               ((symbol-function 'herdr-schema--fetch)
                (lambda () (setq fetched t))))
       (herdr-schema)

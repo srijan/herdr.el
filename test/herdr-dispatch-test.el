@@ -383,7 +383,7 @@ in a nested `cl-letf\\=' on the same symbol; the inner binding wins for its
 extent and this one still restores it afterwards."
   (declare (indent 1) (debug t))
   `(herdr-dispatch-test--with-worktrees nil
-     (let ((herdr-state--current (herdr-state-from-snapshot ,snapshot))
+     (let ((herdr-connection--sole (herdr-test-connection (herdr-state-from-snapshot ,snapshot)))
            (herdr-dispatch--refresh-timer nil)
            (buffer (get-buffer-create herdr-dispatch-buffer-name)))
        (unwind-protect
@@ -454,8 +454,8 @@ strings cannot, and that is the whole distinction under test."
   "Fold a `pane_updated' for pane ID with STATUS and REVISION into the cache.
 REVISION and scroll are the fields the live stream mostly carries and the
 dashboard never renders; STATUS is one it does."
-  (setq herdr-state--current
-        (herdr-state-reduce herdr-state--current "pane_updated"
+  (setf (herdr-connection-cache (herdr-current-connection))
+        (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_updated"
                             `((pane . ((pane_id . ,id)
                                        (agent . "claude")
                                        (agent_status . ,status)
@@ -549,8 +549,8 @@ keyed on the tree by itself would freeze the header at a stale count."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
     (let ((tree (herdr-tree-build (herdr-state-current) nil)))
-      (setq herdr-state--current
-            (herdr-state-reduce herdr-state--current "pane_created"
+      (setf (herdr-connection-cache (herdr-current-connection))
+            (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_created"
                                 '((pane . ((pane_id . "ghost:p9")
                                            (agent . "shell")
                                            (agent_status . "idle")
@@ -673,8 +673,8 @@ pane leaves you on its workspace."
     (goto-char (point-min))
     (search-forward "w1:p2")
     (goto-char (line-beginning-position))
-    (setq herdr-state--current
-          (herdr-state-reduce herdr-state--current "pane_closed"
+    (setf (herdr-connection-cache (herdr-current-connection))
+          (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_closed"
                               '((pane_id . "w1:p2"))))
     (herdr-dispatch-refresh)
     (should-not (= (point) (point-max)))
@@ -701,11 +701,11 @@ that is the next workspace."
     (goto-char (point-min))
     (search-forward "w1:p1")
     (goto-char (line-beginning-position))
-    (setq herdr-state--current
-          (herdr-state-reduce herdr-state--current "pane_closed"
+    (setf (herdr-connection-cache (herdr-current-connection))
+          (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_closed"
                               '((pane_id . "w1:p1"))))
-    (setq herdr-state--current
-          (herdr-state-reduce herdr-state--current "workspace_closed"
+    (setf (herdr-connection-cache (herdr-current-connection))
+          (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "workspace_closed"
                               '((workspace_id . "w1"))))
     (herdr-dispatch-refresh)
     ;; Neither end of the buffer, and on a real row: the one that took
@@ -740,11 +740,11 @@ blank line."
     (goto-char (point-min))
     (search-forward "w2:p1")
     (goto-char (line-beginning-position))
-    (setq herdr-state--current
-          (herdr-state-reduce herdr-state--current "pane_closed"
+    (setf (herdr-connection-cache (herdr-current-connection))
+          (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_closed"
                               '((pane_id . "w2:p1"))))
-    (setq herdr-state--current
-          (herdr-state-reduce herdr-state--current "workspace_closed"
+    (setf (herdr-connection-cache (herdr-current-connection))
+          (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "workspace_closed"
                               '((workspace_id . "w2"))))
     (herdr-dispatch-refresh)
     ;; A real row, not a separator: its ident must be longer than the
@@ -816,8 +816,8 @@ usually fires while the dashboard is not the selected window."
             (search-forward "w1:p2")
             (set-window-point window (line-beginning-position))
             (goto-char (point-min))
-            (setq herdr-state--current
-                  (herdr-state-reduce herdr-state--current "pane_closed"
+            (setf (herdr-connection-cache (herdr-current-connection))
+                  (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_closed"
                                       '((pane_id . "w1:p2"))))
             (herdr-dispatch-refresh)
             (should-not (= (window-point window) (point-max)))
@@ -1402,7 +1402,7 @@ refreshes after the request are counted too."
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested)))
       (should (herdr-dispatch--worktrees-answered-p "w3"))
-      (setq herdr-state--current
+      (setf (herdr-connection-cache (herdr-current-connection))
             (herdr-state-from-snapshot
              (herdr-dispatch-test--snapshot-with-pane
               herdr-dispatch-test--worktree-snapshot
@@ -1563,10 +1563,7 @@ Returning to a dashboard that is already open is the other half, and it
 must not forget: that would make every invocation of the command a full
 refetch of the session."
   (herdr-dispatch-test--with-worktrees '(("w1" . (stale)))
-   (let ((herdr-state--current
-          (herdr-state-from-snapshot herdr-dispatch-test--worktree-snapshot))
-         (herdr-state-change-functions nil)
-         (herdr-dispatch--refresh-timer nil))
+   (herdr-test-with-state (:cache (herdr-state-from-snapshot herdr-dispatch-test--worktree-snapshot))(let* ((herdr-state-change-functions nil) (herdr-dispatch--refresh-timer nil))
     (should-not (get-buffer herdr-dispatch-buffer-name))
     (unwind-protect
         (herdr-dispatch-test-with-async
@@ -1592,7 +1589,7 @@ refetch of the session."
                          (herdr-dispatch-test--requested))))
       (herdr-dispatch--cancel-refresh)
       (when (get-buffer herdr-dispatch-buffer-name)
-        (kill-buffer herdr-dispatch-buffer-name))))))
+        (kill-buffer herdr-dispatch-buffer-name)))))))
 
 (ert-deftest herdr-dispatch-worktree-events-drop-the-cache ()
   "Invalidation clears every record of every worktree, not just the cache.
@@ -1732,9 +1729,7 @@ closes that gap."
                   (branch . "feat/x")
                   (label . "feat/x")
                   (open_workspace_id . nil)))))
-   (let ((herdr-state--current
-          (herdr-state-from-snapshot herdr-dispatch-test--snapshot))
-         (buffer (get-buffer-create herdr-dispatch-buffer-name)))
+   (herdr-test-with-state (:cache (herdr-state-from-snapshot herdr-dispatch-test--snapshot))(let* ((buffer (get-buffer-create herdr-dispatch-buffer-name)))
     (unwind-protect
         (with-current-buffer buffer
           (herdr-dispatch-mode)
@@ -1744,7 +1739,7 @@ closes that gap."
                       (herdr-dispatch-test--type-at "main (")))
           (should (eq 'herdr-worktree
                       (herdr-dispatch-test--type-at "feat/x"))))
-      (kill-buffer buffer)))))
+      (kill-buffer buffer))))))
 
 (ert-deftest herdr-dispatch-tab-fetches-nothing ()
   "TAB is the plain section toggle, and reaches the server not at all.
@@ -1938,8 +1933,8 @@ The status is the one `herdr-dispatch-test--snapshot' already gives
 `w1:p1', so a sequence of these differs in the title and in nothing
 else — which is the whole point, and is not true of an event that
 quietly changes the status as well."
-  (setq herdr-state--current
-        (herdr-state-reduce herdr-state--current "pane_updated"
+  (setf (herdr-connection-cache (herdr-current-connection))
+        (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_updated"
                             `((pane . ((pane_id . ,id)
                                        (agent . "claude")
                                        (agent_status . "blocked")
@@ -2150,7 +2145,7 @@ round trip each one would otherwise cost -- sees only live roots."
 
 (ert-deftest herdr-dispatch-visit-creates-a-workspace-for-a-known-project ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (let ((herdr-state--current (herdr-state-empty)))
+    (let ((herdr-connection--sole (herdr-test-connection (herdr-state-empty))))
       (search-forward "other-project (0)")
       ;; `focus' rides on the create: without it the workspace is made
       ;; but not focused, and going to "wherever the server is now"
@@ -2174,11 +2169,10 @@ render can be one poll tick behind by the time RET lands — this is the
 same TOCTOU `herdr-state-workspace-for-directory' exists to close, and
 the test that would catch losing the check."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((workspaces . (((workspace_id . "w9"))))
               (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
-                         (cwd . "/tmp/other-project"))))))))
+                         (cwd . "/tmp/other-project")))))))
       (search-forward "other-project (0)")
       (should (equal '((herdr-rpc-call "workspace.focus"
                                        ((workspace_id . "w9")))
@@ -2214,7 +2208,7 @@ not being a linked worktree.  The guard is right; the row had no
 business arriving at it."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
     (herdr-dispatch-test--with-worktrees herdr-dispatch-test--main-checkout-worktrees
-     (let ((herdr-state--current (herdr-state-empty)))
+     (let ((herdr-connection--sole (herdr-test-connection (herdr-state-empty))))
       (search-forward "main")
       (should (equal '((herdr-rpc-call "workspace.create"
                                        ((cwd . "/tmp/other-project/")
@@ -2232,11 +2226,10 @@ poll behind, and a second workspace for one directory is the bug
 `herdr-state-workspace-for-directory\\=' exists to prevent."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
     (herdr-dispatch-test--with-worktrees herdr-dispatch-test--main-checkout-worktrees
-     (let ((herdr-state--current
-            (herdr-state-from-snapshot
+     (herdr-test-with-state (:cache (herdr-state-from-snapshot
              '((workspaces . (((workspace_id . "w9"))))
                (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
-                          (cwd . "/tmp/other-project"))))))))
+                          (cwd . "/tmp/other-project")))))))
       (search-forward "main")
       (should (equal '((herdr-rpc-call "workspace.focus" ((workspace_id . "w9")))
                        (herdr-term-select-focused))
@@ -2251,7 +2244,7 @@ A row whose record cannot be found says so; it does not get treated as a
 checkout and opened."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
     (herdr-dispatch-test--with-worktrees nil
-     (let ((herdr-state--current (herdr-state-empty)))
+     (let ((herdr-connection--sole (herdr-test-connection (herdr-state-empty))))
       (search-forward "main")
       (should (equal nil
                      (herdr-dispatch-test-with-recorders
@@ -2662,9 +2655,8 @@ Only `n\\='.  The target\\='s WORKSPACE stays the section it sits in, because
 `w\\=' and `%\\=' create things against a workspace on screen and must refuse
 a row that shows none - reaching through a record for one would make `%\\='
 build a worktree for a workspace the row never named."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot
-          '((panes . (((pane_id . "w9:p1") (workspace_id . "w9"))))))))
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+          '((panes . (((pane_id . "w9:p1") (workspace_id . "w9")))))))
     (herdr-dispatch-test-with-buffer
         '((herdr-pane "w9:p1" "orphan pane w9:p1" nil))
       (search-forward "w9:p1")
@@ -2800,8 +2792,7 @@ Real state rather than mocked accessors, for the reason given in
 (defmacro herdr-dispatch-test-with-start-tree (&rest body)
   "Render the agent-start fixture over its own state and run BODY there."
   (declare (indent 0) (debug t))
-  `(let ((herdr-state--current
-          (herdr-state-from-snapshot herdr-dispatch-test--start-snapshot)))
+  `(herdr-test-with-state (:cache (herdr-state-from-snapshot herdr-dispatch-test--start-snapshot))
      (herdr-dispatch-test-with-buffer herdr-dispatch-test--start-nodes
        ,@body)))
 
@@ -2848,7 +2839,7 @@ server has focused, so `n\\=' here used to open a terminal in some other
 repository.  Nothing is open at this directory, so its root pane is what
 gets followed."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (let ((herdr-state--current (herdr-state-empty))
+    (let ((herdr-connection--sole (herdr-test-connection (herdr-state-empty)))
           (calls nil)
           (followed nil))
       (search-forward "other-project (0)")
@@ -2869,12 +2860,10 @@ gets followed."
   "The row can be a poll tick stale; creating a second workspace for the
 same directory is what `herdr-state-workspace-for-directory\\=' prevents."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((workspaces . (((workspace_id . "w9"))))
               (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
-                         (cwd . "/tmp/other-project")))))))
-          (calls nil))
+                         (cwd . "/tmp/other-project")))))))(let* ((calls nil))
       (search-forward "other-project (0)")
       (cl-letf (((symbol-function 'herdr-rpc-call)
                  (lambda (_connection method params)
@@ -2885,7 +2874,7 @@ same directory is what `herdr-state-workspace-for-directory\\=' prevents."
       (should (equal '(("tab.create" . ((workspace_id . "w9")
                                         (cwd . nil)
                                         (focus . t))))
-                     (reverse calls))))))
+                     (reverse calls)))))))
 
 (ert-deftest herdr-dispatch-create-terminal-prefers-a-worktree-row-to-its-repository ()
   "Walking up would open the terminal in the repository the user was
@@ -2894,12 +2883,10 @@ pointing past."
       '((herdr-workspace "w1" "herdr.el (2)"
          ((herdr-panes "w1" "main (1)" ((herdr-pane "w1:p1" "claude" nil)))
           (herdr-worktree "/tmp/herdr.el-fix/" "fix" nil))))
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((workspaces . (((workspace_id . "w1"))))
               (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
-                         (cwd . "/tmp/herdr.el")))))))
-          (calls nil))
+                         (cwd . "/tmp/herdr.el")))))))(let* ((calls nil))
       (search-forward "fix")
       (cl-letf (((symbol-function 'herdr-rpc-call)
                  (lambda (_connection method params)
@@ -2909,7 +2896,7 @@ pointing past."
         (herdr-dispatch-create-terminal))
       (should (equal "workspace.create" (car (car (reverse calls)))))
       (should (equal "/tmp/herdr.el-fix/"
-                     (alist-get 'cwd (cdr (car (reverse calls)))))))))
+                     (alist-get 'cwd (cdr (car (reverse calls))))))))))
 
 (ert-deftest herdr-dispatch-create-terminal-refuses-a-heading-that-names-no-place ()
   "The `Inactive (N)\\=' heading and the header line name no place, and a
