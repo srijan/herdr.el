@@ -29,6 +29,7 @@
 (require 'herdr-rpc)
 (require 'herdr-term)
 (require 'herdr-pane)
+(require 'herdr-workspace)
 
 ;; The embark map below binds commands from `herdr-cmd', which requires
 ;; this file, so they are declared rather than required.
@@ -76,8 +77,8 @@
   (let ((workspace (herdr-state-workspace (herdr-state-current) workspace-id)))
     (if workspace
         (format "  %-16s %s panes"
-                (or (alist-get 'label workspace) "")
-                (or (alist-get 'pane_count workspace) 0))
+                (or (herdr-workspace-label workspace) "")
+                (or (herdr-workspace-pane-count workspace) 0))
       "")))
 
 (defun herdr-select--read (prompt candidates category annotator)
@@ -139,7 +140,7 @@ than one extra round trip, and the cache can drift."
                         (herdr-state-workspace-for-directory state place))))
     (if workspace
         (herdr-select--annotate-workspace
-         (alist-get 'workspace_id workspace))
+         (herdr-workspace-id workspace))
       "  not open yet")))
 
 (defun herdr-select--place-candidate (place)
@@ -173,8 +174,7 @@ PROMPT overrides the default.  Known projects stay in the list when open so
 completion can match their paths instead of only their opaque workspace ids."
   (herdr-state-refresh)
   (let* ((state (herdr-state-current))
-         (workspaces (mapcar (lambda (workspace)
-                               (alist-get 'workspace_id workspace))
+         (workspaces (mapcar #'herdr-workspace-id
                              (herdr-state-workspaces state)))
          (roots (when (fboundp 'project-known-project-roots)
                   (project-known-project-roots))))
@@ -192,7 +192,7 @@ the candidate."
   "Read a workspace id, defaulting the prompt to PROMPT."
   (herdr-state-refresh)
   (herdr-select--read-row (or prompt "Workspace: ")
-                          (mapcar (lambda (w) (alist-get 'workspace_id w))
+                          (mapcar #'herdr-workspace-id
                                   (herdr-state-workspaces
                                    (herdr-state-current)))
                           #'herdr-select--workspace-candidate

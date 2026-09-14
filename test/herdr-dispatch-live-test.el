@@ -21,7 +21,7 @@ Asserts the session holds exactly the workspaces it started with, so a
 create path that leaks is caught here rather than in the user\\='s session."
   :tags '(:live)
   (skip-unless (herdr-dispatch-live-test--server-p))
-  (let* ((before (mapcar (lambda (w) (alist-get 'workspace_id w))
+  (let* ((before (mapcar (lambda (w) (herdr-workspace-id w))
                          (alist-get 'workspaces
                                     (alist-get 'snapshot
                                                (herdr-rpc-call
@@ -41,7 +41,7 @@ create path that leaks is caught here rather than in the user\\='s session."
                                                    workspace)))
       (herdr-rpc-call "workspace.close" `((workspace_id . ,workspace))))
     (sleep-for 1)
-    (let ((after (mapcar (lambda (w) (alist-get 'workspace_id w))
+    (let ((after (mapcar (lambda (w) (herdr-workspace-id w))
                          (alist-get 'workspaces
                                     (alist-get 'snapshot
                                                (herdr-rpc-call

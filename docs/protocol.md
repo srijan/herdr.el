@@ -11,6 +11,17 @@ Some early findings were wrong. This document keeps a wrong finding visible with
 and puts the correction next to it. If you delete a wrong finding, the next reader derives it
 again from the same weak evidence. Four wrong findings survived here for that reason.
 
+## Identifiers
+
+**herdr ids are per-server counters.** Measured against a herdr 0.8.2 server with `herdr api
+snapshot`: workspace ids read `w2F`, tab ids `w2F:t2`, pane ids `w2F:p2`. One server was
+measured, so the measurement alone would not carry the next point.
+
+**They are scoped to one server.** herdr 0.9.0's multi-machine guide states that workspace, tab
+and pane ids and agent names are scoped to a single server, and that two machines may each hold
+a `w1:p1`. So a structure keyed by a bare id is ambiguous the moment a client follows more than
+one server, and the key has to carry the server with it.
+
 ## Transport
 
 **One request for each connection.** The server writes one response, then closes the socket.

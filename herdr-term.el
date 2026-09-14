@@ -322,18 +322,11 @@ herdr consumes OSC 7 rather than forwarding it, so ghostel's own
 directory tracking cannot see through it.  herdr does track cwd itself,
 so `default-directory' is driven from that instead.
 
-It has to be polled.  herdr publishes no event when a pane changes
+It has to be asked for.  herdr publishes no event when a pane changes
 directory: a `cd' produces only unrelated `layout_updated' traffic, so
-there is nothing to subscribe to.  See `herdr-term-directory-interval'."
+there is nothing to subscribe to.  A directory therefore reaches the
+cache only through a repair; see `herdr-state-repair'."
   :type 'boolean
-  :group 'herdr)
-
-(defcustom herdr-term-directory-interval 5.0
-  "Seconds between backstop working-directory polls, or nil to disable.
-Directories normally refresh off `layout_updated', debounced by
-`herdr-term-directory-debounce'.  This timer only covers a change that
-produces no events at all."
-  :type '(choice number (const :tag "Never poll" nil))
   :group 'herdr)
 
 (defcustom herdr-term-directory-debounce 0.4
@@ -342,37 +335,12 @@ One `cd' emits dozens of `layout_updated' events."
   :type 'number
   :group 'herdr)
 
-(defvar herdr-term--directory-timer nil)
 (defvar herdr-term--directory-debounce-timer nil)
 
-(defvar herdr-term--poll-in-progress nil
-  "Non-nil while a directory poll's RPC is in flight.
-The RPC wait runs due timers, so without this the next poll fires
-re-entrantly inside the previous one's wait.  Let-bound, not set, so a
-signal anywhere in the poll clears it.")
-
-(defun herdr-term--poll-directories ()
-  "Refresh pane directories, then point buffers at them.
-Also the only periodic caller of `herdr-state-reconcile-workspaces'."
-  ;; Guarded on the stream only, not on a herdr buffer existing: pruning
-  ;; panes the server no longer has matters most when no buffers are
-  ;; open, because that is when the pickers are used.
-  ;;
-  ;; The background timeout is what keeps this survivable.  This fires on
-  ;; a 5s interval whether or not the server is well, and at the full 10s
-  ;; `herdr-rpc-timeout' a wedged server makes the backstop a
-  ;; continuous main-thread freeze.
-  (when (and (herdr-state-running-p)
-             (not herdr-term--poll-in-progress))
-    (let ((herdr-term--poll-in-progress t)
-          (herdr-rpc-timeout (min herdr-rpc-timeout
-                                  herdr-rpc-background-timeout)))
-      (when (herdr-state-reconcile-panes)
-        (herdr-term--sync-directories))
-      (herdr-state-reconcile-workspaces))))
-
-(defun herdr-term--schedule-directory-poll ()
-  "Refresh directories shortly, coalescing bursts of events."
+(defun herdr-term--schedule-directory-refresh ()
+  "Repair the cache shortly, coalescing bursts of events.
+The repair is what reads the new directory; the change hook it runs
+then points the buffers at it."
   (when herdr-term-track-directory
     (when herdr-term--directory-debounce-timer
       (cancel-timer herdr-term--directory-debounce-timer))
@@ -380,28 +348,13 @@ Also the only periodic caller of `herdr-state-reconcile-workspaces'."
           (run-at-time herdr-term-directory-debounce nil
                        (lambda ()
                          (setq herdr-term--directory-debounce-timer nil)
-                         (herdr-term--poll-directories))))))
+                         (herdr-state-repair))))))
 
-(defun herdr-term--start-directory-timer ()
-  "Begin the backstop poll for working-directory changes.
-A repeating timer rather than an idle one: idle timers never fire while
-something keeps Emacs busy, which is exactly when a long-running command
-is changing directories."
-  (when (and herdr-term-track-directory
-             herdr-term-directory-interval
-             (not herdr-term--directory-timer))
-    (setq herdr-term--directory-timer
-          (run-at-time herdr-term-directory-interval
-                       herdr-term-directory-interval
-                       #'herdr-term--poll-directories))))
-
-(defun herdr-term--stop-directory-timer ()
-  "Stop polling for working-directory changes."
-  (dolist (timer (list herdr-term--directory-timer
-                       herdr-term--directory-debounce-timer))
-    (when timer (cancel-timer timer)))
-  (setq herdr-term--directory-timer nil
-        herdr-term--directory-debounce-timer nil))
+(defun herdr-term--cancel-directory-debounce ()
+  "Cancel a pending debounced refresh."
+  (when herdr-term--directory-debounce-timer
+    (cancel-timer herdr-term--directory-debounce-timer))
+  (setq herdr-term--directory-debounce-timer nil))
 
 (defun herdr-term--set-directory (buffer pane)
   "Point BUFFER's `default-directory' at PANE's working directory."
@@ -419,11 +372,15 @@ is changing directories."
         (when-let* ((pane (herdr-state-pane state (car cell))))
           (herdr-term--set-directory (cdr cell) pane))))))
 
-(defun herdr-term--on-state-change (_kind _data)
-  "Resync terminal buffers after a cache change."
+(defun herdr-term--on-state-change (kind _data)
+  "Resync terminal buffers after a cache change.
+Nudges a repair for every event but \"reconcile\", which is a repair
+reporting what it just changed: nudging another one there pays two round
+trips to be told nothing moved."
   (herdr-term--sync-buffers)
   (herdr-term--sync-directories)
-  (herdr-term--schedule-directory-poll))
+  (unless (equal kind "reconcile")
+    (herdr-term--schedule-directory-refresh)))
 
 ;;; Interface
 
@@ -438,13 +395,12 @@ is changing directories."
           ;; The bootstrap client was only there to start the daemon.
           (when (buffer-live-p bootstrap) (kill-buffer bootstrap))
           (herdr-term--sync-buffers))
-      (herdr-term--sync-directories)
-      (herdr-term--start-directory-timer))))
+      (herdr-term--sync-directories))))
 
 (defun herdr-term-teardown ()
   "Kill the terminal buffers.  The herdr server is left running."
   (remove-hook 'herdr-state-change-functions #'herdr-term--on-state-change)
-  (herdr-term--stop-directory-timer)
+  (herdr-term--cancel-directory-debounce)
   (dolist (cell (herdr-term--live-buffers))
     (kill-buffer (cdr cell)))
   (setq herdr-term--buffers nil))

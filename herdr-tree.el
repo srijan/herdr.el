@@ -31,6 +31,7 @@
 (require 'regexp-opt)
 (require 'herdr-state)
 (require 'herdr-pane)
+(require 'herdr-workspace)
 
 (defconst herdr-tree-status-glyphs
   '(("working" . "▶") ("blocked" . "⏸") ("done" . "✓") ("idle" . "·"))
@@ -276,7 +277,7 @@ and the caller needs to know where to."
                     (herdr-state-workspace-directory state workspace-id)))
               ((not (equal main own)))
               (parent (herdr-state-workspace-for-directory state main))
-              (parent-id (alist-get 'workspace_id parent))
+              (parent-id (herdr-workspace-id parent))
               ((not (equal parent-id workspace-id))))
     parent-id))
 
@@ -295,7 +296,7 @@ a worktree — the grandchild would be spliced into a section its parent
 never draws, and would vanish from the tree entirely.  Leaving it at top
 level is the safe reading of a reply that cannot be trusted."
   (let ((parents (mapcar (lambda (workspace)
-                           (let ((id (alist-get 'workspace_id workspace)))
+                           (let ((id (herdr-workspace-id workspace)))
                              (cons id (herdr-tree--workspace-repository
                                        state id worktrees))))
                          workspaces)))
@@ -421,7 +422,7 @@ worktree.  The pane count sits on `main (N)\\=' where that group is drawn.
 The directory goes through `abbreviate-file-name\\=', which a
 known-project row gets for free because `project-known-project-roots\\='
 hands those back pre-abbreviated."
-  (let* ((id (alist-get 'workspace_id workspace))
+  (let* ((id (herdr-workspace-id workspace))
          (panes (herdr-tree--panes-in-workspace state id width))
          (worktree-nodes (herdr-tree--worktree-nodes id worktrees
                                                      worktree-width nested)))
@@ -429,13 +430,13 @@ hands those back pre-abbreviated."
           (string-trim-right
            (format "%-28s %-30s %s"
                    (format "%s (%s)"
-                           (or (alist-get 'label workspace) id)
+                           (herdr-workspace-identity workspace)
                            (1+ (length worktree-nodes)))
                    (herdr-tree--faced
                     (abbreviate-file-name
                      (or (herdr-state-workspace-directory state id) ""))
                     'font-lock-comment-face)
-                   (herdr-tree--rollup (alist-get 'agent_status workspace))))
+                   (herdr-tree--rollup (herdr-workspace-status workspace))))
           ;; The `main (N)' group only where there are worktrees to tell
           ;; the panes apart from; see `herdr-tree--main-node'.
           (if worktree-nodes
@@ -601,16 +602,16 @@ sections different widths."
          ;; worktree of the repository under every other one.
          (nested (mapcar
                   (lambda (workspace)
-                    (cons (alist-get 'workspace_id workspace)
+                    (cons (herdr-workspace-id workspace)
                           (herdr-tree--workspace-node
                            state workspace nil width worktree-width)))
                   (seq-filter (lambda (workspace)
-                                (assoc (alist-get 'workspace_id workspace)
+                                (assoc (herdr-workspace-id workspace)
                                        nesting))
                               workspaces))))
     (append (mapcar
              (lambda (workspace)
-               (let ((id (alist-get 'workspace_id workspace)))
+               (let ((id (herdr-workspace-id workspace)))
                  (herdr-tree--workspace-node
                   state workspace worktrees width worktree-width
                   ;; Only this workspace's own children.  A worktree row
@@ -622,7 +623,7 @@ sections different widths."
                                 (equal id (cdr (assoc (car cell) nesting))))
                               nested))))
              (seq-remove (lambda (workspace)
-                           (assoc (alist-get 'workspace_id workspace) nesting))
+                           (assoc (herdr-workspace-id workspace) nesting))
                          workspaces))
             (when-let* ((inactive (herdr-tree--known-projects-node
                                    state known-project-roots worktrees

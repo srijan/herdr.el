@@ -94,6 +94,28 @@ no `herdr-tab' node anywhere in the shape."
     (should (string-match-p "/tmp/herdr.el" line))
     (should (string-match-p (herdr-tree-glyph "blocked") line))))
 
+(ert-deftest herdr-tree-workspace-line-names-an-unlabelled-workspace-by-its-id ()
+  "An empty label is what the server sends for a workspace nobody has
+named, and an empty string is truthy, so the plain `or' fallback this
+replaced never fired and the heading rendered with no name at all."
+  (let* ((state (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w2F") (label . "")
+                                   (pane_count . 1))))
+                   (panes . (((pane_id . "w2F:p1") (workspace_id . "w2F")
+                              (tab_id . "w2F:t1") (agent . "claude")))))))
+         (line (nth 2 (car (herdr-tree-build state nil)))))
+    (should (string-match-p "\\`w2F (1)" line))))
+
+(ert-deftest herdr-tree-workspace-line-names-a-labelled-workspace-by-its-label ()
+  (let* ((state (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w2F") (label . "web")
+                                   (pane_count . 1))))
+                   (panes . (((pane_id . "w2F:p1") (workspace_id . "w2F")
+                              (tab_id . "w2F:t1") (agent . "claude")))))))
+         (line (nth 2 (car (herdr-tree-build state nil)))))
+    (should (string-match-p "\\`web (1)" line))
+    (should-not (string-match-p "w2F" line))))
+
 (ert-deftest herdr-tree-workspace-line-abbreviates-a-home-relative-directory ()
   "A known-project row already shows `~/\\=' for free, since
 `project-known-project-roots' hands those back pre-abbreviated; a

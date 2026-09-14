@@ -219,7 +219,7 @@ where you were."
 buffer switching rather than to herdr.  Against a wedged server, an
 unbounded reconcile here freezes ordinary buffer switching for the full
 `herdr-rpc-timeout' — the same class of freeze `herdr-server-live-p'
-and `herdr-term--poll-directories' already guard against by binding
+and `herdr-state-repair' already guard against by binding
 down to `herdr-rpc-background-timeout'."
   (let ((herdr-state--current (herdr-state-from-snapshot nil))
         (herdr-rpc-timeout 10.0)
@@ -438,6 +438,38 @@ annotates every workspace with the first one's label."
     (should (string-match-p "first" (herdr-select--annotate-workspace "w1")))
     (should (string-match-p "3 panes" (herdr-select--annotate-workspace "w1")))
     (should (equal "" (herdr-select--annotate-workspace "w9")))))
+
+(ert-deftest herdr-select-workspace-row-names-an-unlabelled-workspace-once ()
+  "Asserted on the whole row, not on the annotation alone: the rule is
+what a reader sees.  The row leads with the id, so the annotation's
+first column stays the raw label: identity there would print `w2F' a
+second time, in exactly the case this seam exists to fix."
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot
+          '((workspaces . (((workspace_id . "w2F") (label . "")
+                            (pane_count . 3))))))))
+    (let ((row (herdr-select--workspace-candidate "w2F")))
+      (should (string-prefix-p "w2F" row))
+      (should (= 1 (cl-count-if (lambda (s) (equal s "w2F"))
+                                (split-string row))))
+      (should (string-match-p "3 panes" row)))))
+
+(ert-deftest herdr-select-place-rows-do-not-repeat-their-leading-token ()
+  "A place is a workspace id or a project path.  Neither shape may have
+its own leading token echoed back by the annotation."
+  (let ((herdr-state--current
+         (herdr-state-from-snapshot
+          '((workspaces . (((workspace_id . "w2F") (label . "")
+                            (pane_count . 3))))
+            (panes . (((pane_id . "w2F:p1") (workspace_id . "w2F")
+                       (tab_id . "w2F:t1") (cwd . "/tmp"))))))))
+    (let ((by-id (herdr-select--place-candidate "w2F"))
+          (by-path (herdr-select--place-candidate "/tmp/")))
+      (should (= 1 (cl-count-if (lambda (s) (equal s "w2F"))
+                                (split-string by-id))))
+      (should (= 1 (cl-count-if (lambda (s) (equal s "/tmp/"))
+                                (split-string by-path))))
+      (should (string-match-p "3 panes" by-path)))))
 
 (ert-deftest herdr-select-read-refuses-an-empty-candidate-list ()
   "An empty completion prompt looks broken rather than empty, so the
