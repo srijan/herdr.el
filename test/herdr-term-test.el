@@ -468,48 +468,40 @@ unusable PTY."
 
 ;;; Timer teardown must cancel, not merely forget
 
-;; Setting the variables to nil is not stopping the timers, and no test
-;; that watches `herdr-term--poll-directories' can tell the difference:
-;; the poll is guarded, so a spurious later fire is swallowed and the
+;; Setting the variable to nil is not stopping the timer, and no test
+;; that watches the refresh can tell the difference: the repair it
+;; reaches is guarded, so a spurious later fire is swallowed and the
 ;; callback count comes out the same whether or not anything was
-;; cancelled.  Measured — dropping both `cancel-timer' calls below
-;; passed the whole suite.  These assert the cancellation itself.
+;; cancelled.  Measured — dropping the `cancel-timer' call below passed
+;; the whole suite.  These assert the cancellation itself.
 
-(ert-deftest herdr-term-stop-directory-timer-cancels-both-timers ()
-  "Teardown must reach the repeating poll and the pending debounce alike.
-Either one left running keeps firing at a torn-down backend for the rest
-of the session, and the leak is invisible until something it touches is
-gone."
+(ert-deftest herdr-term-cancel-directory-debounce-cancels-the-pending-timer ()
+  "Teardown must reach a pending debounce.
+Left running it keeps firing at a torn-down backend for the rest of the
+session, and the leak is invisible until something it touches is gone."
   (let ((cancelled nil)
-        (repeating (run-at-time 3600 nil #'ignore))
         (debounce (run-at-time 3600 nil #'ignore)))
     (unwind-protect
-        (let ((herdr-term--directory-timer repeating)
-              (herdr-term--directory-debounce-timer debounce))
+        (let ((herdr-term--directory-debounce-timer debounce))
           (cl-letf (((symbol-function 'cancel-timer)
                      (lambda (timer) (push timer cancelled))))
-            (herdr-term--stop-directory-timer))
-          (should (memq repeating cancelled))
-          (should (memq debounce cancelled))
-          (should (= 2 (length cancelled)))
-          (should-not herdr-term--directory-timer)
+            (herdr-term--cancel-directory-debounce))
+          (should (equal (list debounce) cancelled))
           (should-not herdr-term--directory-debounce-timer))
-      (cancel-timer repeating)
       (cancel-timer debounce))))
 
-(ert-deftest herdr-term-stop-directory-timer-has-nothing-to-cancel-when-idle ()
+(ert-deftest herdr-term-cancel-directory-debounce-has-nothing-to-cancel-when-idle ()
   "Teardown runs whether or not tracking ever started, so a nil slot must
 not be handed to `cancel-timer', which signals on one."
-  (let ((herdr-term--directory-timer nil)
-        (herdr-term--directory-debounce-timer nil)
+  (let ((herdr-term--directory-debounce-timer nil)
         (cancelled nil))
     (cl-letf (((symbol-function 'cancel-timer)
                (lambda (timer) (push timer cancelled))))
-      (herdr-term--stop-directory-timer))
+      (herdr-term--cancel-directory-debounce))
     (should-not cancelled)))
 
-(ert-deftest herdr-term-schedule-directory-poll-cancels-before-it-rearms ()
-  "A burst of pane events must coalesce into one poll, not arm one each."
+(ert-deftest herdr-term-schedule-directory-refresh-cancels-before-it-rearms ()
+  "A burst of pane events must coalesce into one refresh, not arm one each."
   (let ((pending (run-at-time 3600 nil #'ignore))
         (cancelled nil))
     (unwind-protect
@@ -519,10 +511,29 @@ not be handed to `cancel-timer', which signals on one."
                      (lambda (timer) (push timer cancelled)))
                     ((symbol-function 'run-at-time)
                      (lambda (&rest _) 'replacement)))
-            (herdr-term--schedule-directory-poll))
+            (herdr-term--schedule-directory-refresh))
           (should (equal (list pending) cancelled))
           (should (eq 'replacement herdr-term--directory-debounce-timer)))
       (cancel-timer pending))))
+
+(ert-deftest herdr-term-schedule-directory-refresh-reaches-the-repair ()
+  "The debounce must repair the cache, not re-read it.
+A `cd' produces no event herdr.el acts on, so a debounce that only
+synced buffers would show a directory the cache was never told about,
+degrading tracking from the debounce interval to the repair interval."
+  (let ((herdr-term-track-directory t)
+        (herdr-term--directory-debounce-timer nil)
+        (repaired nil)
+        (callback nil))
+    (cl-letf (((symbol-function 'run-at-time)
+               (lambda (_delay _repeat fn) (setq callback fn) 'armed))
+              ((symbol-function 'herdr-state-repair)
+               (lambda () (setq repaired t))))
+      (herdr-term--schedule-directory-refresh)
+      (should (eq 'armed herdr-term--directory-debounce-timer))
+      (funcall callback)
+      (should repaired)
+      (should-not herdr-term--directory-debounce-timer))))
 
 ;;; Teardown must actually tear down
 
@@ -531,7 +542,6 @@ not be handed to `cancel-timer', which signals on one."
 stale entry names a dead buffer that reconciliation would count as
 already attached."
   (let* ((herdr-state-change-functions (list #'herdr-term--on-state-change))
-         (herdr-term--directory-timer nil)
          (herdr-term--directory-debounce-timer nil)
          (one (generate-new-buffer " *agent-one*"))
          (two (generate-new-buffer " *agent-two*"))
@@ -546,49 +556,38 @@ already attached."
       (when (buffer-live-p one) (kill-buffer one))
       (when (buffer-live-p two) (kill-buffer two)))))
 
-;;; The directory poll must not be able to freeze the editor
+(ert-deftest herdr-term-teardown-cancels-a-pending-debounce ()
+  "Teardown is the debounce's only canceller now that the poll is gone."
+  (let ((debounce (run-at-time 3600 nil #'ignore))
+        (cancelled nil))
+    (unwind-protect
+        (let ((herdr-term--buffers nil)
+              (herdr-term--directory-debounce-timer debounce))
+          (cl-letf (((symbol-function 'cancel-timer)
+                     (lambda (timer) (push timer cancelled))))
+            (herdr-term-teardown))
+          (should (equal (list debounce) cancelled))
+          (should-not herdr-term--directory-debounce-timer))
+      (cancel-timer debounce))))
 
-(ert-deftest herdr-term-poll-binds-the-background-timeout ()
-  "The poll fires every 5s whether or not the server is well; at the
-full `herdr-rpc-timeout' (10s) a wedged server made the backstop a
-near-continuous main-thread freeze — Emacs re-froze faster than it
-thawed.  So the poll's RPCs run under `herdr-rpc-background-timeout'."
-  (let ((herdr-rpc-timeout 10.0)
-        (herdr-rpc-background-timeout 2.0)
+;;; Directory tracking is a display option and nothing more
+
+(ert-deftest herdr-term-track-directory-off-still-repairs-the-cache ()
+  "The coupling this unit removes.
+`herdr-term-track-directory' used to gate the only repeating timer in
+the package, which drove the only periodic reconcile, so turning off a
+display convenience turned off the liveness watchdog and reconnection
+with it."
+  (let ((herdr-term-track-directory nil)
         (herdr-state--running t)
-        (seen nil))
+        (herdr-state--repairing nil)
+        (reconciled nil))
     (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
-               (lambda () (setq seen herdr-rpc-timeout) nil)))
-      (herdr-term--poll-directories)
-      (should (equal 2.0 seen)))))
-
-(ert-deftest herdr-term-poll-also-reconciles-workspaces ()
-  "A workspace has no periodic repair but this: a missed
-`workspace.closed' leaves a ghost until the next full resync, which only
-fires on reconnect."
-  (let ((herdr-state--running t)
-        workspaces-called)
-    (cl-letf (((symbol-function 'herdr-state-reconcile-panes) (lambda () nil))
+               (lambda () (push 'panes reconciled) nil))
               ((symbol-function 'herdr-state-reconcile-workspaces)
-               (lambda () (setq workspaces-called t) nil)))
-      (herdr-term--poll-directories)
-      (should workspaces-called))))
-
-(ert-deftest herdr-term-poll-does-not-nest-inside-its-own-wait ()
-  "`accept-process-output' runs due timers, and the poll's worst case
-used to exceed its own interval — so the next poll fired re-entrantly
-inside the previous one's wait and stacked blocking calls.  A poll that
-finds one already in flight must do nothing."
-  (let ((herdr-state--running t)
-        (calls 0))
-    (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
-               (lambda ()
-                 (cl-incf calls)
-                 ;; The timer firing mid-wait is this same function.
-                 (herdr-term--poll-directories)
-                 nil)))
-      (herdr-term--poll-directories)
-      (should (= 1 calls)))))
+               (lambda () (push 'workspaces reconciled) nil)))
+      (herdr-state-repair)
+      (should (equal '(workspaces panes) reconciled)))))
 
 (ert-deftest herdr-term-server-live-p-is-a-bounded-probe ()
   "A liveness ping answered in milliseconds by a healthy server must

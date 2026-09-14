@@ -84,8 +84,10 @@ herdr.el therefore compares its cache against the server. Two functions do this:
 Both methods need no parameters. Each returns the full live set. Each is therefore a symmetric
 target: herdr.el adds what is missing and removes what is extra.
 
-The reconcile runs at `herdr-state-settle-delay` after a connect. The reconcile then runs at
-every directory poll, which is every `herdr-term-directory-interval` seconds.
+The reconcile runs at `herdr-state-settle-delay` after a connect. The reconcile then runs every
+`herdr-state-repair-interval` seconds, on a timer that `herdr-state-start` arms and
+`herdr-state-stop` cancels. `herdr-state-repair` is the pair of them, and is the only thing that
+runs both.
 
 Reconcile the workspace set as well as the pane set. Reconciling panes alone lets ghost
 workspaces collect for the life of a session.

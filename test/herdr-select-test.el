@@ -219,7 +219,7 @@ where you were."
 buffer switching rather than to herdr.  Against a wedged server, an
 unbounded reconcile here freezes ordinary buffer switching for the full
 `herdr-rpc-timeout' — the same class of freeze `herdr-server-live-p'
-and `herdr-term--poll-directories' already guard against by binding
+and `herdr-state-repair' already guard against by binding
 down to `herdr-rpc-background-timeout'."
   (let ((herdr-state--current (herdr-state-from-snapshot nil))
         (herdr-rpc-timeout 10.0)

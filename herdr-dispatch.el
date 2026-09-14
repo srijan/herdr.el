@@ -1236,10 +1236,10 @@ agent is working."
   "Redraw the dispatcher shortly, coalescing a burst of events into one.
 
 A pending timer is KEPT, not cancelled and re-armed.  The re-arm shape
-\(which `herdr-term--schedule-directory-poll\\=' still uses, correctly —
-its backstop timer covers what the deferral misses\) starved this redraw
-outright: the stream's median event gap is 0.105s and the debounce
-0.2s, so while an agent produced output every reschedule pushed the
+\(which `herdr-term--schedule-directory-refresh\\=' still uses, correctly
+— the cache's own repair timer covers what the deferral misses\) starved
+this redraw outright: the stream's median event gap is 0.105s and the
+debounce 0.2s, so while an agent produced output every reschedule pushed the
 redraw past the next event and the dashboard stayed stale for exactly
 as long as something was happening on it.  A kept timer fires one
 debounce after the first event of a burst, bounding staleness at

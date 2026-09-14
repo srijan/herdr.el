@@ -483,6 +483,240 @@ backtrace, with no reconnect scheduled and recovery left to luck."
         (when herdr-state--reconnect-timer
           (cancel-timer herdr-state--reconnect-timer))))))
 
+;;; The repair cadence belongs to the cache
+
+(defmacro herdr-state-test--with-quiet-session (&rest body)
+  "Run BODY with every session global bound to a fresh, empty value."
+  (declare (indent 0))
+  `(let ((herdr-state--running nil)
+         (herdr-state--generation 0)
+         (herdr-state--repairing nil)
+         (herdr-state--global-process nil)
+         (herdr-state--pane-process nil)
+         (herdr-state--pane-stream-ids nil)
+         (herdr-state--reconnect-timer nil)
+         (herdr-state--reconnect-delay nil)
+         (herdr-state--resubscribe-timer nil)
+         (herdr-state--settle-timer nil)
+         (herdr-state--repair-timer nil)
+         (herdr-state-change-functions nil))
+     (unwind-protect (progn ,@body)
+       (dolist (timer (list herdr-state--reconnect-timer
+                            herdr-state--resubscribe-timer
+                            herdr-state--settle-timer
+                            herdr-state--repair-timer))
+         (when (timerp timer) (cancel-timer timer))))))
+
+(ert-deftest herdr-state-start-arms-the-repair-timer ()
+  "The cadence is the cache's own, armed by the thing that starts it."
+  (herdr-state-test--with-quiet-session
+    (let ((herdr-state-repair-interval 5.0))
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (&rest _) '((snapshot . ((panes . ()))))))
+                ((symbol-function 'herdr-state--open-streams) #'ignore))
+        (herdr-state-start)
+        (should (timerp herdr-state--repair-timer))))))
+
+(ert-deftest herdr-state-start-twice-arms-one-timer ()
+  "`herdr-state-start' is idempotent, and a second timer would double
+the repair rate for the rest of the session with nothing to cancel it."
+  (herdr-state-test--with-quiet-session
+    (let ((herdr-state-repair-interval 5.0)
+          (armed 0))
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (&rest _) '((snapshot . ((panes . ()))))))
+                ((symbol-function 'herdr-state--open-streams) #'ignore))
+        (herdr-state-start)
+        (let ((first herdr-state--repair-timer))
+          (cl-letf (((symbol-function 'run-at-time)
+                     (lambda (&rest _) (cl-incf armed) 'extra)))
+            (herdr-state-start))
+          (should (eq first herdr-state--repair-timer))
+          (should (zerop armed)))))))
+
+(ert-deftest herdr-state-repair-interval-nil-arms-no-timer ()
+  "Nil means no periodic repair, and the cache still starts."
+  (herdr-state-test--with-quiet-session
+    (let ((herdr-state-repair-interval nil))
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (&rest _) '((snapshot . ((panes . ()))))))
+                ((symbol-function 'herdr-state--open-streams) #'ignore))
+        (herdr-state-start)
+        (should herdr-state--running)
+        (should-not herdr-state--repair-timer)))))
+
+(ert-deftest herdr-state-stop-cancels-the-repair-timer ()
+  "Nilling the handle is not cancelling the timer, and no test that
+watches the repair can tell the difference: the repair is guarded, so a
+spurious later fire is swallowed."
+  (let ((repair (run-at-time 3600 nil #'ignore))
+        (cancelled nil))
+    (unwind-protect
+        (let ((herdr-state--running t)
+              (herdr-state--global-process nil)
+              (herdr-state--pane-process nil)
+              (herdr-state--reconnect-timer nil)
+              (herdr-state--resubscribe-timer nil)
+              (herdr-state--settle-timer nil)
+              (herdr-state--repair-timer repair)
+              (herdr-state-change-functions nil))
+          (cl-letf (((symbol-function 'cancel-timer)
+                     (lambda (timer) (push timer cancelled))))
+            (herdr-state-stop))
+          (should (equal (list repair) cancelled))
+          (should-not herdr-state--repair-timer))
+      (cancel-timer repair))))
+
+(ert-deftest herdr-state-stop-has-no-repair-timer-to-cancel ()
+  "A stop before any start must not hand nil to `cancel-timer'."
+  (let ((cancelled nil))
+    (let ((herdr-state--running nil)
+          (herdr-state--global-process nil)
+          (herdr-state--pane-process nil)
+          (herdr-state--reconnect-timer nil)
+          (herdr-state--resubscribe-timer nil)
+          (herdr-state--settle-timer nil)
+          (herdr-state--repair-timer nil)
+          (herdr-state-change-functions nil))
+      (cl-letf (((symbol-function 'cancel-timer)
+                 (lambda (timer) (push timer cancelled))))
+        (herdr-state-stop))
+      (should-not cancelled))))
+
+(ert-deftest herdr-state-repair-reconciles-panes-then-workspaces ()
+  "Panes first: a workspace reconcile reads a pane set the pane
+reconcile has just made authoritative."
+  (herdr-state-test--with-quiet-session
+    (let ((order nil))
+      (setq herdr-state--running t)
+      (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
+                 (lambda () (push 'panes order) nil))
+                ((symbol-function 'herdr-state-reconcile-workspaces)
+                 (lambda () (push 'workspaces order) nil)))
+        (herdr-state-repair)
+        (should (equal '(workspaces panes) order))))))
+
+(ert-deftest herdr-state-repair-after-a-stop-does-nothing ()
+  "A debounce armed before the stop must not spend a background timeout
+on a socket the session no longer holds."
+  (herdr-state-test--with-quiet-session
+    (let ((called nil))
+      (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
+                 (lambda () (setq called t) nil))
+                ((symbol-function 'herdr-state-reconcile-workspaces) #'ignore))
+        (should-not (herdr-state-repair))
+        (should-not called)))))
+
+(ert-deftest herdr-state-repair-binds-the-background-timeout ()
+  "The repair fires on its interval whether or not the server is well;
+at the full `herdr-rpc-timeout' (10s) a wedged server made it a
+near-continuous main-thread freeze — Emacs re-froze faster than it
+thawed."
+  (herdr-state-test--with-quiet-session
+    (let ((herdr-rpc-timeout 10.0)
+          (herdr-rpc-background-timeout 2.0)
+          (seen nil))
+      (setq herdr-state--running t)
+      (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
+                 (lambda () (setq seen herdr-rpc-timeout) nil))
+                ((symbol-function 'herdr-state-reconcile-workspaces) #'ignore))
+        (herdr-state-repair)
+        (should (equal 2.0 seen))))))
+
+(ert-deftest herdr-state-repair-does-not-nest-across-callers ()
+  "`herdr-rpc-call' services due timers while it waits, so a repair can
+fire inside another caller's wait and stack blocking calls.  Entered
+through the settle and re-entered through the published entry point,
+because one caller calling itself is the case that already worked."
+  (herdr-state-test--with-quiet-session
+    (let ((calls 0))
+      (setq herdr-state--running t)
+      (cl-letf (((symbol-function 'herdr-state--open-pane-stream) #'ignore)
+                ((symbol-function 'herdr-state-reconcile-panes)
+                 (lambda ()
+                   (cl-incf calls)
+                   (herdr-state-repair)
+                   nil))
+                ((symbol-function 'herdr-state-reconcile-workspaces) #'ignore))
+        (herdr-state--settle)
+        (should (= 1 calls))))))
+
+(ert-deftest herdr-state-repair-runs-with-no-terminal-in-existence ()
+  "The invariant a green suite could otherwise hide: if the repair only
+runs because something opened a terminal, the coupling this unit
+removes has merely moved."
+  (herdr-state-test--with-quiet-session
+    (let ((herdr-state-repair-interval 5.0)
+          (reconciled nil))
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (&rest _) '((snapshot . ((panes . ()))))))
+                ((symbol-function 'herdr-state--open-streams) #'ignore)
+                ((symbol-function 'herdr-state-reconcile-panes)
+                 (lambda () (push 'panes reconciled) nil))
+                ((symbol-function 'herdr-state-reconcile-workspaces)
+                 (lambda () (push 'workspaces reconciled) nil)))
+        (herdr-state-start)
+        (herdr-state-repair)
+        (herdr-state-stop)
+        (should (equal '(workspaces panes) reconciled))
+        (should-not herdr-state--repair-timer)))))
+
+(ert-deftest herdr-state-settle-defers-when-a-repair-is-in-flight ()
+  "The timer may skip a tick; the settle may not.  Realigning
+connection B depends on the repair having happened, so a settle that
+fires inside another repair's wait tries again rather than subscribing
+against a pane set nothing settled."
+  (herdr-state-test--with-quiet-session
+    (let ((opened nil)
+          (rescheduled nil))
+      (setq herdr-state--running t
+            herdr-state--repairing t)
+      (cl-letf (((symbol-function 'herdr-state--open-pane-stream)
+                 (lambda () (setq opened t)))
+                ((symbol-function 'herdr-state--schedule-settle)
+                 (lambda (&optional resync) (setq rescheduled (list t resync)))))
+        (herdr-state--settle t)
+        (should (equal '(t t) rescheduled))
+        (should-not opened)))))
+
+(ert-deftest herdr-state-start-rollback-releases-a-half-open-session ()
+  "The rollback must release everything the attempt acquired, not just
+the newest timer.  `herdr-state--open-streams' opens connection A
+before attempting B, and the repair timer is armed before either, so a
+failure past that point left an open stream and an armed timer behind a
+`herdr-state--running' of nil."
+  (herdr-state-test--with-quiet-session
+    (let ((herdr-state-repair-interval 5.0)
+          (closed nil))
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (&rest _) '((snapshot . ((panes . ()))))))
+                ((symbol-function 'herdr-state--close)
+                 (lambda (proc) (when proc (push proc closed))))
+                ((symbol-function 'herdr-state--open-streams)
+                 (lambda ()
+                   (setq herdr-state--global-process 'stream-a)
+                   (error "peer closed before send"))))
+        (should-error (herdr-state-start))
+        (should-not herdr-state--running)
+        (should-not herdr-state--repair-timer)
+        (should-not herdr-state--global-process)
+        (should (equal '(stream-a) closed))
+        (should (= 1 herdr-state--generation))))))
+
+(ert-deftest herdr-state-start-rollback-arms-nothing-when-the-snapshot-fails ()
+  "The other injection point: a failure before the repair timer is
+armed is a different leak, and only one of the two is new."
+  (herdr-state-test--with-quiet-session
+    (let ((herdr-state-repair-interval 5.0))
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (&rest _) (error "no server")))
+                ((symbol-function 'herdr-state--open-streams) #'ignore))
+        (should-error (herdr-state-start))
+        (should-not herdr-state--running)
+        (should-not herdr-state--repair-timer)
+        (should-not (memq #'herdr-state--note-pane-set-change
+                          herdr-state-change-functions))))))
+
 (ert-deftest herdr-state-reconcile-keeps-a-pane-that-arrived-mid-wait ()
   "The RPC wait services the event filters, so the cache can gain a
 pane while `pane.list' is in flight.  Staleness judged against the

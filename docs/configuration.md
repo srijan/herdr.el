@@ -30,7 +30,6 @@ what herdr.el sends.
 |---|---|---|
 | `herdr-display-action` | `((display-buffer-reuse-window display-buffer-same-window))` | Where a herdr buffer appears. |
 | `herdr-term-track-directory` | `t` | Whether a buffer follows the working directory of its pane. |
-| `herdr-term-directory-interval` | `5.0` | The number of seconds between directory polls. `nil` stops the polls. |
 | `herdr-term-directory-debounce` | `0.4` | The number of seconds to group the directory refreshes. |
 
 herdr.el gives each pane its own buffer. Emacs controls the layout. Your panes stay alive when
@@ -40,8 +39,10 @@ Every path that shows a terminal uses `herdr-display-action`. The same buffer th
 appear in one place from one command and in another place from a different command. The dashboard
 has its own option; see [The dashboard](#the-dashboard).
 
-herdr does not send an event when the working directory changes. Directory tracking must
-therefore poll. The poll runs only while herdr terminal buffers exist.
+herdr does not send an event when the working directory changes. A directory therefore reaches
+the cache only when herdr.el asks for one, which is what `herdr-state-repair-interval` paces; see
+[The event stream](#the-event-stream). Terminal buffers follow the cache and ask for nothing of
+their own.
 
 ## The dashboard
 
@@ -92,6 +93,7 @@ herdr.el uses the `alert` package when the package is present.
 | `herdr-state-reconnect-min` | `1.0` | The first delay, in seconds, before a retry. |
 | `herdr-state-reconnect-max` | `30.0` | The longest delay, in seconds, between retries. |
 | `herdr-state-settle-delay` | `0.4` | The delay, in seconds, before the first reconcile. |
+| `herdr-state-repair-interval` | `5.0` | The number of seconds between later reconciles. `nil` stops them. |
 
 herdr.el increases the reconnect delay after each failed attempt. The delay starts at the
 minimum and stops at the maximum. A server that goes away therefore does not cause a loop of
@@ -100,6 +102,11 @@ connection attempts.
 `herdr-state-settle-delay` sets when herdr.el first compares its cache against the server. That
 comparison is what closes the gap between the startup snapshot and the subscribe, and on a herdr
 older than 0.9.0 it is also what removes the panes the event replay creates. If you see dead
-panes for more than two seconds, decrease `herdr-term-directory-interval`, which controls the
+panes for more than two seconds, decrease `herdr-state-repair-interval`, which controls the
 later comparisons. See
 [Protocol notes](protocol.md#the-server-replayed-its-full-event-ring-until-090).
+
+`herdr-state-repair-interval` replaces `herdr-term-directory-interval`, which is gone. The
+repair belongs to the cache, so turning off `herdr-term-track-directory` no longer stops it.
+A failed repair is also how herdr.el notices that the socket stopped answering, which is what
+schedules a reconnect.
