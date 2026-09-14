@@ -442,7 +442,7 @@ annotates every workspace with the first one's label."
 (ert-deftest herdr-select-workspace-row-names-an-unlabelled-workspace-once ()
   "Asserted on the whole row, not on the annotation alone: the rule is
 what a reader sees.  The row leads with the id, so the annotation's
-first column stays the raw label — identity there would print `w2F' a
+first column stays the raw label: identity there would print `w2F' a
 second time, in exactly the case this seam exists to fix."
   (let ((herdr-state--current
          (herdr-state-from-snapshot

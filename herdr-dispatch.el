@@ -498,8 +498,8 @@ whose value is nil and must not be asked again."
 (defun herdr-dispatch--worktrees-wanted-p (key)
   "Return non-nil when KEY still needs fetching.
 Neither answered nor already in flight."
-  (not (or (assoc key herdr-dispatch--worktrees)
-           (member key herdr-dispatch--worktrees-pending))))
+  (not (or (herdr-dispatch--worktrees-answered-p key)
+           (herdr-dispatch--worktrees-in-flight-p key))))
 
 (defun herdr-dispatch--worktrees-in-flight-p (key)
   "Return non-nil when KEY\\='s request has gone out and not been answered.
@@ -554,17 +554,17 @@ the reply whole is what avoids both."
         herdr-dispatch--worktrees-generation
         (1+ herdr-dispatch--worktrees-generation)))
 
-(defun herdr-dispatch--forget-one-worktrees (workspace-id)
-  "Drop what is cached for WORKSPACE-ID, so that it is asked again.
+(defun herdr-dispatch--forget-one-worktrees (key)
+  "Drop what is cached for KEY, so that it is asked again.
 Only the placeholders are ever dropped this way; an answer stands until
 the whole cache is invalidated."
   (setq herdr-dispatch--worktrees
-        (assoc-delete-all workspace-id herdr-dispatch--worktrees)
+        (assoc-delete-all key herdr-dispatch--worktrees)
         herdr-dispatch--worktrees-unanswered
-        (assoc-delete-all workspace-id herdr-dispatch--worktrees-unanswered)))
+        (assoc-delete-all key herdr-dispatch--worktrees-unanswered)))
 
-(defun herdr-dispatch--worktrees-received (workspace-id generation found error)
-  "Cache FOUND as WORKSPACE-ID\\='s worktrees and ask for a redraw.
+(defun herdr-dispatch--worktrees-received (key generation found error)
+  "Cache FOUND as KEY\\='s worktrees and ask for a redraw.
 
 GENERATION is what `herdr-dispatch--worktrees-generation\\=' held when the
 request went out.  A reply from an older generation was invalidated while
@@ -591,18 +591,18 @@ dashboard killed since the request went out is a redraw not scheduled
 rather than a buffer written to."
   (when (equal generation herdr-dispatch--worktrees-generation)
     (setq herdr-dispatch--worktrees-pending
-          (delete workspace-id herdr-dispatch--worktrees-pending))
+          (delete key herdr-dispatch--worktrees-pending))
     (when error
-      (setf (alist-get workspace-id herdr-dispatch--worktrees-unanswered
+      (setf (alist-get key herdr-dispatch--worktrees-unanswered
                        nil nil #'equal)
             'error))
-    (setf (alist-get workspace-id herdr-dispatch--worktrees nil nil #'equal)
+    (setf (alist-get key herdr-dispatch--worktrees nil nil #'equal)
           found)
     (when (get-buffer herdr-dispatch-buffer-name)
       (herdr-dispatch--schedule-refresh))))
 
-(defun herdr-dispatch--fetch-worktrees (workspace-id directory)
-  "Ask for WORKSPACE-ID\\='s worktrees, which live in DIRECTORY.
+(defun herdr-dispatch--fetch-worktrees (key directory)
+  "Ask for KEY\\='s worktrees, which live in DIRECTORY.
 
 A nil DIRECTORY caches as `no-directory\\=' rather than as a failure, so
 `herdr-dispatch--request-worktrees\\=' asks again the moment a pane gives
@@ -623,23 +623,23 @@ pending marker set and a workspace wedged behind it, and the refresh
 callers are not inside `herdr-dispatch--protect\\='."
   (if (null directory)
       (progn
-        (setf (alist-get workspace-id herdr-dispatch--worktrees-unanswered
+        (setf (alist-get key herdr-dispatch--worktrees-unanswered
                          nil nil #'equal)
               'no-directory)
-        (setf (alist-get workspace-id herdr-dispatch--worktrees nil nil #'equal)
+        (setf (alist-get key herdr-dispatch--worktrees nil nil #'equal)
               nil))
-    (push workspace-id herdr-dispatch--worktrees-pending)
+    (push key herdr-dispatch--worktrees-pending)
     (let ((generation herdr-dispatch--worktrees-generation))
       (condition-case err
           (herdr-rpc-call-async
            "worktree.list" `((cwd . ,directory))
            (lambda (result error)
              (herdr-dispatch--worktrees-received
-              workspace-id generation (alist-get 'worktrees result) error))
+              key generation (alist-get 'worktrees result) error))
            herdr-rpc-timeout)
         (error
          (herdr-dispatch--worktrees-received
-          workspace-id generation nil
+          key generation nil
           (if (eq (car err) 'herdr-error)
               `((code . ,(herdr-error-code err))
                 (message . ,(herdr-error-message err)))

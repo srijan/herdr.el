@@ -11,16 +11,19 @@
 
 ;;; Commentary:
 
-;; A workspace answers two questions about what it is called, the same
-;; two a pane answers.
+;; A workspace answers two questions about what it is called.
 ;;
-;; Its NAME is the label somebody chose.  It can be absent, and a
-;; workspace the server labelled with an empty string has no name at
-;; all - the case a plain `or' fallback never catches, because an empty
-;; string is truthy in Emacs Lisp.
+;; Its LABEL is what somebody chose to call it.  It can be absent, and a
+;; workspace the server labelled with an empty string has none - the
+;; case a plain `or' fallback never catches, because an empty string is
+;; truthy in Emacs Lisp.
 ;;
 ;; Its IDENTITY is what you call it when the answer must not be empty:
 ;; the label, else the id.
+;;
+;; Only two, where `herdr-pane.el' has a third: a pane's NAME joins its
+;; label with the title the thing inside announces, and a workspace has
+;; no second field to join, so its name and its label are one question.
 ;;
 ;; A leaf, like `herdr-pane': nothing here requires another herdr
 ;; module.  What a record cannot answer stays where the pane list is -
@@ -62,12 +65,6 @@ workspace nobody has named."
   (alist-get 'agent_status workspace))
 
 ;;; Names
-
-(defun herdr-workspace-name (workspace)
-  "Return what WORKSPACE is called, or nil when nobody has named it.
-Callers that must print something fall back to
-`herdr-workspace-identity\\='."
-  (herdr-workspace-label workspace))
 
 (defun herdr-workspace-identity (workspace)
   "Return what to call WORKSPACE when the answer must not be empty.

@@ -39,7 +39,7 @@ and from one the server sends for a workspace with nothing in it."
 picker built from one must not signal."
   (let ((workspace '((workspace_id . "w9"))))
     (should (equal "w9" (herdr-workspace-identity workspace)))
-    (should-not (herdr-workspace-name workspace))))
+    (should-not (herdr-workspace-label workspace))))
 
 ;;; An empty label is no label
 
@@ -48,8 +48,7 @@ picker built from one must not signal."
 label for a workspace nobody has named, and an empty string is truthy in
 Emacs Lisp, so a plain `or' fallback never fires and the dashboard drew
 the workspace with no name at all."
-  (should-not (herdr-workspace-label '((workspace_id . "w1") (label . ""))))
-  (should-not (herdr-workspace-name '((workspace_id . "w1") (label . "")))))
+  (should-not (herdr-workspace-label '((workspace_id . "w1") (label . "")))))
 
 (ert-deftest herdr-workspace-identity-falls-back-to-the-id ()
   (should (equal "w1" (herdr-workspace-identity
@@ -64,10 +63,6 @@ the workspace with no name at all."
     (let ((identity (herdr-workspace-identity workspace)))
       (should (stringp identity))
       (should-not (string-empty-p identity)))))
-
-(ert-deftest herdr-workspace-name-is-the-label-when-there-is-one ()
-  (should (equal "web" (herdr-workspace-name
-                        '((workspace_id . "w1") (label . "web"))))))
 
 ;;; One reader
 
