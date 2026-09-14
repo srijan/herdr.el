@@ -611,7 +611,7 @@ makes the pane set final, and B subscribes the agent slice of it."
           (condition-case nil
               (setf (herdr-connection-cache connection)
                     (herdr-state-from-snapshot
-                     (alist-get 'snapshot (herdr-rpc-call (herdr-current-connection) "session.snapshot"))))
+                     (alist-get 'snapshot (herdr-rpc-call connection "session.snapshot"))))
             (error nil))))
       (herdr-state-repair connection)
       (condition-case nil
@@ -761,7 +761,7 @@ then."
   (let ((generation (herdr-connection-generation connection)))
     (ignore-errors
       (herdr-rpc-call-async
-       (herdr-current-connection)
+       connection
        "session.snapshot" nil
        (lambda (result _error)
          (when-let* (((= generation (herdr-connection-generation connection)))
@@ -869,7 +869,7 @@ cannot pronounce it stale."
   (let ((known-ids (herdr-state-pane-ids (herdr-state-current connection)))
         (generation (herdr-connection-generation connection)))
     (when-let* ((panes (condition-case nil
-                           (alist-get 'panes (herdr-rpc-call (herdr-current-connection) "pane.list"))
+                           (alist-get 'panes (herdr-rpc-call connection "pane.list"))
                          (error (when (herdr-connection-running connection)
                                   (herdr-state--schedule-reconnect connection))
                                 nil)))
@@ -939,7 +939,7 @@ and updates in a single pass.  Returns non-nil when anything changed."
   (when-let* ((generation (herdr-connection-generation connection))
               (workspaces (ignore-errors
                             (alist-get 'workspaces
-                                       (herdr-rpc-call (herdr-current-connection) "workspace.list"))))
+                                       (herdr-rpc-call connection "workspace.list"))))
               ;; See `herdr-state-reconcile-panes\=': same stop-mid-wait.
               ((equal generation (herdr-connection-generation connection))))
     (let* ((live-ids (mapcar #'herdr-workspace-id workspaces))
@@ -975,7 +975,7 @@ can drift, and a picker offering panes that no longer exist is worse
 than one extra round trip."
   (when-let* ((snapshot (ignore-errors
                           (alist-get 'snapshot
-                                     (herdr-rpc-call (herdr-current-connection) "session.snapshot")))))
+                                     (herdr-rpc-call connection "session.snapshot")))))
     (setf (herdr-connection-cache connection) (herdr-state-from-snapshot snapshot))
     (run-hook-with-args 'herdr-state-change-functions "refresh" nil)
     (herdr-state-current connection)))
@@ -985,7 +985,7 @@ than one extra round trip."
   (interactive)
   (setf (herdr-connection-cache connection)
         (herdr-state-from-snapshot
-         (alist-get 'snapshot (herdr-rpc-call (herdr-current-connection) "session.snapshot"))))
+         (alist-get 'snapshot (herdr-rpc-call connection "session.snapshot"))))
   (herdr-state--open-pane-stream connection)
   (run-hook-with-args 'herdr-state-change-functions "resync" nil)
   (herdr-state-current connection))
@@ -1006,7 +1006,7 @@ than one extra round trip."
         (progn
           (setf (herdr-connection-cache connection)
                 (herdr-state-from-snapshot
-                 (alist-get 'snapshot (herdr-rpc-call (herdr-current-connection) "session.snapshot"))))
+                 (alist-get 'snapshot (herdr-rpc-call connection "session.snapshot"))))
           ;; Announce the snapshot immediately so consumers paint
           ;; something true before any event arrives.
           (run-hook-with-args 'herdr-state-change-functions "resync" nil)

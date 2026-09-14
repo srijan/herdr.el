@@ -563,6 +563,34 @@ reconcile has just made authoritative."
         (herdr-state-repair (herdr-current-connection))
         (should (equal '(workspaces panes) order))))))
 
+(ert-deftest herdr-state-calls-the-connection-it-was-given ()
+  "Every RPC a state function makes goes to the connection it was handed.
+
+Threading the argument and then resolving the current connection at the
+call site anyway reads the same at one connection and sends every
+request to the wrong server at two, which is the failure this unit
+exists to prevent.  The connection under test is deliberately not the
+sole one."
+  (herdr-state-test--with-quiet-session
+    (let ((mine (herdr-test-connection))
+          (asked nil))
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (connection &rest _)
+                   (push connection asked)
+                   '((snapshot . ((panes . ()))) (panes . ()) (workspaces . ()))))
+                ((symbol-function 'herdr-rpc-call-async)
+                 (lambda (connection &rest _) (push connection asked) nil))
+                ((symbol-function 'herdr-state--open-streams) #'ignore)
+                ((symbol-function 'herdr-state--open-pane-stream) #'ignore))
+        (herdr-state-refresh mine)
+        (herdr-state-resync mine)
+        (herdr-state-reconcile-panes mine)
+        (herdr-state-reconcile-workspaces mine)
+        (herdr-state--refresh-statuses mine)
+        (herdr-state-start mine)
+        (should asked)
+        (should (equal (list mine) (delete-dups asked)))))))
+
 (ert-deftest herdr-state-two-connections-do-not-share-a-session ()
   "Each connection owns its cache, so folding an event into one leaves
 the other exactly as it was.  Two of them in one test is the cheapest
