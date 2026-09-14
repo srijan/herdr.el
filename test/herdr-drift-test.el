@@ -21,6 +21,7 @@
 (require 'herdr-schema)
 (require 'herdr-cmd)
 (require 'herdr-state)
+(require 'herdr-test-helper)
 
 (defun herdr-drift-test--server-p ()
   "Return non-nil when a herdr server is reachable."
@@ -39,10 +40,8 @@ is what reports it."
   (declare (indent 0) (debug t))
   `(progn
      (skip-unless (herdr-drift-test--server-p))
-     (let ((herdr-schema--cache nil)
-           (herdr-schema--cache-version nil)
-           (herdr-schema--cache-protocol nil))
-       (herdr-schema)
+     (let ((herdr-connection--sole (herdr-test-connection)))
+       (herdr-schema (herdr-current-connection))
        (skip-unless (herdr-schema-matches-server-p (herdr-current-connection)))
        ,@body)))
 
@@ -55,7 +54,7 @@ is what reports it."
 (ert-deftest herdr-drift-every-curated-method-still-exists ()
   :tags '(:live)
   (herdr-drift-test-with-server
-    (let ((known (herdr-schema-methods))
+    (let ((known (herdr-schema-methods (herdr-current-connection)))
           (missing nil))
       (dolist (entry herdr-cmd-methods)
         (unless (member (nth 1 entry) known)
@@ -68,7 +67,7 @@ is what reports it."
     (let ((bad nil))
       (dolist (entry herdr-cmd-methods)
         (let* ((method (nth 1 entry))
-               (declared (mapcar #'car (herdr-schema-params method))))
+               (declared (mapcar #'car (herdr-schema-params (herdr-current-connection) method))))
           (dolist (param (nthcdr 2 entry))
             (unless (member param declared)
               (push (format "%s: %s has no %s" (nth 0 entry) method param) bad)))))
@@ -81,7 +80,7 @@ is what reports it."
       (dolist (entry herdr-cmd-methods)
         (let ((method (nth 1 entry))
               (passed (nthcdr 2 entry)))
-          (dolist (required (herdr-schema-required method))
+          (dolist (required (herdr-schema-required (herdr-current-connection) method))
             (unless (member required passed)
               (push (format "%s omits required %s of %s"
                             (nth 0 entry) required method)

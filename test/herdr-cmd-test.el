@@ -19,8 +19,9 @@
 
 (defmacro herdr-cmd-test-with-schema (&rest body)
   (declare (indent 0) (debug t))
-  `(let ((herdr-schema--cache nil) (herdr-schema--cache-version nil))
-     (herdr-schema-load-file herdr-cmd-test--fixture)
+  `(let ((herdr-connection--sole (herdr-test-connection)))
+     (herdr-schema-load-file (herdr-current-connection)
+                             herdr-cmd-test--fixture)
      ,@body))
 
 (ert-deftest herdr-cmd-every-command-is-defined ()
@@ -33,7 +34,7 @@
 
 (ert-deftest herdr-cmd-every-method-exists-in-the-schema ()
   (herdr-cmd-test-with-schema
-    (let ((known (herdr-schema-methods)))
+    (let ((known (herdr-schema-methods (herdr-current-connection))))
       (dolist (entry herdr-cmd-methods)
         (should (member (nth 1 entry) known))))))
 
@@ -42,7 +43,7 @@
   (herdr-cmd-test-with-schema
     (dolist (entry herdr-cmd-methods)
       (let* ((method (nth 1 entry))
-             (declared (mapcar #'car (herdr-schema-params method))))
+             (declared (mapcar #'car (herdr-schema-params (herdr-current-connection) method))))
         (dolist (param (nthcdr 2 entry))
           (should (member param declared)))))))
 
@@ -52,7 +53,7 @@
     (dolist (entry herdr-cmd-methods)
       (let ((method (nth 1 entry))
             (passed (nthcdr 2 entry)))
-        (dolist (required (herdr-schema-required method))
+        (dolist (required (herdr-schema-required (herdr-current-connection) method))
           (should (member required passed)))))))
 
 (ert-deftest herdr-cmd-registry-has-no-duplicate-commands ()

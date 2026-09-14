@@ -196,7 +196,7 @@ because herdr bumped a minor is worse than one command misbehaving — and
 it warns once.  This runs at the front of `herdr-start', which runs at
 the front of every entry point, so warning per call is warning per
 command."
-  (let ((herdr--protocol-warned nil)
+  (let ((herdr-connection--sole (herdr-test-connection))
         said)
     (cl-letf (((symbol-function 'message)
                (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
@@ -215,7 +215,7 @@ command."
 
 (ert-deftest herdr-check-protocol-is-silent-when-the-versions-agree ()
   "The common case has to cost nothing and say nothing."
-  (let ((herdr--protocol-warned nil)
+  (let ((herdr-connection--sole (herdr-test-connection))
         said)
     (cl-letf (((symbol-function 'message) (lambda (&rest _) (push t said))))
       (herdr-test-with-server
@@ -224,7 +224,24 @@ command."
                   nil))
         (herdr--check-protocol (herdr-current-connection))))
     (should-not said)
-    (should-not herdr--protocol-warned)))
+    (should-not (herdr-connection-protocol-warned herdr-connection--sole))))
+
+(ert-deftest herdr-check-protocol-warns-once-per-connection ()
+  "One flag for the package meant the first server to disagree silenced
+the check for every server after it — including the one just added,
+which is the one whose protocol is least likely to be known."
+  (let ((herdr-connection--sole (herdr-test-connection))
+        said)
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
+      (herdr-test-with-server
+          (lambda (req)
+            (cons (herdr-test-ok
+                   req `((protocol . ,(1+ herdr-protocol-version))))
+                  nil))
+        (herdr--check-protocol (herdr-current-connection))
+        (herdr--check-protocol (herdr-test-connection))))
+    (should (= 2 (length said)))))
 
 (ert-deftest herdr-start-does-not-restart-a-stream-already-running ()
   "`herdr-start' fronts every entry point, so it has to be safe to call

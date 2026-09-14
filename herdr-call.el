@@ -21,34 +21,38 @@
 (require 'herdr-state)
 (require 'herdr-select)
 
-(defun herdr-call--annotate (method)
+(defun herdr-call--annotate (connection method)
   "Return an annotation for METHOD listing its required parameters."
-  (let ((required (herdr-schema-required method)))
+  (let ((required (herdr-schema-required connection method)))
     (if required
         (format "  %s" (string-join required " "))
       "")))
 
-(defun herdr-call--read-method ()
+(defun herdr-call--read-method (connection)
   "Read a method name, annotated with its required parameters."
-  (let* ((methods (herdr-schema-methods))
+  (let* ((methods (herdr-schema-methods connection))
+         ;; The annotation function is called with a candidate and
+         ;; nothing else, so the connection is captured here.
+         (annotate (lambda (method)
+                     (herdr-call--annotate connection method)))
          (table (lambda (string predicate action)
                   (if (eq action 'metadata)
                       `(metadata (category . herdr-method)
-                                 (annotation-function . herdr-call--annotate))
+                                 (annotation-function . ,annotate))
                     (complete-with-action action methods string predicate)))))
     (completing-read "herdr method: " table nil t)))
 
-(defun herdr-call--read-value (method name)
+(defun herdr-call--read-value (connection method name)
   "Read METHOD's parameter NAME, offering pane pickers where they fit."
   (if (and (member name '("pane_id" "target"))
-           (herdr-state-pane-ids (herdr-state-current)))
+           (herdr-state-pane-ids (herdr-state-current connection)))
       ;; Map "" to nil, as every other `herdr-schema-read-param' branch
       ;; does: `completing-read' returns "" on empty input whatever
       ;; REQUIRE-MATCH says, and an optional target left blank must be
       ;; omitted rather than sent as an empty string.
       (let ((choice (herdr-select-pane (format "%s: " name))))
         (unless (string-empty-p choice) choice))
-    (herdr-schema-read-param method name)))
+    (herdr-schema-read-param connection method name)))
 
 ;;;###autoload
 (defun herdr-call (&optional method)
@@ -57,16 +61,16 @@
 Required parameters are always asked for.  Optional ones are asked for
 only with a prefix argument; leaving a prompt empty omits it."
   (interactive)
-  (let* ((method (or method (herdr-call--read-method)))
-         (required (herdr-schema-required method))
-         (all (mapcar #'car (herdr-schema-params method)))
+  (let* ((connection (herdr-current-connection))
+         (method (or method (herdr-call--read-method connection)))
+         (required (herdr-schema-required connection method))
+         (all (mapcar #'car (herdr-schema-params connection method)))
          (wanted (if current-prefix-arg all required))
          (params nil))
     (dolist (name wanted)
-      (let ((value (herdr-call--read-value method name)))
+      (let ((value (herdr-call--read-value connection method name)))
         (when value (push (cons (intern name) value) params))))
-    (let ((result (herdr-rpc-call (herdr-current-connection)
-                                  method (nreverse params))))
+    (let ((result (herdr-rpc-call connection method (nreverse params))))
       (if (called-interactively-p 'any)
           (herdr-call--display method result)
         result))))

@@ -45,18 +45,21 @@ because herdr bumped a minor is worse than one command misbehaving."
   :type 'integer
   :group 'herdr)
 
-(defvar herdr--protocol-warned nil)
-
 (defun herdr--check-protocol (connection)
-  "Warn once if CONNECTION\='s server speaks a protocol this package does not know."
-  (unless herdr--protocol-warned
+  "Warn once if CONNECTION\='s server speaks a protocol this package does not know.
+
+Once per connection rather than once per package: a single flag let the
+first server's mismatch silence the check for every server after it, and
+the one most likely to disagree is the one added last."
+  (unless (herdr-connection-protocol-warned connection)
     (when-let* ((pong (ignore-errors (herdr-rpc-call connection "ping")))
                 (protocol (alist-get 'protocol pong)))
       (unless (equal protocol herdr-protocol-version)
-        (setq herdr--protocol-warned t)
+        (setf (herdr-connection-protocol-warned connection) t)
         (message
-         "herdr.el: server speaks protocol %s, this package targets %s; \
+         "herdr.el: %s speaks protocol %s, this package targets %s; \
 some commands may misbehave"
+         (herdr-connection-name connection)
          protocol herdr-protocol-version)))))
 
 ;;;###autoload

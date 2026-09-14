@@ -85,8 +85,8 @@ under it; a composite key holds the token instead."
   (worktrees nil) (worktrees-pending nil) (worktrees-unanswered nil)
   (worktrees-generation 0)
   ;; Handshake and schema, one answer per server rather than per package.
-  (protocol-warned nil) (schema nil) (schema-protocol nil)
-  (schema-mismatch-warned nil)
+  (protocol-warned nil) (schema nil) (schema-version nil)
+  (schema-protocol nil) (schema-mismatch-warned nil)
   ;; The change-hook closure this connection added, kept so the
   ;; remove is the same object the add was.
   (notify nil))
@@ -98,6 +98,15 @@ under it; a composite key holds the token instead."
 (defun herdr-connection-remote-p (connection)
   "Return non-nil when CONNECTION reaches its server over SSH."
   (and (herdr-connection-ssh-target connection) t))
+
+(defun herdr-connection-host-directory (connection)
+  "Return a `default-directory\\=' for running herdr on CONNECTION\\='s host.
+A TRAMP path for a remote server, so that `make-process\\=' with
+`:file-handler\\=' runs the binary that belongs to that server rather
+than the local one.  Nil for a local server, meaning leave
+`default-directory\\=' alone."
+  (when-let* ((target (herdr-connection-ssh-target connection)))
+    (format "/ssh:%s:" target)))
 
 (defvar herdr-connection--sole nil
   "The one connection this package follows.
