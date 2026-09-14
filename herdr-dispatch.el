@@ -56,41 +56,6 @@ that the dashboard still reads as live.  Only the hook is debounced:
   :type 'number
   :group 'herdr)
 
-(defvar herdr-dispatch--worktrees nil
-  "Alist of (WORKSPACE-ID . LIST-OF-WORKTREEINFO) for answered workspaces.
-
-Presence of the entry, not the truth of its value, is what records that a
-workspace has been answered: a repository with no worktrees at all caches
-as (WORKSPACE-ID . nil) and must not be asked again.  Every guard over
-this alist therefore uses `assoc\\=', never `alist-get\\='.
-
-Filled asynchronously as the dashboard renders; see
-`herdr-dispatch--request-worktrees\\='.")
-
-(defvar herdr-dispatch--worktrees-pending nil
-  "Workspace ids whose `worktree.list\\=' request has not been answered yet.
-
-Nothing reaches `herdr-dispatch--worktrees\\=' until a reply lands, so the
-cache alone cannot stop the next refresh — and the dashboard refreshes
-several times a second under load — from asking the same question again.
-This is the guard that does.")
-
-(defvar herdr-dispatch--worktrees-unanswered nil
-  "Alist of (WORKSPACE-ID . REASON) for entries cached without an answer.
-
-A request that came back an error, and a workspace with no directory to
-address a request to, both cache as (WORKSPACE-ID . nil) so that neither
-is retried on every single redraw.  Remembering which entries are
-placeholders rather than answers is what lets \\[herdr-dispatch-refresh]
-retry exactly those, and REASON — `error\\=' or `no-directory\\=' — is what
-lets one of them retry sooner: see
-`herdr-dispatch--request-worktrees\\='.")
-
-(defvar herdr-dispatch--worktrees-generation 0
-  "Counter bumped every time the worktree cache is invalidated.
-Requests carry the generation they were issued under; see
-`herdr-dispatch--worktrees-received\\=' for what that is worth.")
-
 (defvar herdr-dispatch--refresh-timer nil
   "Timer for the pending debounced redraw, or nil when none is pending.")
 
@@ -481,51 +446,53 @@ workspace-only.  ROOT is used verbatim, because it is also the id the
 renderer draws the row under."
   root)
 
-(defun herdr-dispatch--worktrees-listings ()
+(defun herdr-dispatch--worktrees-listings (connection)
   "Return every cached listing, as the alist `herdr-tree-build\\=' takes."
-  herdr-dispatch--worktrees)
+  (herdr-connection-worktrees connection))
 
-(defun herdr-dispatch--worktrees-listing (key)
+(defun herdr-dispatch--worktrees-listing (connection key)
   "Return the worktrees cached under KEY, which may legitimately be nil."
-  (cdr (assoc key herdr-dispatch--worktrees)))
+  (cdr (assoc key (herdr-connection-worktrees connection))))
 
-(defun herdr-dispatch--worktrees-answered-p (key)
+(defun herdr-dispatch--worktrees-answered-p (connection key)
   "Return non-nil when KEY has an answer.
 Presence, not truth: a repository with no worktrees caches as an entry
 whose value is nil and must not be asked again."
-  (and (assoc key herdr-dispatch--worktrees) t))
+  (and (assoc key (herdr-connection-worktrees connection)) t))
 
-(defun herdr-dispatch--worktrees-wanted-p (key)
+(defun herdr-dispatch--worktrees-wanted-p (connection key)
   "Return non-nil when KEY still needs fetching.
 Neither answered nor already in flight."
-  (not (or (herdr-dispatch--worktrees-answered-p key)
-           (herdr-dispatch--worktrees-in-flight-p key))))
+  (not (or (herdr-dispatch--worktrees-answered-p connection key)
+           (herdr-dispatch--worktrees-in-flight-p connection key))))
 
-(defun herdr-dispatch--worktrees-in-flight-p (key)
+(defun herdr-dispatch--worktrees-in-flight-p (connection key)
   "Return non-nil when KEY\\='s request has gone out and not been answered.
 The marker is what stops the next of many refreshes asking again."
-  (and (member key herdr-dispatch--worktrees-pending) t))
+  (and (member key (herdr-connection-worktrees-pending connection)) t))
 
-(defun herdr-dispatch--worktrees-epoch ()
+(defun herdr-dispatch--worktrees-epoch (connection)
   "Return the generation a request issued now would carry.
 A reply from any other epoch was invalidated in flight and is dropped
 whole.  The number itself is storage; that it moved is the contract."
-  herdr-dispatch--worktrees-generation)
+  (herdr-connection-worktrees-generation connection))
 
-(defun herdr-dispatch--worktrees-unanswered-reason (key)
+(defun herdr-dispatch--worktrees-unanswered-reason (connection key)
   "Return why KEY was cached without an answer, or nil.
 `error\\=' waits for \\[herdr-dispatch-refresh]; `no-directory\\=' is retried
 as soon as a directory exists.  Collapsing the two loses that."
-  (alist-get key herdr-dispatch--worktrees-unanswered nil nil #'equal))
+  (alist-get key (herdr-connection-worktrees-unanswered connection)
+             nil nil #'equal))
 
-(defun herdr-dispatch--worktrees-unanswered ()
+(defun herdr-dispatch--worktrees-unanswered (connection)
   "Return every key with no answer, in all three categories.
 Errored, without a directory, and still in flight.  The third is the one
 easily omitted, and omitting it is a regression: clearing a pending
 marker is the only thing that can rescue an in-flight request before its
 own timeout would."
-  (delete-dups (append (mapcar #'car herdr-dispatch--worktrees-unanswered)
-                       (copy-sequence herdr-dispatch--worktrees-pending))))
+  (delete-dups
+   (append (mapcar #'car (herdr-connection-worktrees-unanswered connection))
+           (copy-sequence (herdr-connection-worktrees-pending connection)))))
 
 (defun herdr-dispatch--worktrees-stale-p (kind)
   "Return non-nil when an event of KIND leaves the worktree cache stale."
@@ -533,12 +500,12 @@ own timeout would."
                       "worktree_removed" "workspace_closed"))
        t))
 
-(defun herdr-dispatch--forget-worktrees ()
+(defun herdr-dispatch--forget-worktrees (connection)
   "Drop everything known about worktrees, replies still in flight included.
 
 Bumping the generation is what abandons those replies, and it is the
 half that is easy to leave out.  There are two ways to leave it out and
-they fail differently.  Clearing `herdr-dispatch--worktrees-pending\\='
+they fail differently.  Clearing the pending set
 without a generation at all lets a listing that was already on the wire
 land afterwards and write back the very cache entry the invalidation had
 just removed — the dashboard then shows a listing the server has already
@@ -548,25 +515,26 @@ opposite failure: by then the marker belongs to the refetch that
 replaced this request, so clearing it leaves the refetch unguarded and
 the next refresh issues a third request for the same workspace.  Dropping
 the reply whole is what avoids both."
-  (setq herdr-dispatch--worktrees nil
-        herdr-dispatch--worktrees-pending nil
-        herdr-dispatch--worktrees-unanswered nil
-        herdr-dispatch--worktrees-generation
-        (1+ herdr-dispatch--worktrees-generation)))
+  (setf (herdr-connection-worktrees connection) nil
+        (herdr-connection-worktrees-pending connection) nil
+        (herdr-connection-worktrees-unanswered connection) nil
+        (herdr-connection-worktrees-generation connection)
+        (1+ (herdr-connection-worktrees-generation connection))))
 
-(defun herdr-dispatch--forget-one-worktrees (key)
+(defun herdr-dispatch--forget-one-worktrees (connection key)
   "Drop what is cached for KEY, so that it is asked again.
 Only the placeholders are ever dropped this way; an answer stands until
 the whole cache is invalidated."
-  (setq herdr-dispatch--worktrees
-        (assoc-delete-all key herdr-dispatch--worktrees)
-        herdr-dispatch--worktrees-unanswered
-        (assoc-delete-all key herdr-dispatch--worktrees-unanswered)))
+  (setf (herdr-connection-worktrees connection)
+        (assoc-delete-all key (herdr-connection-worktrees connection))
+        (herdr-connection-worktrees-unanswered connection)
+        (assoc-delete-all key
+                          (herdr-connection-worktrees-unanswered connection))))
 
-(defun herdr-dispatch--worktrees-received (key generation found error)
+(defun herdr-dispatch--worktrees-received (connection key generation found error)
   "Cache FOUND as KEY\\='s worktrees and ask for a redraw.
 
-GENERATION is what `herdr-dispatch--worktrees-generation\\=' held when the
+GENERATION is what `herdr-dispatch--worktrees-epoch\\=' answered when the
 request went out.  A reply from an older generation was invalidated while
 it was in flight, so it is dropped whole: it neither writes the cache nor
 touches the pending set, which by then describes the refetch that
@@ -577,7 +545,7 @@ cause is a workspace directory that is not a git repository, which will
 fail identically forever, and asking again on every redraw is a request
 per workspace several times a second for as long as the dashboard is
 open.  The workspace is remembered in
-`herdr-dispatch--worktrees-unanswered\\=' instead, which
+`herdr-dispatch--worktrees-unanswered-reason\\=' instead, which
 \\[herdr-dispatch-refresh] retries — so the entry costs nothing to
 correct and is not permanent.  It is not retried any sooner than that,
 because nothing the dashboard can observe says the answer would differ:
@@ -589,19 +557,20 @@ land in the event stream\\='s filter, so nothing here may signal: the
 server\\='s error arrives as data rather than as a `herdr-error\\=', and a
 dashboard killed since the request went out is a redraw not scheduled
 rather than a buffer written to."
-  (when (equal generation herdr-dispatch--worktrees-generation)
-    (setq herdr-dispatch--worktrees-pending
-          (delete key herdr-dispatch--worktrees-pending))
+  (when (equal generation (herdr-connection-worktrees-generation connection))
+    (setf (herdr-connection-worktrees-pending connection)
+          (delete key (herdr-connection-worktrees-pending connection)))
     (when error
-      (setf (alist-get key herdr-dispatch--worktrees-unanswered
+      (setf (alist-get key (herdr-connection-worktrees-unanswered connection)
                        nil nil #'equal)
             'error))
-    (setf (alist-get key herdr-dispatch--worktrees nil nil #'equal)
+    (setf (alist-get key (herdr-connection-worktrees connection)
+                     nil nil #'equal)
           found)
     (when (get-buffer herdr-dispatch-buffer-name)
       (herdr-dispatch--schedule-refresh))))
 
-(defun herdr-dispatch--fetch-worktrees (key directory)
+(defun herdr-dispatch--fetch-worktrees (connection key directory)
   "Ask for KEY\\='s worktrees, which live in DIRECTORY.
 
 A nil DIRECTORY caches as `no-directory\\=' rather than as a failure, so
@@ -623,31 +592,34 @@ pending marker set and a workspace wedged behind it, and the refresh
 callers are not inside `herdr-dispatch--protect\\='."
   (if (null directory)
       (progn
-        (setf (alist-get key herdr-dispatch--worktrees-unanswered
+        (setf (alist-get key (herdr-connection-worktrees-unanswered connection)
                          nil nil #'equal)
               'no-directory)
-        (setf (alist-get key herdr-dispatch--worktrees nil nil #'equal)
+        (setf (alist-get key (herdr-connection-worktrees connection)
+                         nil nil #'equal)
               nil))
-    (push key herdr-dispatch--worktrees-pending)
-    (let ((generation herdr-dispatch--worktrees-generation))
+    (push key (herdr-connection-worktrees-pending connection))
+    (let ((generation (herdr-connection-worktrees-generation connection)))
       (condition-case err
           (herdr-rpc-call-async
-           (herdr-current-connection)
+           connection
            "worktree.list" `((cwd . ,directory))
+           ;; Captured, not resolved: the reply lands long after this
+           ;; returns, and it belongs to the cache it was asked of.
            (lambda (result error)
              (herdr-dispatch--worktrees-received
-              key generation (alist-get 'worktrees result) error))
+              connection key generation (alist-get 'worktrees result) error))
            herdr-rpc-timeout)
         (error
          (herdr-dispatch--worktrees-received
-          key generation nil
+          connection key generation nil
           (if (eq (car err) 'herdr-error)
               `((code . ,(herdr-error-code err))
                 (message . ,(herdr-error-message err)))
             `((code . "call_failed")
               (message . ,(error-message-string err))))))))))
 
-(defun herdr-dispatch--request-worktrees (state)
+(defun herdr-dispatch--request-worktrees (connection state)
   "Ask for the worktrees of every workspace in STATE that has none cached.
 
 Worktrees are the one thing in the tree the session snapshot does not
@@ -659,9 +631,9 @@ Runs on every refresh, including the ones that skip the redraw.  A
 skipped redraw means the tree just built equals the tree on screen, and a
 tree built while no worktrees are known goes on equalling itself — so
 keying the fetch to the redraw would leave a workspace unasked forever.
-A workspace is still only asked once: `assoc\\=' covers the ones already
-answered and `herdr-dispatch--worktrees-pending\\=' the ones being answered
-now.
+A workspace is still only asked once:
+`herdr-dispatch--worktrees-answered-p\\=' covers the ones already answered
+and `herdr-dispatch--worktrees-in-flight-p\\=' the ones being answered now.
 
 The exception is a workspace that was cached empty only because no
 directory could be derived for it, which is the state a workspace is in
@@ -679,12 +651,13 @@ here."
            (directory (herdr-state-workspace-directory state id)))
       (when (and directory
                  (eq 'no-directory
-                     (herdr-dispatch--worktrees-unanswered-reason key)))
-        (herdr-dispatch--forget-one-worktrees key))
-      (when (herdr-dispatch--worktrees-wanted-p key)
-        (herdr-dispatch--fetch-worktrees key directory)))))
+                     (herdr-dispatch--worktrees-unanswered-reason
+                      connection key)))
+        (herdr-dispatch--forget-one-worktrees connection key))
+      (when (herdr-dispatch--worktrees-wanted-p connection key)
+        (herdr-dispatch--fetch-worktrees connection key directory)))))
 
-(defun herdr-dispatch--request-known-project-worktrees (known-project-roots)
+(defun herdr-dispatch--request-known-project-worktrees (connection known-project-roots)
   "Ask for the worktrees of every root in KNOWN-PROJECT-ROOTS with none cached.
 
 The known-project sibling of `herdr-dispatch--request-worktrees\\=', reusing
@@ -697,11 +670,12 @@ retried once a directory exists — and it cannot arise here, so there is
 nothing to mirror from it."
   (dolist (root known-project-roots)
     (let ((key (herdr-dispatch--worktree-key-for-root root)))
-      (when (herdr-dispatch--worktrees-wanted-p key)
+      (when (herdr-dispatch--worktrees-wanted-p connection key)
         (herdr-dispatch--fetch-worktrees
-         key (file-name-as-directory (expand-file-name root)))))))
+         connection key
+         (file-name-as-directory (expand-file-name root)))))))
 
-(defun herdr-dispatch--retry-unanswered-worktrees ()
+(defun herdr-dispatch--retry-unanswered-worktrees (connection)
   "Forget every workspace that has no answer, and ask again.
 The next `herdr-dispatch--request-worktrees\\=' asks them.  Only those: a
 repository that genuinely has no worktrees keeps its entry, so
@@ -723,13 +697,13 @@ describes: the reply would land after the refetch had claimed a new
 marker, clear a marker it no longer owns, and leave the refetch
 unguarded for a third request.  Bumping the generation drops that reply
 whole instead."
-  (dolist (key (herdr-dispatch--worktrees-unanswered))
-    (setq herdr-dispatch--worktrees
-          (assoc-delete-all key herdr-dispatch--worktrees)))
-  (setq herdr-dispatch--worktrees-unanswered nil
-        herdr-dispatch--worktrees-pending nil
-        herdr-dispatch--worktrees-generation
-        (1+ herdr-dispatch--worktrees-generation)))
+  (dolist (key (herdr-dispatch--worktrees-unanswered connection))
+    (setf (herdr-connection-worktrees connection)
+          (assoc-delete-all key (herdr-connection-worktrees connection))))
+  (setf (herdr-connection-worktrees-unanswered connection) nil
+        (herdr-connection-worktrees-pending connection) nil
+        (herdr-connection-worktrees-generation connection)
+        (1+ (herdr-connection-worktrees-generation connection))))
 
 (defun herdr-dispatch--invalidate-worktrees (kind _data)
   "Drop the worktree cache when KIND changed the set of worktrees.
@@ -755,8 +729,11 @@ that stale claim in place, on the row a user would then press RET on.
 
 The cost is one asynchronous `worktree.list\\=' per remaining workspace,
 on an event that fires when a workspace closes and at no other time."
+  ;; Resolved here rather than captured: the hook is called with the
+  ;; event and not with the connection whose session moved, and the
+  ;; dashboard follows one server until U6 gives it several.
   (when (herdr-dispatch--worktrees-stale-p kind)
-    (herdr-dispatch--forget-worktrees))
+    (herdr-dispatch--forget-worktrees (herdr-current-connection)))
   (unless (get-buffer herdr-dispatch-buffer-name)
     (remove-hook 'herdr-state-change-functions #'herdr-dispatch--invalidate-worktrees)))
 
@@ -772,7 +749,9 @@ Searches every listing flattened together, because a row
 knows its path and not which listing answered for it."
   (seq-find (lambda (candidate)
               (equal path (alist-get 'path candidate)))
-            (apply #'append (mapcar #'cdr (herdr-dispatch--worktrees-listings)))))
+            (apply #'append
+                   (mapcar #'cdr (herdr-dispatch--worktrees-listings
+                                  (herdr-current-connection))))))
 
 (defun herdr-dispatch--checked-worktree (target)
   "Return TARGET\\='s WorktreeInfo, or refuse the row.
@@ -1087,13 +1066,14 @@ An empty base ref means the current HEAD and is omitted from the call."
          (branch (read-string "New worktree branch: "))
          (base (read-string
                 (format-prompt "Base ref" "the current HEAD") nil nil ""))
-         (dir (herdr-state-workspace-directory (herdr-state-current) workspace)))
-    (herdr-rpc-call (herdr-current-connection) "worktree.create"
+         (dir (herdr-state-workspace-directory (herdr-state-current) workspace))
+         (connection (herdr-current-connection)))
+    (herdr-rpc-call connection "worktree.create"
                     `((branch . ,branch)
                       (base . ,(unless (string-empty-p (or base "")) base))
                       (cwd . ,dir)
                       (focus . t)))
-    (herdr-dispatch--forget-worktrees)
+    (herdr-dispatch--forget-worktrees connection)
     (herdr-dispatch-refresh)))
 
 (defun herdr-dispatch--live-project-root-p (root)
@@ -1233,13 +1213,16 @@ retries the workspaces whose last fetch went unanswered.
 `herdr-tree--steady-title\\=' is what lets the skip engage at all while an
 agent is working."
   (interactive (list t))
-  (when-let* ((buffer (get-buffer herdr-dispatch-buffer-name)))
+  (when-let* ((buffer (get-buffer herdr-dispatch-buffer-name))
+              (connection (herdr-current-connection)))
     (with-current-buffer buffer
-      (when force (herdr-dispatch--retry-unanswered-worktrees))
-      (let* ((state (herdr-state-current))
+      (when force (herdr-dispatch--retry-unanswered-worktrees connection))
+      (let* ((state (herdr-state-current connection))
              (known-roots (herdr-dispatch--known-project-roots))
              (header (herdr-dispatch--header state))
-             (tree (herdr-tree-build state (herdr-dispatch--worktrees-listings)
+             (tree (herdr-tree-build state
+                                     (herdr-dispatch--worktrees-listings
+                                      connection)
                                      known-roots)))
         (when (or force
                   (not (equal header herdr-dispatch--rendered-header))
@@ -1296,8 +1279,9 @@ agent is working."
         ;; screen through the scheduled redraw, so that a callback which
         ;; caches without asking for one is a visible failure rather than
         ;; something this call papers over.
-        (herdr-dispatch--request-worktrees state)
-        (herdr-dispatch--request-known-project-worktrees known-roots)))))
+        (herdr-dispatch--request-worktrees connection state)
+        (herdr-dispatch--request-known-project-worktrees
+         connection known-roots)))))
 
 (defun herdr-dispatch--cancel-refresh ()
   "Cancel the pending debounced redraw, if there is one."
@@ -1349,7 +1333,7 @@ what opening the dashboard already costs."
   (interactive)
   (let ((buffer (get-buffer herdr-dispatch-buffer-name)))
     (unless buffer
-      (herdr-dispatch--forget-worktrees)
+      (herdr-dispatch--forget-worktrees (herdr-current-connection))
       (setq buffer (get-buffer-create herdr-dispatch-buffer-name)))
     (with-current-buffer buffer
       (unless (derived-mode-p 'herdr-dispatch-mode) (herdr-dispatch-mode))
