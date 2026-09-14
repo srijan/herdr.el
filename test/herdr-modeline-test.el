@@ -160,30 +160,34 @@ dropping that guard passed the suite.
 The whole sequence is walked, because each step is a different branch:
 first sight, a real transition, the same status seen again, and a
 transition into a status nobody asked to hear about."
+  ;; One connection for the whole sequence: the last-status key names the
+  ;; connection now, so a fresh one per step would make every sighting a
+  ;; first sighting and the guard under test would never be reached.
   (let ((herdr-notify--last-status (make-hash-table :test 'equal))
         (herdr-notify-statuses '("blocked" "done"))
+        (connection (herdr-test-connection))
         notified)
     (cl-letf (((symbol-function 'herdr-notify--send)
                (lambda (title body) (push (cons title body) notified))))
-      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "working")))
-        (herdr-notify--maybe))
+      (progn (setf (herdr-connection-cache connection) (herdr-modeline-test--state '("w1:p1" "claude" "working")))
+        (herdr-notify--maybe connection))
       (should-not notified)
-      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "blocked")))
-        (herdr-notify--maybe))
+      (progn (setf (herdr-connection-cache connection) (herdr-modeline-test--state '("w1:p1" "claude" "blocked")))
+        (herdr-notify--maybe connection))
       (should (= 1 (length notified)))
       (should (string-match-p "claude" (car (car notified))))
       (should (string-match-p "blocked" (car (car notified))))
       ;; Seen again is not another transition.
-      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "blocked")))
-        (herdr-notify--maybe))
+      (progn (setf (herdr-connection-cache connection) (herdr-modeline-test--state '("w1:p1" "claude" "blocked")))
+        (herdr-notify--maybe connection))
       (should (= 1 (length notified)))
       ;; A transition into a status nobody asked about stays quiet, but
       ;; is still recorded, so the next one back is a transition again.
-      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "idle")))
-        (herdr-notify--maybe))
+      (progn (setf (herdr-connection-cache connection) (herdr-modeline-test--state '("w1:p1" "claude" "idle")))
+        (herdr-notify--maybe connection))
       (should (= 1 (length notified)))
-      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "done")))
-        (herdr-notify--maybe))
+      (progn (setf (herdr-connection-cache connection) (herdr-modeline-test--state '("w1:p1" "claude" "done")))
+        (herdr-notify--maybe connection))
       (should (= 2 (length notified))))))
 
 (ert-deftest herdr-notify-does-not-announce-an-agent-that-was-already-blocked ()
@@ -201,20 +205,24 @@ reconnect and every resync.
 
 The statuses are still recorded, or the first real transition afterwards
 would be swallowed as though it were another first sighting."
+  ;; One connection for the whole sequence: the last-status key names the
+  ;; connection now, so a fresh one per step would make every sighting a
+  ;; first sighting and the guard under test would never be reached.
   (let ((herdr-notify--last-status (make-hash-table :test 'equal))
         (herdr-notify-statuses '("blocked" "done"))
+        (connection (herdr-test-connection))
         notified)
     (cl-letf (((symbol-function 'herdr-notify--send)
                (lambda (&rest _) (push t notified))))
-      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "blocked")
+      (progn (setf (herdr-connection-cache connection) (herdr-modeline-test--state '("w1:p1" "claude" "blocked")
                                        '("w1:p2" "codex" "done")))
-        (herdr-notify--maybe))
+        (herdr-notify--maybe connection))
       (should-not notified)
       (should (= 2 (hash-table-count herdr-notify--last-status)))
       ;; And the transition that follows is still news.
-      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "done")
+      (progn (setf (herdr-connection-cache connection) (herdr-modeline-test--state '("w1:p1" "claude" "done")
                                        '("w1:p2" "codex" "done")))
-        (herdr-notify--maybe))
+        (herdr-notify--maybe connection))
       (should (= 1 (length notified))))))
 
 (ert-deftest herdr-notify-fires-nothing-when-nothing-is-opted-into ()
@@ -230,11 +238,12 @@ above the membership test and below the guard — so the table is what is
 asked about."
   (let ((herdr-notify--last-status (make-hash-table :test 'equal))
         (herdr-notify-statuses nil)
+        (connection (herdr-test-connection))
         notified)
     (cl-letf (((symbol-function 'herdr-notify--send)
                (lambda (&rest _) (push t notified))))
-      (herdr-test-with-state (:cache (herdr-modeline-test--state '("w1:p1" "claude" "blocked")))
-        (herdr-notify--maybe))
+      (progn (setf (herdr-connection-cache connection) (herdr-modeline-test--state '("w1:p1" "claude" "blocked")))
+        (herdr-notify--maybe connection))
       (should-not notified)
       (should (= 0 (hash-table-count herdr-notify--last-status))))))
 

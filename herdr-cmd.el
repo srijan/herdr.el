@@ -88,8 +88,9 @@ paneless client, so `pane.current' answers with the server's global
 focus instead.  A cache miss waits for reconciliation rather than
 failing, since creation was announced on the event stream."
   (when pane-id
-    (unless (herdr-term-select-pane pane-id)
-      (herdr-cmd--select-pane-when-ready (herdr-current-connection) pane-id))))
+    (let ((connection (herdr-current-connection)))
+      (unless (herdr-term-select-pane connection pane-id)
+        (herdr-cmd--select-pane-when-ready connection pane-id)))))
 
 (defun herdr-cmd--select-pane-when-ready (connection pane-id)
   "Select PANE-ID's buffer on CONNECTION once reconciliation has built it.
@@ -106,7 +107,7 @@ because the id exists on both."
                 (setq attempts (1+ attempts))
                 (when (= generation (herdr-state-generation connection))
                   (cond
-                   ((herdr-term-select-pane pane-id))
+                   ((herdr-term-select-pane connection pane-id))
                    ((< attempts 20) (run-at-time 0.25 nil check)))))))
       (run-at-time 0.25 nil check))))
 
@@ -150,10 +151,11 @@ Focusing is server-side and has no visible effect on its own, because
 each pane is a separate Emacs buffer and nothing repaints.  Emacs is
 moved to match."
   (interactive)
-  (let ((pane (or pane-id (herdr-select-pane "Focus pane: "))))
-    (herdr-rpc-call (herdr-current-connection) "pane.focus" `((pane_id . ,pane)))
-    (or (herdr-term-select-pane pane)
-        (herdr-cmd--select-pane-when-ready (herdr-current-connection) pane))
+  (let ((pane (or pane-id (herdr-select-pane "Focus pane: ")))
+        (connection (herdr-current-connection)))
+    (herdr-rpc-call connection "pane.focus" `((pane_id . ,pane)))
+    (or (herdr-term-select-pane connection pane)
+        (herdr-cmd--select-pane-when-ready connection pane))
     pane))
 
 (defun herdr-cmd--follow-focus ()
@@ -163,9 +165,10 @@ Focusing a workspace lands on one of its panes, and the server decides
 which, so the pane has to be asked for rather than assumed.  The cache
 may not hold it yet, since the focus change arrives on the event stream,
 so a miss waits for reconciliation instead of failing."
-  (or (herdr-term-select-focused)
-      (when-let* ((pane (herdr-cmd--current-pane-id)))
-        (herdr-cmd--select-pane-when-ready (herdr-current-connection) pane))))
+  (let ((connection (herdr-current-connection)))
+    (or (herdr-term-select-focused connection)
+        (when-let* ((pane (herdr-cmd--current-pane-id)))
+          (herdr-cmd--select-pane-when-ready connection pane)))))
 
 (defun herdr-cmd-read-text (result)
   "Return the terminal text carried by a read RESULT.

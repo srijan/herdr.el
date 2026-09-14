@@ -127,6 +127,21 @@ removes."
          (nreverse forms))
      ,@body))
 
+(defun herdr-test-term-buffers (cells &optional connection)
+  "Return a terminal registry for CELLS on CONNECTION.
+CELLS is an alist of (PANE-ID . BUFFER), the shape the registry had
+before ids needed a server.  Keys each by the connection\='s token and
+tells each buffer which connection it belongs to, which is what
+attaching does."
+  (let ((connection (or connection (herdr-current-connection))))
+    (mapcar (lambda (cell)
+              (when (buffer-live-p (cdr cell))
+                (with-current-buffer (cdr cell)
+                  (setq herdr-buffer-connection connection)))
+              (cons (cons (herdr-connection-token connection) (car cell))
+                    (cdr cell)))
+            cells)))
+
 (defun herdr-test-connections (connection)
   "Return a registry holding CONNECTION alone.
 What a test binds `herdr-connections\=' to when it wants one connection

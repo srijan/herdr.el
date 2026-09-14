@@ -199,7 +199,7 @@ where you were."
     (unwind-protect
         (herdr-test-with-state (:cache (herdr-state-from-snapshot
                 '((panes . (((pane_id . "w1:p1") (agent . "claude"))
-                            ((pane_id . "w1:p2")))))))(let* ((herdr-term--buffers (list (cons "w1:p1" live))))
+                            ((pane_id . "w1:p2")))))))(let* ((herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" live)))))
           (should (equal '("w1:p1") (herdr-select-panes-with-buffers)))
           (let ((source (herdr-select--consult-source)))
             (should (equal 'herdr-pane (plist-get source :category)))
@@ -234,7 +234,7 @@ down to `herdr-rpc-background-timeout'."
   (let ((target (generate-new-buffer " *target*"))
         focused)
     (unwind-protect
-        (let ((herdr-term--buffers (list (cons "w1:p1" target))))
+        (let ((herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" target)))))
           (cl-letf (((symbol-function 'herdr-rpc-call)
                      (lambda (_connection method params)
                        (when (equal method "pane.focus")
@@ -253,7 +253,7 @@ you last went to, because herdr's focus is server-side and does not
 follow Emacs."
   (herdr-test-with-state (:cache (herdr-state-from-snapshot
            '((focused_pane_id . "w1:pA")
-             (panes . (((pane_id . "w1:pA")) ((pane_id . "w1:pB")))))))(let* ((mine (generate-new-buffer " *pane-b*")) (herdr-term--buffers (list (cons "w1:pB" mine))) (current-prefix-arg nil))
+             (panes . (((pane_id . "w1:pA")) ((pane_id . "w1:pB")))))))(let* ((mine (generate-new-buffer " *pane-b*")) (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:pB" mine)))) (current-prefix-arg nil))
     (unwind-protect
         (with-current-buffer mine
           (should (equal "w1:pB" (herdr-select-target-pane))))
@@ -268,7 +268,7 @@ follow Emacs."
 
 (ert-deftest herdr-select-target-ignores-a-buffer-whose-pane-is-gone ()
   (herdr-test-with-state (:cache (herdr-state-from-snapshot
-           '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))(let* ((orphan (generate-new-buffer " *orphan*")) (herdr-term--buffers (list (cons "w1:gone" orphan))) (current-prefix-arg nil))
+           '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))(let* ((orphan (generate-new-buffer " *orphan*")) (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:gone" orphan)))) (current-prefix-arg nil))
     (unwind-protect
         (with-current-buffer orphan
           (should (equal "w1:pA" (herdr-select-target-pane))))

@@ -125,7 +125,7 @@ deleting them safe."
 Emacs has to be moved to match or the command looks like a no-op."
   (let (selected)
     (cl-letf (((symbol-function 'herdr-term-select-pane)
-               (lambda (pane) (setq selected pane))))
+               (lambda (_connection pane) (setq selected pane))))
       (herdr-test-with-server
           (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
         (herdr-pane-focus "w1:p7")
@@ -136,7 +136,7 @@ Emacs has to be moved to match or the command looks like a no-op."
 not caught up with the focus change — the retry chain is armed instead
 of the command silently going nowhere."
   (let (deferred)
-    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) nil))
+    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_connection _) nil))
               ((symbol-function 'herdr-cmd--select-pane-when-ready)
                (lambda (_connection pane) (setq deferred pane))))
       (herdr-test-with-server
@@ -147,7 +147,7 @@ of the command silently going nowhere."
 (ert-deftest herdr-workspace-focus-follows-in-emacs ()
   (let (asked)
     (cl-letf (((symbol-function 'herdr-term-select-focused)
-               (lambda () (setq asked t)))
+               (lambda (&rest _) (setq asked t)))
               ((symbol-function 'herdr-cmd--current-pane-id) (lambda () nil)))
       (herdr-test-with-server
           (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
@@ -159,7 +159,7 @@ of the command silently going nowhere."
 lookup can show anything yet, the miss is handed to the retry chain
 rather than the command going silently nowhere."
   (let (deferred)
-    (cl-letf (((symbol-function 'herdr-term-select-focused) (lambda () nil))
+    (cl-letf (((symbol-function 'herdr-term-select-focused) (lambda (&rest _) nil))
               ((symbol-function 'herdr-cmd--current-pane-id) (lambda () "w1:p4"))
               ((symbol-function 'herdr-cmd--select-pane-when-ready)
                (lambda (_connection pane) (setq deferred pane))))
@@ -199,7 +199,7 @@ with `pane'."
 caught up with a creation announced on the event stream, the retry chain
 is armed."
   (let (deferred reported)
-    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) nil))
+    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_connection _) nil))
               ((symbol-function 'herdr-cmd--select-pane-when-ready)
                (lambda (_connection pane) (setq deferred pane)))
               ((symbol-function 'herdr-rpc-call)
@@ -215,7 +215,7 @@ empty; a pane already in the cache must not also be handed to it."
   (dolist (select-succeeds '(nil t))
     (let (deferred)
       (cl-letf (((symbol-function 'herdr-term-select-pane)
-                 (lambda (_) select-succeeds))
+                 (lambda (_connection _) select-succeeds))
                 ((symbol-function 'herdr-cmd--select-pane-when-ready)
                  (lambda (_connection pane) (setq deferred pane))))
         (herdr-cmd--follow-new-pane "w1:p9")
@@ -644,7 +644,7 @@ each wrote that `workspace.create\\=' out in full, which is how they came
 to disagree about the label and about how to follow the new pane.  This
 pins them to one call."
   (let (going opening)
-    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_) t))
+    (cl-letf (((symbol-function 'herdr-term-select-pane) (lambda (_connection _) t))
               ((symbol-function 'herdr-term-select-focused) #'ignore))
       (dolist (probe (list (cons 'going (lambda ()
                                           (herdr-cmd-open-workspace-for

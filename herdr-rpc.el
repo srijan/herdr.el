@@ -87,10 +87,7 @@ under it; a composite key holds the token instead."
   (worktrees-generation 0)
   ;; Handshake and schema, one answer per server rather than per package.
   (protocol-warned nil) (schema nil) (schema-version nil)
-  (schema-protocol nil) (schema-mismatch-warned nil)
-  ;; The change-hook closure this connection added, kept so the
-  ;; remove is the same object the add was.
-  (notify nil))
+  (schema-protocol nil) (schema-mismatch-warned nil))
 
 (defun herdr-connection-local ()
   "Return a connection to the local server at `herdr-socket-path'."

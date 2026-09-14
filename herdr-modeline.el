@@ -21,6 +21,7 @@
 
 (require 'subr-x)
 (require 'herdr-state)
+(require 'herdr-connection)
 (require 'herdr-tree)
 (require 'herdr-pane)
 
@@ -80,6 +81,8 @@ redisplay of every mode line in Emacs several times a second for text
 that almost never differed: the flicker.  The subscription is gone, but
 the guard stays: bursts still happen (settles, reconciles, status
 refreshes), and only a changed count is worth a redisplay."
+  ;; Reads whichever connection resolves, which is the sole one until
+  ;; the segment learns to show several servers at once.
   (let ((text (herdr-modeline--segment (herdr-state-current))))
     (unless (equal text herdr-modeline--text)
       (setq herdr-modeline--text text)
@@ -141,15 +144,22 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
     (funcall 'notifications-notify :title title :body body))
    (t (message "%s: %s" title body))))
 
-(defun herdr-notify--maybe (&rest _)
-  "Notify about agents that just entered a status in `herdr-notify-statuses'."
+(defun herdr-notify--maybe (connection &rest _)
+  "Notify about CONNECTION\='s agents that just entered a watched status.
+The statuses worth notifying about are `herdr-notify-statuses\='.
+
+Keyed by the connection\='s token beside the pane id: ids are per-server
+counters, so a bare one would have two machines' `w1:p1\=' share a last
+status — one agent going idle suppressing the other\='s notification, and
+its next status firing one that never happened."
   (when herdr-notify-statuses
-    (dolist (pane (herdr-state-agents (herdr-state-current)))
+    (dolist (pane (herdr-state-agents (herdr-state-current connection)))
       (let* ((id (herdr-pane-id pane))
+             (key (cons (herdr-connection-token connection) id))
              (status (herdr-pane-status pane))
-             (previous (gethash id herdr-notify--last-status)))
+             (previous (gethash key herdr-notify--last-status)))
         (unless (equal status previous)
-          (puthash id status herdr-notify--last-status)
+          (puthash key status herdr-notify--last-status)
           (when (and previous (member status herdr-notify-statuses))
             (herdr-notify--send
              (format "herdr: %s is %s" (or (herdr-pane-agent pane) id) status)

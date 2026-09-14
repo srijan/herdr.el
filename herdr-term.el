@@ -156,7 +156,17 @@ can hang on an unusable PTY until the timeout gives up."
 ;;; Buffer bookkeeping
 
 (defvar herdr-term--buffers nil
-  "Alist of (PANE-ID . BUFFER), one entry per attached pane.")
+  "Alist of ((TOKEN . PANE-ID) . BUFFER), one entry per attached pane.
+
+Keyed by the connection\='s token and not by the connection itself, per
+KTD2: the struct is mutable and `equal\=' on a struct compares fields, so
+a key holding one would stop matching the moment a process or a cache
+slot changed under it.  A bare pane id will not do either — ids are
+per-server counters, and two machines may each hold a `w1:p1\='.")
+
+(defun herdr-term--key (connection pane-id)
+  "Return the registry key for PANE-ID on CONNECTION."
+  (cons (herdr-connection-token connection) pane-id))
 
 (defun herdr-term--live-buffers ()
   "Return `herdr-term--buffers' with dead buffers dropped."
@@ -164,7 +174,17 @@ can hang on an unusable PTY until the timeout gives up."
         (seq-filter (lambda (cell) (buffer-live-p (cdr cell)))
                     herdr-term--buffers)))
 
-(defun herdr-term-select-pane (pane-id)
+(defun herdr-term--buffers-for (connection)
+  "Return CONNECTION\='s attached buffers, as an alist of (PANE-ID . BUFFER).
+Without the token, so that the pure helpers and the callers that walk
+one server\='s panes see the shape they had before there were two."
+  (let ((token (herdr-connection-token connection)))
+    (mapcan (lambda (cell)
+              (when (equal token (caar cell))
+                (list (cons (cdar cell) (cdr cell)))))
+            (herdr-term--live-buffers))))
+
+(defun herdr-term-select-pane (connection pane-id)
   "Show PANE-ID, attaching to it first if it is not attached yet.
 
 Focus is server-side state and nothing in Emacs repaints: each pane is
@@ -175,41 +195,50 @@ Attaching happens here rather than in reconciliation because the client
 needs a window at startup, so attaching every agent up front would mean
 `M-x herdr\\=' seizing a window per agent before being asked for anything.
 Returns the buffer when it showed one."
-  (let ((buffer (herdr-term-buffer-for-pane pane-id)))
+  (let ((buffer (herdr-term-buffer-for-pane connection pane-id)))
     (unless (buffer-live-p buffer)
-      (setq buffer (herdr-term--attach-if-possible pane-id)))
+      (setq buffer (herdr-term--attach-if-possible connection pane-id)))
     (when (buffer-live-p buffer)
       (herdr-term--show buffer)
       buffer)))
 
-(defun herdr-term--attach-if-possible (pane-id)
-  "Attach to PANE-ID now, if the cache knows it."
-  (let ((state (herdr-state-current)))
+(defun herdr-term--attach-if-possible (connection pane-id)
+  "Attach to CONNECTION\='s PANE-ID now, if its cache knows it."
+  (let ((state (herdr-state-current connection)))
     (when-let* ((pane (herdr-state-pane state pane-id)))
-      (herdr-term--attach state pane))))
+      (herdr-term--attach connection state pane))))
 
-(defun herdr-term-select-focused ()
-  "Select the buffer for whichever pane herdr now considers focused.
+(defun herdr-term-select-focused (&optional connection)
+  "Select the buffer for whichever pane CONNECTION now considers focused.
 Asks the server rather than trusting the cache, because focus may have
 moved as a side effect of the command that just ran."
-  (when-let* ((pane (ignore-errors
-                      (alist-get 'pane_id
-                                 (alist-get 'pane (herdr-rpc-call
-                                                   (herdr-current-connection)
-                                                   "pane.current"))))))
-    (herdr-term-select-pane pane)))
+  (let ((connection (or connection (herdr-current-connection))))
+    (when-let* ((pane (ignore-errors
+                        (alist-get 'pane_id
+                                   (alist-get 'pane
+                                              (herdr-rpc-call
+                                               connection "pane.current"))))))
+      (herdr-term-select-pane connection pane))))
 
-(defun herdr-term-buffer-for-pane (pane-id)
-  "Return the buffer showing PANE-ID, if one is attached."
-  (cdr (assoc pane-id (herdr-term--live-buffers))))
+(defun herdr-term-buffer-for-pane (connection pane-id)
+  "Return the buffer showing CONNECTION\='s PANE-ID, if one is attached."
+  (cdr (assoc (herdr-term--key connection pane-id)
+              (herdr-term--live-buffers))))
 
 (defun herdr-term-pane-for-buffer (&optional buffer)
-  "Return the pane id BUFFER is showing, or nil if it is not a herdr terminal."
+  "Return the pane id BUFFER is showing, or nil if it is not a herdr terminal.
+The pane is checked against the buffer\='s own connection, which the
+buffer has carried since it was attached: checking it against whichever
+connection is current would retire a live buffer the moment another
+server\='s cache did not happen to know its id."
   (let* ((buffer (or buffer (current-buffer)))
-         (id (car (rassq buffer (herdr-term--live-buffers)))))
+         (key (car (rassq buffer (herdr-term--live-buffers))))
+         (connection (and key (buffer-local-value 'herdr-buffer-connection
+                                                  buffer))))
     ;; Ignore a buffer whose pane has since gone away.
-    (when (and id (herdr-state-pane (herdr-state-current) id))
-      id)))
+    (when (and key connection
+               (herdr-state-pane (herdr-state-current connection) (cdr key)))
+      (cdr key))))
 
 (defun herdr-term-buffer-p (&optional buffer)
   "Return non-nil if BUFFER is one of herdr\\='s terminal buffers.
@@ -221,18 +250,19 @@ this still answers for a buffer whose pane has gone away, which is a
 buffer to clean up rather than one to protect."
   (and (rassq (or buffer (current-buffer)) (herdr-term--live-buffers)) t))
 
-(defun herdr-term--attach (state pane)
+(defun herdr-term--attach (connection state pane)
   "Create and start a ghostel buffer attached to PANE, named from STATE.
 Returns an existing buffer untouched rather than attaching twice:
 attachment is exclusive per pane, so a second attach either fails or
-steals the first one's terminal."
+steals the first one's terminal.  Exclusive per pane per server: the
+same id on another connection is another pane and gets its own buffer."
   (let* ((pane-id (herdr-pane-id pane))
-         (existing (herdr-term-buffer-for-pane pane-id)))
+         (existing (herdr-term-buffer-for-pane connection pane-id)))
     (if (buffer-live-p existing)
         existing
-      (herdr-term--attach-1 state pane pane-id))))
+      (herdr-term--attach-1 connection state pane pane-id))))
 
-(defun herdr-term--attach-1 (state pane pane-id)
+(defun herdr-term--attach-1 (connection state pane pane-id)
   "Create and start a ghostel buffer attached to PANE, named from STATE.
 
 Signals rather than answering nil when the client will not start: the
@@ -261,7 +291,12 @@ terminal."
     ;; that signals most often.
     (condition-case err
         (progn
-          (with-current-buffer buffer (ghostel-mode))
+          (with-current-buffer buffer
+            (ghostel-mode)
+            ;; Before anything can go wrong: a buffer that reaches the
+            ;; registry without its connection answers commands typed in
+            ;; it against whichever server is current.
+            (setq herdr-buffer-connection connection))
           ;; The buffer needs a window when the client starts: attaching
           ;; without displaying, or with a window that is deleted straight
           ;; afterwards, kills the client and ghostel then kills the
@@ -272,13 +307,14 @@ terminal."
           (herdr-term--show buffer)
           (ghostel-exec buffer herdr-executable args)
           (herdr-term--set-directory buffer pane)
-          (push (cons pane-id buffer) herdr-term--buffers))
+          (push (cons (herdr-term--key connection pane-id) buffer)
+                herdr-term--buffers))
       (error
        (kill-buffer buffer)
        (signal (car err) (cdr err))))
     buffer))
 
-(defun herdr-term--rename-stale-buffers ()
+(defun herdr-term--rename-stale-buffers (connection)
   "Rename buffers whose pane has changed identity since they were created.
 
 A pane that starts as a plain shell and gets an agent detected in it
@@ -292,8 +328,8 @@ collision lasts — that is not staleness, and recomputing the bare
 `wanted\\=' every sync and renaming toward it each time would just have
 `rename-buffer\\=' hand the same suffix right back, forever, from inside
 the state-change hook."
-  (let ((state (herdr-state-current)))
-    (dolist (cell (herdr-term--live-buffers))
+  (let ((state (herdr-state-current connection)))
+    (dolist (cell (herdr-term--buffers-for connection))
       (when-let* ((pane (herdr-state-pane state (car cell)))
                   (wanted (herdr-term-buffer-name state pane))
                   ((not (equal wanted
@@ -303,17 +339,22 @@ the state-change hook."
           ;; Unique suffix rather than an error if the name is taken.
           (rename-buffer wanted t))))))
 
-(defun herdr-term--sync-buffers ()
-  "Reap buffers whose pane is gone and correct stale names.
+(defun herdr-term--sync-buffers (connection)
+  "Reap CONNECTION\='s buffers whose pane is gone and correct stale names.
+
+Scoped to the connection that changed.  Reaping against every registered
+buffer would have one server\='s cache retire another server\='s
+terminals, which is what stopping a connection used to do.
 
 Deliberately does not attach.  Attaching requires displaying the buffer
 and keeping it displayed, so attaching on every `pane_agent_detected\\='
 would take a window each time an agent appears.  `herdr-term-select-pane\\='
 attaches on demand instead."
-  (dolist (buffer (herdr-term-buffers-to-reap (herdr-state-current)
-                                             (herdr-term--live-buffers)))
+  (dolist (buffer (herdr-term-buffers-to-reap
+                   (herdr-state-current connection)
+                   (herdr-term--buffers-for connection)))
     (when (buffer-live-p buffer) (kill-buffer buffer)))
-  (herdr-term--rename-stale-buffers)
+  (herdr-term--rename-stale-buffers connection)
   (herdr-term--live-buffers))
 
 ;;; Directory tracking
@@ -340,21 +381,21 @@ One `cd' emits dozens of `layout_updated' events."
 
 (defvar herdr-term--directory-debounce-timer nil)
 
-(defun herdr-term--schedule-directory-refresh ()
-  "Repair the cache shortly, coalescing bursts of events.
+(defun herdr-term--schedule-directory-refresh (connection)
+  "Repair CONNECTION\='s cache shortly, coalescing bursts of events.
 The repair is what reads the new directory; the change hook it runs
-then points the buffers at it."
+then points the buffers at it.
+
+The connection is the one that notified, carried into the timer rather
+than read when it fires: a timer callback runs in an empty extent."
   (when herdr-term-track-directory
     (when herdr-term--directory-debounce-timer
       (cancel-timer herdr-term--directory-debounce-timer))
-    ;; The connection is captured here, where the debounce is armed, not
-    ;; read when it fires: a timer callback runs in an empty extent.
-    (let ((connection (herdr-current-connection)))
-      (setq herdr-term--directory-debounce-timer
-            (run-at-time herdr-term-directory-debounce nil
-                         (lambda ()
-                           (setq herdr-term--directory-debounce-timer nil)
-                           (herdr-state-repair connection)))))))
+    (setq herdr-term--directory-debounce-timer
+          (run-at-time herdr-term-directory-debounce nil
+                       (lambda ()
+                         (setq herdr-term--directory-debounce-timer nil)
+                         (herdr-state-repair connection))))))
 
 (defun herdr-term--cancel-directory-debounce ()
   "Cancel a pending debounced refresh."
@@ -370,23 +411,23 @@ then points the buffers at it."
       (unless (equal default-directory dir)
         (setq default-directory dir)))))
 
-(defun herdr-term--sync-directories ()
-  "Point every terminal buffer at its pane's current directory."
+(defun herdr-term--sync-directories (connection)
+  "Point CONNECTION\='s terminal buffers at their panes' current directories."
   (when herdr-term-track-directory
-    (let ((state (herdr-state-current)))
-      (dolist (cell (herdr-term--live-buffers))
+    (let ((state (herdr-state-current connection)))
+      (dolist (cell (herdr-term--buffers-for connection))
         (when-let* ((pane (herdr-state-pane state (car cell))))
           (herdr-term--set-directory (cdr cell) pane))))))
 
-(defun herdr-term--on-state-change (kind _data)
-  "Resync terminal buffers after a cache change.
+(defun herdr-term--on-state-change (connection kind _data)
+  "Resync CONNECTION\='s terminal buffers after its cache changed.
 Nudges a repair for every event but \"reconcile\", which is a repair
 reporting what it just changed: nudging another one there pays two round
 trips to be told nothing moved."
-  (herdr-term--sync-buffers)
-  (herdr-term--sync-directories)
+  (herdr-term--sync-buffers connection)
+  (herdr-term--sync-directories connection)
   (unless (equal kind "reconcile")
-    (herdr-term--schedule-directory-refresh)))
+    (herdr-term--schedule-directory-refresh connection)))
 
 ;;; Interface
 
@@ -400,16 +441,30 @@ trips to be told nothing moved."
         (progn
           ;; The bootstrap client was only there to start the daemon.
           (when (buffer-live-p bootstrap) (kill-buffer bootstrap))
-          (herdr-term--sync-buffers))
-      (herdr-term--sync-directories))))
+          (herdr-term--sync-buffers connection))
+      (herdr-term--sync-directories connection))))
 
-(defun herdr-term-teardown ()
-  "Kill the terminal buffers.  The herdr server is left running."
-  (remove-hook 'herdr-state-change-functions #'herdr-term--on-state-change)
+(defun herdr-term-teardown (&optional connection)
+  "Kill CONNECTION\='s terminal buffers, or every one when CONNECTION is nil.
+The herdr server is left running.
+
+The hook comes off only when nothing is left for it to serve: one
+function serves every connection, so removing it because one stopped
+would leave the others' buffers unreaped."
   (herdr-term--cancel-directory-debounce)
-  (dolist (cell (herdr-term--live-buffers))
+  (dolist (cell (if connection
+                    (herdr-term--buffers-for connection)
+                  (herdr-term--live-buffers)))
     (kill-buffer (cdr cell)))
-  (setq herdr-term--buffers nil))
+  (if connection
+      (let ((token (herdr-connection-token connection)))
+        (setq herdr-term--buffers
+              (seq-remove (lambda (cell) (equal token (caar cell)))
+                          (herdr-term--live-buffers))))
+    (setq herdr-term--buffers nil))
+  (unless (herdr-term--live-buffers)
+    (remove-hook 'herdr-state-change-functions
+                 #'herdr-term--on-state-change)))
 
 ;;; Optional integration, registered only when project.el is loaded
 

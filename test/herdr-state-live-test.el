@@ -23,7 +23,7 @@
   `(let* ((events nil)
           (herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty))))
           (herdr-state-change-functions
-           (list (lambda (kind data) (push (cons kind data) events))))
+           (list (lambda (_connection kind data) (push (cons kind data) events))))
           (proc (herdr-state-live-test--proc)))
      (unwind-protect (progn ,@body (setq events (nreverse events)))
        (delete-process proc))))
@@ -148,7 +148,7 @@ fails here."
   (let* ((events nil)
          (herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty))))
          (herdr-state-change-functions
-          (list (lambda (kind data) (push (cons kind data) events))))
+          (list (lambda (_connection kind data) (push (cons kind data) events))))
          (proc (herdr-state-live-test--proc)))
     (unwind-protect
         (progn
@@ -346,7 +346,7 @@ are not told about is the same bug one level up."
     (herdr-test-with-server
         (herdr-state-live-test--reconnect-server
          (lambda (method) (push method methods)))
-      (herdr-test-with-state (:running t :pane-process nil :resubscribe-timer nil :settle-timer nil :cache (herdr-state-live-test--stale-cache))(let* ((herdr-state-change-functions (list (lambda (kind _data) (push kind kinds)))))
+      (herdr-test-with-state (:running t :pane-process nil :resubscribe-timer nil :settle-timer nil :cache (herdr-state-live-test--stale-cache))(let* ((herdr-state-change-functions (list (lambda (_connection kind _data) (push kind kinds)))))
         (unwind-protect
             (progn
               (herdr-state--settle (herdr-current-connection) t)

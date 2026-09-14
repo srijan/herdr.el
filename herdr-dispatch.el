@@ -706,7 +706,7 @@ whole instead."
         (herdr-connection-worktrees-generation connection)
         (1+ (herdr-connection-worktrees-generation connection))))
 
-(defun herdr-dispatch--invalidate-worktrees (kind _data)
+(defun herdr-dispatch--invalidate-worktrees (connection kind _data)
   "Drop the worktree cache when KIND changed the set of worktrees.
 Also unhooks from `herdr-state-change-functions\\=' once the dispatcher's buffer
 is gone, matching `herdr-dispatch--refresh-hook\\='.
@@ -730,11 +730,12 @@ that stale claim in place, on the row a user would then press RET on.
 
 The cost is one asynchronous `worktree.list\\=' per remaining workspace,
 on an event that fires when a workspace closes and at no other time."
-  ;; Resolved here rather than captured: the hook is called with the
-  ;; event and not with the connection whose session moved, and the
-  ;; dashboard follows one server until U6 gives it several.
+  ;; Only the connection that notified.  Its event says nothing about
+  ;; any other server's worktrees, and dropping theirs would cost one
+  ;; `worktree.list' per workspace on every server for an event that
+  ;; happened on one of them.
   (when (herdr-dispatch--worktrees-stale-p kind)
-    (herdr-dispatch--forget-worktrees (herdr-current-connection)))
+    (herdr-dispatch--forget-worktrees connection))
   (unless (get-buffer herdr-dispatch-buffer-name)
     (remove-hook 'herdr-state-change-functions #'herdr-dispatch--invalidate-worktrees)))
 

@@ -272,16 +272,21 @@ candidate is a whole row."
 
 Every pane is attachable, but attaching is lazy, so a pane you have not
 visited has no buffer and a buffer switcher cannot switch to it."
-  (seq-filter (lambda (id)
-                (buffer-live-p (herdr-term-buffer-for-pane id)))
-              (herdr-state-pane-ids (herdr-state-current))))
+  (let ((connection (herdr-current-connection)))
+    (seq-filter (lambda (id)
+                  (buffer-live-p (herdr-term-buffer-for-pane connection id)))
+                (herdr-state-pane-ids (herdr-state-current connection)))))
 
 (defun herdr-select--consult-visit (pane-id)
-  "Switch to PANE-ID's buffer and focus the pane in herdr."
-  (when-let* ((buffer (herdr-term-buffer-for-pane pane-id)))
-    (herdr-term--show buffer))
-  (ignore-errors (herdr-rpc-call (herdr-current-connection)
-                                 "pane.focus" `((pane_id . ,pane-id)))))
+  "Switch to PANE-ID's buffer and focus the pane in herdr.
+Resolves its own connection, which is as far as a candidate that is a
+bare id can go: the source lists one server\='s panes, and giving the
+candidates a server is what lets it list several."
+  (let ((connection (herdr-current-connection)))
+    (when-let* ((buffer (herdr-term-buffer-for-pane connection pane-id)))
+      (herdr-term--show buffer))
+    (ignore-errors (herdr-rpc-call connection
+                                   "pane.focus" `((pane_id . ,pane-id))))))
 
 (defun herdr-select--consult-source ()
   "Return a `consult-buffer' source listing herdr panes that have buffers.
