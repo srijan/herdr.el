@@ -398,6 +398,28 @@ extent and this one still restores it afterwards."
        (herdr-dispatch--cancel-refresh)
        (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
+(defmacro herdr-dispatch-test--with-worktrees (listings &rest body)
+  "Run BODY with the worktree cache seeded to LISTINGS.
+The one place a test binds the cache's storage; everything else asks the
+cache.  BODY may be preceded by `:pending', `:unanswered' and
+`:generation' arguments.  All four globals are rebound whichever are
+given, because each outlives a buffer and a test that left one behind
+would arrive in the next as a key mysteriously already asked for."
+  (declare (indent 1) (debug t))
+  (let ((pending nil) (unanswered nil) (generation 0))
+    (while (keywordp (car body))
+      (let ((key (pop body)) (value (pop body)))
+        (pcase key
+          (:pending (setq pending value))
+          (:unanswered (setq unanswered value))
+          (:generation (setq generation value))
+          (_ (error "Unknown worktree seed argument %S" key)))))
+    `(let ((herdr-dispatch--worktrees ,listings)
+           (herdr-dispatch--worktrees-pending ,pending)
+           (herdr-dispatch--worktrees-unanswered ,unanswered)
+           (herdr-dispatch--worktrees-generation ,generation))
+       ,@body)))
+
 (defmacro herdr-dispatch-test-with-dispatcher (&rest body)
   "Run BODY in a real dispatcher buffer built from the test snapshot.
 `herdr-dispatch-refresh' finds its buffer by name, so this has to be the
@@ -2948,6 +2970,100 @@ own TUI never asks for."
   (should-not (lookup-key herdr-dispatch-mode-map "a"))
   (should-not (fboundp 'herdr-dispatch-create-agent))
   (should-not (fboundp 'herdr-agent-start)))
+
+;;; The worktree cache answers questions
+
+;; Every test below asks the cache rather than reading its alists, and
+;; seeds it through one constructor.  The four globals are storage.
+
+(ert-deftest herdr-dispatch-worktree-keys-are-strings-from-two-domains ()
+  "One alist holds listings under workspace ids and under project roots.
+Both keys stay plain strings: `herdr-dispatch-refresh' hands the listing
+alist to `herdr-tree-build', which looks it up with `assoc'."
+  (let ((from-workspace (herdr-dispatch--worktree-key-for-workspace "w1"))
+        (from-root (herdr-dispatch--worktree-key-for-root "/tmp/proj/")))
+    (should (stringp from-workspace))
+    (should (stringp from-root))
+    (should-not (equal from-workspace from-root))))
+
+(ert-deftest herdr-dispatch-a-constructed-key-is-found-by-the-renderer ()
+  "Driven through `herdr-tree-build' rather than through the cache, so
+this fails if the constructor ever starts decorating its keys."
+  (let* ((key (herdr-dispatch--worktree-key-for-workspace "w1"))
+         (state (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w1") (label . "one"))))
+                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (tab_id . "w1:t1") (cwd . "/tmp")))))))
+         (nodes (herdr-tree-build
+                 state (list (cons key '(((path . "/tmp/wt")
+                                          (is_linked_worktree . t)
+                                          (branch . "feat/x"))))))))
+    (should (seq-find (lambda (node) (eq 'herdr-worktree (nth 0 node)))
+                      (nth 3 (car nodes))))))
+
+(ert-deftest herdr-dispatch-an-empty-answer-is-an-answer ()
+  "A repository with no worktrees caches as an entry whose value is nil
+and must not be asked again, which is why every guard uses `assoc'."
+  (herdr-dispatch-test--with-worktrees '(("w1" . nil))
+    (should (herdr-dispatch--worktrees-answered-p "w1"))
+    (should-not (herdr-dispatch--worktrees-listing "w1"))
+    (should-not (herdr-dispatch--worktrees-wanted-p "w1"))))
+
+(ert-deftest herdr-dispatch-a-key-never-asked-is-wanted ()
+  (herdr-dispatch-test--with-worktrees nil
+    (should-not (herdr-dispatch--worktrees-answered-p "w1"))
+    (should (herdr-dispatch--worktrees-wanted-p "w1"))))
+
+(ert-deftest herdr-dispatch-a-key-in-flight-is-not-wanted-again ()
+  (herdr-dispatch-test--with-worktrees nil :pending '("w1")
+    (should-not (herdr-dispatch--worktrees-wanted-p "w1"))))
+
+(ert-deftest herdr-dispatch-unanswered-covers-all-three-categories ()
+  "Errored, no-directory, and still in flight.  The third is easy to omit
+and omitting it is a regression: clearing a pending marker is the only
+thing that can rescue an in-flight request before its timeout."
+  (herdr-dispatch-test--with-worktrees '(("w1" . nil) ("w2" . nil) ("w4" . (found)))
+    :pending '("w3")
+    :unanswered '(("w1" . error) ("w2" . no-directory))
+    (let ((unanswered (herdr-dispatch--worktrees-unanswered)))
+      (should (member "w1" unanswered))
+      (should (member "w2" unanswered))
+      (should (member "w3" unanswered))
+      (should-not (member "w4" unanswered)))))
+
+(ert-deftest herdr-dispatch-the-unanswered-reason-survives ()
+  "A no-directory entry is retried once a directory exists; an errored
+one waits for the keystroke.  Collapsing the two loses that."
+  (herdr-dispatch-test--with-worktrees '(("w1" . nil) ("w2" . nil))
+    :unanswered '(("w1" . error) ("w2" . no-directory))
+    (should (eq 'error (herdr-dispatch--worktrees-unanswered-reason "w1")))
+    (should (eq 'no-directory (herdr-dispatch--worktrees-unanswered-reason "w2")))
+    (should-not (herdr-dispatch--worktrees-unanswered-reason "w9"))))
+
+(ert-deftest herdr-dispatch-a-forced-retry-keeps-a-genuinely-empty-answer ()
+  (herdr-dispatch-test--with-worktrees '(("w1" . nil) ("w2" . nil))
+    :unanswered '(("w1" . error))
+    (herdr-dispatch--retry-unanswered-worktrees)
+    (should-not (herdr-dispatch--worktrees-answered-p "w1"))
+    (should (herdr-dispatch--worktrees-answered-p "w2"))
+    (should-not (herdr-dispatch--worktrees-unanswered))))
+
+(ert-deftest herdr-dispatch-a-path-resolves-through-any-listing ()
+  "A worktree row knows its path and not which listing answered for it,
+so the search flattens every listing together."
+  (herdr-dispatch-test--with-worktrees
+      '(("w1" . (((path . "/tmp/a/")))) ("w2" . (((path . "/tmp/b/")))))
+    (should (equal '((path . "/tmp/b/")) (herdr-dispatch--worktree-record "/tmp/b/")))
+    (should-not (herdr-dispatch--worktree-record "/tmp/missing/"))))
+
+(ert-deftest herdr-dispatch-an-event-that-changes-worktrees-is-stale-making ()
+  "`workspace_closed' belongs on the list even though it announces no
+worktree: every other listing carries `open_workspace_id'."
+  (dolist (kind '("worktree_created" "worktree_opened" "worktree_removed"
+                  "workspace_closed"))
+    (should (herdr-dispatch--worktrees-stale-p kind)))
+  (dolist (kind '("pane_updated" "workspace_renamed" "resync"))
+    (should-not (herdr-dispatch--worktrees-stale-p kind))))
 
 (provide 'herdr-dispatch-test)
 ;;; herdr-dispatch-test.el ends here

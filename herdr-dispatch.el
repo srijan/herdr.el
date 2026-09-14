@@ -459,6 +459,68 @@ reported rather than raised.  DOCSTRING documents the command."
      (herdr-dispatch--protect (lambda () ,@body))))
 
 ;;; Worktrees
+;;
+;; The four globals above are storage.  Everything else asks the cache
+;; four questions: what a key's listing is, what record a path names,
+;; whether an event makes the cache stale, and what still needs
+;; fetching.
+
+(defun herdr-dispatch--worktree-key-for-workspace (workspace-id)
+  "Return the cache key for WORKSPACE-ID.
+The key stays a plain string: `herdr-dispatch-refresh\\=' hands the listing
+alist straight to `herdr-tree-build\\=', which looks it up with `assoc\\=' on
+bare strings in four places.  Widening it to carry a server is the
+multi-connection work\\='s job, and it starts here."
+  workspace-id)
+
+(defun herdr-dispatch--worktree-key-for-root (root)
+  "Return the cache key for the known-project ROOT.
+One alist holds listings under workspace ids and under project roots, so
+the cache names that mixed domain rather than pretending to be
+workspace-only.  ROOT is used verbatim, because it is also the id the
+renderer draws the row under."
+  root)
+
+(defun herdr-dispatch--worktrees-listings ()
+  "Return every cached listing, as the alist `herdr-tree-build\\=' takes."
+  herdr-dispatch--worktrees)
+
+(defun herdr-dispatch--worktrees-listing (key)
+  "Return the worktrees cached under KEY, which may legitimately be nil."
+  (cdr (assoc key herdr-dispatch--worktrees)))
+
+(defun herdr-dispatch--worktrees-answered-p (key)
+  "Return non-nil when KEY has an answer.
+Presence, not truth: a repository with no worktrees caches as an entry
+whose value is nil and must not be asked again."
+  (and (assoc key herdr-dispatch--worktrees) t))
+
+(defun herdr-dispatch--worktrees-wanted-p (key)
+  "Return non-nil when KEY still needs fetching.
+Neither answered nor already in flight."
+  (not (or (assoc key herdr-dispatch--worktrees)
+           (member key herdr-dispatch--worktrees-pending))))
+
+(defun herdr-dispatch--worktrees-unanswered-reason (key)
+  "Return why KEY was cached without an answer, or nil.
+`error\\=' waits for \\[herdr-dispatch-refresh]; `no-directory\\=' is retried
+as soon as a directory exists.  Collapsing the two loses that."
+  (alist-get key herdr-dispatch--worktrees-unanswered nil nil #'equal))
+
+(defun herdr-dispatch--worktrees-unanswered ()
+  "Return every key with no answer, in all three categories.
+Errored, without a directory, and still in flight.  The third is the one
+easily omitted, and omitting it is a regression: clearing a pending
+marker is the only thing that can rescue an in-flight request before its
+own timeout would."
+  (delete-dups (append (mapcar #'car herdr-dispatch--worktrees-unanswered)
+                       (copy-sequence herdr-dispatch--worktrees-pending))))
+
+(defun herdr-dispatch--worktrees-stale-p (kind)
+  "Return non-nil when an event of KIND leaves the worktree cache stale."
+  (and (member kind '("worktree_created" "worktree_opened"
+                      "worktree_removed" "workspace_closed"))
+       t))
 
 (defun herdr-dispatch--forget-worktrees ()
   "Drop everything known about worktrees, replies still in flight included.
@@ -650,9 +712,9 @@ describes: the reply would land after the refetch had claimed a new
 marker, clear a marker it no longer owns, and leave the refetch
 unguarded for a third request.  Bumping the generation drops that reply
 whole instead."
-  (dolist (id (mapcar #'car herdr-dispatch--worktrees-unanswered))
+  (dolist (key (herdr-dispatch--worktrees-unanswered))
     (setq herdr-dispatch--worktrees
-          (assoc-delete-all id herdr-dispatch--worktrees)))
+          (assoc-delete-all key herdr-dispatch--worktrees)))
   (setq herdr-dispatch--worktrees-unanswered nil
         herdr-dispatch--worktrees-pending nil
         herdr-dispatch--worktrees-generation
@@ -682,8 +744,7 @@ that stale claim in place, on the row a user would then press RET on.
 
 The cost is one asynchronous `worktree.list\\=' per remaining workspace,
 on an event that fires when a workspace closes and at no other time."
-  (when (member kind '("worktree_created" "worktree_opened"
-                       "worktree_removed" "workspace_closed"))
+  (when (herdr-dispatch--worktrees-stale-p kind)
     (herdr-dispatch--forget-worktrees))
   (unless (get-buffer herdr-dispatch-buffer-name)
     (remove-hook 'herdr-state-change-functions #'herdr-dispatch--invalidate-worktrees)))
@@ -700,7 +761,7 @@ Searches every workspace\='s listing flattened together, because a row
 knows its path and not which listing answered for it."
   (seq-find (lambda (candidate)
               (equal path (alist-get 'path candidate)))
-            (apply #'append (mapcar #'cdr herdr-dispatch--worktrees))))
+            (apply #'append (mapcar #'cdr (herdr-dispatch--worktrees-listings)))))
 
 (defun herdr-dispatch--checked-worktree (target)
   "Return TARGET\\='s WorktreeInfo, or refuse the row.
