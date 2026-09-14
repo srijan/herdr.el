@@ -46,9 +46,10 @@
   :group 'herdr)
 
 (defcustom herdr-rpc-background-timeout 2.0
-  "Seconds a background synchronous RPC may block the editor.
-Every path that runs on a timer must bind `herdr-rpc-timeout' down to
-this.  A server too slow to answer forfeits that refresh, not the UI."
+  "Seconds a background RPC gets before it forfeits its answer.
+Asynchronous callers pass it as their deadline; the few synchronous
+ones a timer or a keystroke can reach bind `herdr-rpc-timeout\=' down to
+it.  A server too slow to answer forfeits that refresh, not the UI."
   :type 'number
   :group 'herdr)
 

@@ -198,11 +198,11 @@ reconciled set rather than the ghost."
         (unwind-protect
             (progn
               (herdr-state--settle (herdr-current-connection))
+              (should (herdr-test-wait-for (lambda () subscribed)))
               (should (equal '("w1:p1")
-                             (herdr-state-pane-ids (herdr-connection-cache (herdr-current-connection)))))
-              (let ((deadline (+ (float-time) 5)))
-                (while (and (null subscribed) (< (float-time) deadline))
-                  (accept-process-output nil 0.05)))
+                             (herdr-state-pane-ids
+                              (herdr-connection-cache
+                               (herdr-current-connection)))))
               (should (equal '("w1:p1")
                              (mapcar (lambda (s) (alist-get 'pane_id s))
                                      subscribed))))
@@ -327,10 +327,13 @@ rest of the session."
                             (< (float-time) deadline))
                   (sit-for 0.02)))
               (should-not (herdr-connection-settle-timer (herdr-current-connection)))
-              (should (member "session.snapshot" methods))
-              (should (equal "fresh" (herdr-state-live-test--label
-                                      #'herdr-state-workspaces
-                                      'workspace_id "w1"))))
+              (should (herdr-test-wait-for
+                       (lambda () (member "session.snapshot" methods))))
+              (should (herdr-test-wait-for
+                       (lambda ()
+                         (equal "fresh" (herdr-state-live-test--label
+                                         #'herdr-state-workspaces
+                                         'workspace_id "w1"))))))
           (herdr-state--close (herdr-connection-global-process (herdr-current-connection)))
           (herdr-state--close (herdr-connection-pane-process (herdr-current-connection)))
           (when (herdr-connection-settle-timer (herdr-current-connection))
@@ -347,7 +350,8 @@ are not told about is the same bug one level up."
         (unwind-protect
             (progn
               (herdr-state--settle (herdr-current-connection) t)
-              (should (member "resync" kinds)))
+              (should (herdr-test-wait-for
+                       (lambda () (member "resync" kinds)))))
           (herdr-state--close (herdr-connection-pane-process (herdr-current-connection)))))))))
 
 (ert-deftest herdr-state-settle-without-resync-does-not-snapshot ()
@@ -361,8 +365,9 @@ nothing: it reconciles, and does not ask for another snapshot."
         (unwind-protect
             (progn
               (herdr-state--settle (herdr-current-connection))
-              (should-not (member "session.snapshot" methods))
-              (should (member "pane.list" methods)))
+              (should (herdr-test-wait-for
+                       (lambda () (member "pane.list" methods))))
+              (should-not (member "session.snapshot" methods)))
           (herdr-state--close (herdr-connection-pane-process (herdr-current-connection)))))))))
 
 ;;; Reconciling the pane set against the server
@@ -647,11 +652,15 @@ wrong until something else happens to reconcile, and
         (unwind-protect
             (progn
               (herdr-state--settle (herdr-current-connection))
-              (should (member "workspace.list" methods))
-              (should (equal "renamed"
-                             (alist-get 'label
-                                        (car (herdr-state-workspaces
-                                              (herdr-connection-cache (herdr-current-connection))))))))
+              (should (herdr-test-wait-for
+                       (lambda () (member "workspace.list" methods))))
+              (should (herdr-test-wait-for
+                       (lambda ()
+                         (equal "renamed"
+                                (alist-get 'label
+                                           (car (herdr-state-workspaces
+                                                 (herdr-connection-cache
+                                                  (herdr-current-connection))))))))))
           (herdr-state--close (herdr-connection-pane-process (herdr-current-connection))))))))
 
 (ert-deftest herdr-state-settle-reconciles-panes-before-workspaces ()
@@ -673,6 +682,8 @@ settled first.  Recorded in reverse, so the list reads newest first."
         (unwind-protect
             (progn
               (herdr-state--settle (herdr-current-connection))
+              (should (herdr-test-wait-for
+                       (lambda () (member "workspace.list" methods))))
               (let ((order (nreverse methods)))
                 (should (< (seq-position order "pane.list")
                            (seq-position order "workspace.list")))))

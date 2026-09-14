@@ -475,6 +475,131 @@ backtrace, with no reconnect scheduled and recovery left to luck."
         (when (herdr-connection-reconnect-timer (herdr-current-connection))
           (cancel-timer (herdr-connection-reconnect-timer (herdr-current-connection))))))))
 
+;;; The repair costs its own connection and nothing else
+
+(ert-deftest herdr-state-repair-does-not-block-on-a-silent-server ()
+  "A server that accepts the connection and never answers is the shape
+this unit exists for: unreachable fails fast, but reachable-and-silent
+costs the full timeout.  Synchronously that is `herdr-rpc-background-timeout'
+of frozen editor per connection per tick, and with several servers they
+serialise.  The repair must return long before the timeout it arms.
+
+Fails if the pair is made synchronous again."
+  (herdr-state-test--with-quiet-session
+    (let ((path (herdr-test-socket-path))
+          (herdr-rpc-background-timeout 2.0)
+          (herdr-rpc-timeout 10.0)
+          server)
+      (unwind-protect
+          (progn
+            ;; Accepts, reads, and answers nothing.
+            (setq server (herdr-test-start-server path (lambda (_req) (cons nil t))))
+            (let ((connection (herdr-current-connection)))
+              (setf (herdr-connection-socket-path connection) path
+                    (herdr-connection-running connection) t)
+              (let ((start (float-time)))
+                (should (herdr-state-repair connection))
+                (should (< (- (float-time) start) 0.5)))
+              ;; Still in flight, so the guard is set and a second tick
+              ;; declines rather than stacking a third request.
+              (should (herdr-connection-repairing connection))
+              (should-not (herdr-state-repair connection))))
+        (when server (ignore-errors (delete-process server)))
+        (ignore-errors (delete-file path))))))
+
+(ert-deftest herdr-state-a-silent-connection-does-not-cost-a-healthy-one ()
+  "The claim this unit makes is about editor time, not about data.  Two
+connections whose repairs overlap must not serialise: the healthy one
+folds its reply while the silent one is still waiting out its deadline.
+
+Synchronously the silent one holds the whole editor first, so the
+healthy one has not even asked by the time the deadline expires."
+  (herdr-state-test--with-quiet-session
+    (let ((quiet-path (herdr-test-socket-path))
+          (herdr-rpc-background-timeout 2.0)
+          quiet-server healthy)
+      (unwind-protect
+          (herdr-test-with-server
+              (lambda (req)
+                (cons (herdr-test-ok
+                       req '((type . "pane_list")
+                             (panes . [((pane_id . "w1:p1") (cwd . "/tmp"))])))
+                      nil))
+            ;; Accepts, reads, answers nothing.
+            (setq quiet-server
+                  (herdr-test-start-server quiet-path (lambda (_req) (cons nil t))))
+            (let ((silent (herdr-test-connection)))
+              (setf (herdr-connection-socket-path silent) quiet-path
+                    (herdr-connection-running silent) t)
+              (setq healthy (herdr-test-connection))
+              (setf (herdr-connection-running healthy) t)
+              (let ((start (float-time)))
+                (should (herdr-state-repair silent))
+                (should (herdr-state-repair healthy))
+                ;; Both requests are on the wire well inside the one
+                ;; deadline the silent server will eventually hit.
+                (should (< (- (float-time) start) 0.5)))
+              (should (herdr-test-wait-for
+                       (lambda ()
+                         (herdr-state-pane-ids (herdr-state-current healthy)))))
+              ;; And the slow one is still waiting, having cost the fast
+              ;; one nothing.
+              (should (herdr-connection-repairing silent))))
+        (when quiet-server (ignore-errors (delete-process quiet-server)))
+        (ignore-errors (delete-file quiet-path))))))
+
+(ert-deftest herdr-state-a-repair-reply-from-a-stopped-session-folds-nothing ()
+  "The pair is in flight for as long as the server takes, and a stop
+cannot recall it.  A reply that lands afterwards must not repopulate the
+cache the stop emptied — and must not release the in-flight guard, which
+by then belongs to whatever started after it."
+  (herdr-state-test--with-quiet-session
+    (let ((connection (herdr-current-connection))
+          (replies nil))
+      (setf (herdr-connection-running connection) t)
+      (cl-letf (((symbol-function 'herdr-rpc-call-async)
+                 (lambda (_connection _method _params callback &optional _timeout)
+                   (push callback replies) nil)))
+        (should (herdr-state-repair connection))
+        ;; The session stops while the reply is on the wire.
+        (setf (herdr-connection-running connection) nil
+              (herdr-connection-generation connection)
+              (1+ (herdr-connection-generation connection))
+              (herdr-connection-cache connection) (herdr-state-empty))
+        (funcall (car replies)
+                 '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))) nil)
+        (should-not (herdr-state-pane-ids (herdr-state-current connection)))
+        ;; The workspace half is never asked, because the continuation
+        ;; sees a generation that moved.
+        (should (= 1 (length replies)))))))
+
+(ert-deftest herdr-state-a-repair-reply-from-a-previous-generation-is-dropped ()
+  "A reconnect bumps the generation, so a reply still in flight from
+before it describes a session that has been rebuilt underneath it.  It
+also must not clear the guard the new generation's repair is holding."
+  (herdr-state-test--with-quiet-session
+    (let ((connection (herdr-current-connection))
+          (replies nil))
+      (setf (herdr-connection-running connection) t)
+      (cl-letf (((symbol-function 'herdr-rpc-call-async)
+                 (lambda (_connection _method _params callback &optional _timeout)
+                   (push callback replies) nil)))
+        (should (herdr-state-repair connection))
+        ;; Stopped and started again: running is true once more, so the
+        ;; flag alone would let the stale reply through.
+        (setf (herdr-connection-generation connection)
+              (1+ (herdr-connection-generation connection))
+              (herdr-connection-repairing connection) nil)
+        (should (herdr-state-repair connection))
+        (should (= 2 (length replies)))
+        ;; The older reply lands second.
+        (funcall (car (last replies))
+                 '((panes . (((pane_id . "w1:ghost"))))) nil)
+        (should-not (herdr-state-pane-ids (herdr-state-current connection)))
+        ;; The new generation's pair is still in flight, so its guard
+        ;; stands.
+        (should (herdr-connection-repairing connection))))))
+
 ;;; The repair cadence belongs to the cache
 
 (defmacro herdr-state-test--with-quiet-session (&rest body)
@@ -556,10 +681,12 @@ reconcile has just made authoritative."
   (herdr-state-test--with-quiet-session
     (let ((order nil))
       (setf (herdr-connection-running (herdr-current-connection)) t)
-      (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
-                 (lambda (_connection) (push 'panes order) nil))
-                ((symbol-function 'herdr-state-reconcile-workspaces)
-                 (lambda (_connection) (push 'workspaces order) nil)))
+      (cl-letf (((symbol-function 'herdr-state--reconcile-panes-async)
+                 (lambda (_connection done)
+                   (push 'panes order) (funcall done nil)))
+                ((symbol-function 'herdr-state--reconcile-workspaces-async)
+                 (lambda (_connection done)
+                   (push 'workspaces order) (funcall done nil))))
         (herdr-state-repair (herdr-current-connection))
         (should (equal '(workspaces panes) order))))))
 
@@ -660,10 +787,13 @@ function binds the timeout to avoid."
   (herdr-state-test--with-quiet-session
     (let ((workspaces-called nil))
       (setf (herdr-connection-running (herdr-current-connection)) t)
-      (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
-                 (lambda (_connection) (herdr-state--schedule-reconnect (herdr-current-connection)) nil))
-                ((symbol-function 'herdr-state-reconcile-workspaces)
-                 (lambda (_connection) (setq workspaces-called t) nil)))
+      (cl-letf (((symbol-function 'herdr-state--reconcile-panes-async)
+                 (lambda (connection done)
+                   (herdr-state--schedule-reconnect connection)
+                   (funcall done '((code . "timeout")))))
+                ((symbol-function 'herdr-state--reconcile-workspaces-async)
+                 (lambda (_connection done)
+                   (setq workspaces-called t) (funcall done nil))))
         (should (herdr-state-repair (herdr-current-connection)))
         (should (herdr-connection-reconnect-timer (herdr-current-connection)))
         (should-not workspaces-called)))))
@@ -677,9 +807,11 @@ repairing workspaces exactly when the cache is most likely wrong."
     (let ((workspaces-called nil))
       (setf (herdr-connection-running (herdr-current-connection)) t
             (herdr-connection-reconnect-timer (herdr-current-connection)) (run-at-time 3600 nil #'ignore))
-      (cl-letf (((symbol-function 'herdr-state-reconcile-panes) (lambda (_connection) nil))
-                ((symbol-function 'herdr-state-reconcile-workspaces)
-                 (lambda (_connection) (setq workspaces-called t) nil)))
+      (cl-letf (((symbol-function 'herdr-state--reconcile-panes-async)
+                 (lambda (_connection done) (funcall done nil)))
+                ((symbol-function 'herdr-state--reconcile-workspaces-async)
+                 (lambda (_connection done)
+                   (setq workspaces-called t) (funcall done nil))))
         (should (herdr-state-repair (herdr-current-connection)))
         (should workspaces-called)))))
 
@@ -702,8 +834,10 @@ nothing downstream could close it and a failed start leaked one."
   "The return is the contract callers branch on."
   (herdr-state-test--with-quiet-session
     (setf (herdr-connection-running (herdr-current-connection)) t)
-    (cl-letf (((symbol-function 'herdr-state-reconcile-panes) #'ignore)
-              ((symbol-function 'herdr-state-reconcile-workspaces) #'ignore))
+    (cl-letf (((symbol-function 'herdr-state--reconcile-panes-async)
+               (lambda (_connection done) (funcall done nil)))
+              ((symbol-function 'herdr-state--reconcile-workspaces-async)
+               (lambda (_connection done) (funcall done nil))))
       (should (herdr-state-repair (herdr-current-connection))))))
 
 (ert-deftest herdr-state-repair-after-a-stop-does-nothing ()
@@ -711,45 +845,55 @@ nothing downstream could close it and a failed start leaked one."
 on a socket the session no longer holds."
   (herdr-state-test--with-quiet-session
     (let ((called nil))
-      (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
-                 (lambda (_connection) (setq called t) nil))
-                ((symbol-function 'herdr-state-reconcile-workspaces) #'ignore))
+      (cl-letf (((symbol-function 'herdr-state--reconcile-panes-async)
+                 (lambda (_connection done) (setq called t) (funcall done nil)))
+                ((symbol-function 'herdr-state--reconcile-workspaces-async)
+                 (lambda (_connection done) (funcall done nil))))
         (should-not (herdr-state-repair (herdr-current-connection)))
         (should-not called)))))
 
-(ert-deftest herdr-state-repair-binds-the-background-timeout ()
-  "The repair fires on its interval whether or not the server is well;
-at the full `herdr-rpc-timeout' (10s) a wedged server made it a
-near-continuous main-thread freeze — Emacs re-froze faster than it
-thawed."
+(ert-deftest herdr-state-repair-arms-the-background-timeout ()
+  "The repair fires on its interval whether or not the server is well, so
+every request it makes has to carry a deadline.  It is passed per call
+now rather than bound around a blocking one, and a request left without
+it would hold its process open with nothing to time it out."
   (herdr-state-test--with-quiet-session
-    (let ((herdr-rpc-timeout 10.0)
-          (herdr-rpc-background-timeout 2.0)
+    (let ((herdr-rpc-background-timeout 2.0)
           (seen nil))
       (setf (herdr-connection-running (herdr-current-connection)) t)
-      (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
-                 (lambda (_connection) (setq seen herdr-rpc-timeout) nil))
-                ((symbol-function 'herdr-state-reconcile-workspaces) #'ignore))
+      (cl-letf (((symbol-function 'herdr-rpc-call-async)
+                 (lambda (_connection method _params callback &optional timeout)
+                   (push (cons method timeout) seen)
+                   (funcall callback nil nil)
+                   nil)))
         (herdr-state-repair (herdr-current-connection))
-        (should (equal 2.0 seen))))))
+        (should (equal '(("workspace.list" . 2.0) ("pane.list" . 2.0))
+                       seen))))))
 
-(ert-deftest herdr-state-repair-does-not-nest-across-callers ()
-  "`herdr-rpc-call' services due timers while it waits, so a repair can
-fire inside another caller's wait and stack blocking calls.  Entered
-through the settle and re-entered through the published entry point,
-because one caller calling itself is the case that already worked."
+(ert-deftest herdr-state-repair-does-not-stack-across-ticks ()
+  "The pair is in flight for as long as the server takes, and the cadence
+does not wait for it.  A tick arriving meanwhile must decline rather
+than put a second pane.list on the wire — otherwise a server slower than
+the interval accumulates one outstanding pair per tick for as long as it
+stays slow.  Entered through the settle and re-entered through the
+published entry point, because one caller calling itself is the case
+that already worked."
   (herdr-state-test--with-quiet-session
-    (let ((calls 0))
+    (let ((calls 0) (again nil))
       (setf (herdr-connection-running (herdr-current-connection)) t)
       (cl-letf (((symbol-function 'herdr-state--open-pane-stream) #'ignore)
-                ((symbol-function 'herdr-state-reconcile-panes)
-                 (lambda (_connection)
+                ((symbol-function 'herdr-state--reconcile-panes-async)
+                 (lambda (_connection done)
                    (cl-incf calls)
-                   (herdr-state-repair (herdr-current-connection))
-                   nil))
-                ((symbol-function 'herdr-state-reconcile-workspaces) #'ignore))
+                   ;; Inside the flight, which is where the guard has to
+                   ;; hold: the reply has not landed yet.
+                   (setq again (herdr-state-repair (herdr-current-connection)))
+                   (funcall done nil)))
+                ((symbol-function 'herdr-state--reconcile-workspaces-async)
+                 (lambda (_connection done) (funcall done nil))))
         (herdr-state--settle (herdr-current-connection))
-        (should (= 1 calls))))))
+        (should (= 1 calls))
+        (should-not again)))))
 
 (ert-deftest herdr-state-repair-runs-with-no-terminal-in-existence ()
   "The invariant a green suite could otherwise hide: if the repair only
@@ -761,10 +905,12 @@ removes has merely moved."
       (cl-letf (((symbol-function 'herdr-rpc-call)
                  (lambda (&rest _) '((snapshot . ((panes . ()))))))
                 ((symbol-function 'herdr-state--open-streams) #'ignore)
-                ((symbol-function 'herdr-state-reconcile-panes)
-                 (lambda (_connection) (push 'panes reconciled) nil))
-                ((symbol-function 'herdr-state-reconcile-workspaces)
-                 (lambda (_connection) (push 'workspaces reconciled) nil)))
+                ((symbol-function 'herdr-state--reconcile-panes-async)
+                 (lambda (_connection done)
+                   (push 'panes reconciled) (funcall done nil)))
+                ((symbol-function 'herdr-state--reconcile-workspaces-async)
+                 (lambda (_connection done)
+                   (push 'workspaces reconciled) (funcall done nil))))
         (herdr-state-start (herdr-current-connection))
         (herdr-state-repair (herdr-current-connection))
         (herdr-state-stop (herdr-current-connection))

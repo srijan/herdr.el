@@ -574,10 +574,12 @@ the package, which drove the only periodic reconcile, so turning off a
 display convenience turned off the liveness watchdog and reconnection
 with it."
   (herdr-test-with-state (:running t :repairing nil)(let* ((herdr-term-track-directory nil) (reconciled nil))
-    (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
-               (lambda (_connection) (push 'panes reconciled) nil))
-              ((symbol-function 'herdr-state-reconcile-workspaces)
-               (lambda (_connection) (push 'workspaces reconciled) nil)))
+    (cl-letf (((symbol-function 'herdr-state--reconcile-panes-async)
+               (lambda (_connection done)
+                 (push 'panes reconciled) (funcall done nil)))
+              ((symbol-function 'herdr-state--reconcile-workspaces-async)
+               (lambda (_connection done)
+                 (push 'workspaces reconciled) (funcall done nil))))
       (herdr-state-repair (herdr-current-connection))
       (should (equal '(workspaces panes) reconciled))))))
 

@@ -34,6 +34,16 @@
 ;; Events missed during a disconnect cannot be replayed, so every
 ;; reconnect is followed by a full resync rather than an attempt to
 ;; resume.
+;;
+;; The cadence — the periodic repair, the post-connect settle and the
+;; hydration a reconnect does — is asynchronous throughout.  A server
+;; that is unreachable fails at once, but one that accepts the
+;; connection and never answers costs its whole deadline, and paying
+;; that on the main thread is paying it for every connection in turn.
+;; Each of those paths therefore carries its continuation and its
+;; generation: what depended on the ordering a blocking call gave for
+;; free now says so, and a reply belonging to a session that has since
+;; stopped is dropped rather than folded.
 
 ;;; Code:
 
@@ -454,7 +464,9 @@ the gap, and delaying that further buys nothing."
   "Seconds between periodic cache repairs, or nil for none.
 A repair reconciles the cached pane and workspace sets against the
 server, and its failure is the only signal that the socket stopped
-answering."
+answering.  A tick arriving while the last one is still in flight
+declines, so a server slower than this interval is polled no faster
+than it answers."
   :type '(choice number (const :tag "Never repair" nil))
   :group 'herdr)
 
@@ -490,30 +502,119 @@ removed the replay, so there is nothing left to absorb either."
   (setf (herdr-connection-cache connection) (herdr-state-reduce (herdr-state-current connection) kind data))
   (run-hook-with-args 'herdr-state-change-functions kind data))
 
-(defun herdr-state-repair (connection)
-  "Reconcile the cached pane set, then the workspace set.
-Returns non-nil when it ran.  `herdr-rpc-call\\=' services due timers while
-it waits, so a caller that finds one in flight gets nil and decides for
-itself: the timer skips its tick, `herdr-state--settle\\=' defers.  The
-guard covers the paths that arrive on a timer, not the on-demand
-reconciles in `herdr-select\\=' and `herdr-dispatch\\=', which must not skip."
-  (when (and (herdr-connection-running connection) (not (herdr-connection-repairing connection)))
-    (let ((reconnecting (herdr-connection-reconnect-timer connection))
-          (herdr-rpc-timeout (min herdr-rpc-timeout
-                                  herdr-rpc-background-timeout)))
-      ;; `unwind-protect' rather than a binding, now that the guard is a
-      ;; slot: a signal anywhere in the pair has to clear it either way.
+(defun herdr-state--reconcile-panes-async (connection done)
+  "Ask CONNECTION for the pane set and fold the reply when it lands.
+
+DONE is called exactly once, with the RPC error or nil.  Exactly once
+including the paths that never reach a reply: `herdr-rpc-connect\=' can
+signal before the request goes out, and the caller\='s in-flight guard
+would stay set for the session if that escaped.
+
+Also the liveness watchdog, as the synchronous reconcile is: a failure
+here is the one signal the socket stopped answering, so it schedules a
+reconnect.  A timeout reaches this as an ordinary error.
+
+The cached ids and the generation are captured before the request, not
+read when the reply lands: a pane that appeared in between cannot be
+pronounced stale by an answer built before it existed, and a reply from
+a session that has since stopped must not repopulate the cache the stop
+emptied."
+  (let ((known-ids (herdr-state-pane-ids (herdr-state-current connection)))
+        (generation (herdr-connection-generation connection))
+        (fail (lambda (error)
+                (when (herdr-connection-running connection)
+                  (herdr-state--schedule-reconnect connection))
+                (funcall done error))))
+    (condition-case err
+        (herdr-rpc-call-async
+         connection "pane.list" nil
+         (lambda (result error)
+           (cond
+            (error (funcall fail error))
+            ((not (equal generation
+                         (herdr-connection-generation connection)))
+             (funcall done nil))
+            (t
+             ;; Only when the reply actually carries a list.  A reply
+             ;; with no `panes' in it is an answer to a different
+             ;; question, not an empty server, and folding it would
+             ;; close every pane in the cache.
+             (when-let* ((panes (alist-get 'panes result)))
+               (herdr-state--fold-panes connection panes known-ids))
+             (funcall done nil))))
+         herdr-rpc-background-timeout)
+      ;; Plain `error' as well as `herdr-error': the peer can close
+      ;; between connect and send, which `process-send-string' reports
+      ;; as a plain one.
+      (error (funcall fail `((code . "call_failed")
+                             (message . ,(error-message-string err))))))))
+
+(defun herdr-state--reconcile-workspaces-async (connection done)
+  "Ask CONNECTION for the workspace set and fold the reply when it lands.
+DONE is called exactly once, with the RPC error or nil.  Unlike the pane
+half this is not a watchdog: `herdr-state--reconcile-panes-async\=' has
+already spoken for the socket by the time this runs."
+  (let ((generation (herdr-connection-generation connection)))
+    (condition-case err
+        (herdr-rpc-call-async
+         connection "workspace.list" nil
+         (lambda (result error)
+           (when (and (null error)
+                      (equal generation
+                             (herdr-connection-generation connection)))
+             ;; See `herdr-state--reconcile-panes-async\=': a reply with
+             ;; no `workspaces' in it must not read as an empty server.
+             (when-let* ((workspaces (alist-get 'workspaces result)))
+               (herdr-state--fold-workspaces connection workspaces)))
+           (funcall done error))
+         herdr-rpc-background-timeout)
+      (error (funcall done `((code . "call_failed")
+                             (message . ,(error-message-string err))))))))
+
+(defun herdr-state-repair (connection &optional done)
+  "Reconcile CONNECTION\='s cached pane set, then its workspace set.
+
+Asynchronous, which is the whole point of it.  A server that is
+unreachable fails immediately, but one that accepts the connection and
+never answers costs the full timeout — and synchronously that is the
+editor, for every connection in turn, every tick of the cadence.  The
+requests go out and the replies fold in whenever they land; a server
+too slow forfeits that round of freshness and nothing else.
+
+Returns non-nil when it started.  DONE, when given, runs after the pair
+has finished and is not run at all when the repair declines to start or
+when the session moved on underneath it: a caller with work that
+depends on the reconciled pane set — `herdr-state--settle\=' is the one —
+must not do it against a set nothing settled.
+
+The in-flight guard is a slot rather than a binding, so every path out
+has to clear it, the ones that never reach a reply included.  Only the
+generation it was set under clears it: a reply belonging to a stopped
+session must not release the guard a restarted one is holding."
+  (when (and (herdr-connection-running connection)
+             (not (herdr-connection-repairing connection)))
+    (let* ((reconnecting (herdr-connection-reconnect-timer connection))
+           (generation (herdr-connection-generation connection))
+           (current-p (lambda ()
+                        (equal generation
+                               (herdr-connection-generation connection))))
+           (finish (lambda ()
+                     (when (funcall current-p)
+                       (setf (herdr-connection-repairing connection) nil)
+                       (when done (funcall done))))))
       (setf (herdr-connection-repairing connection) t)
-      (unwind-protect
-          (progn
-            (herdr-state-reconcile-panes connection)
-            ;; A `pane.list\=' that just failed has scheduled a reconnect,
-            ;; so `workspace.list\=' would spend a second background
-            ;; timeout on the same wedged socket for an answer that is not
-            ;; coming either.
-            (unless (and (null reconnecting) (herdr-connection-reconnect-timer connection))
-              (herdr-state-reconcile-workspaces connection)))
-        (setf (herdr-connection-repairing connection) nil))
+      (herdr-state--reconcile-panes-async
+       connection
+       (lambda (_error)
+         ;; A `pane.list\=' that just failed has scheduled a reconnect, so
+         ;; `workspace.list\=' would spend a second timeout on the same
+         ;; wedged socket for an answer that is not coming either.
+         (if (or (not (funcall current-p))
+                 (and (null reconnecting)
+                      (herdr-connection-reconnect-timer connection)))
+             (funcall finish)
+           (herdr-state--reconcile-workspaces-async
+            connection (lambda (_error) (funcall finish))))))
       t)))
 
 (defun herdr-state--arm-repair-timer (connection)
@@ -547,7 +648,12 @@ noticing."
         (herdr-connection-resubscribe-timer connection) nil
         (herdr-connection-settle-timer connection) nil
         (herdr-connection-repair-timer connection) nil
-        (herdr-connection-reconnect-delay connection) nil))
+        (herdr-connection-reconnect-delay connection) nil
+        ;; A repair may still be on the wire.  Its reply is dropped by
+        ;; the generation, which also stops it releasing this guard, so
+        ;; the release has to happen here or the next session declines
+        ;; every repair until something else clears it.
+        (herdr-connection-repairing connection) nil))
 
 (defun herdr-state--schedule-settle (connection &optional resync)
   "Arrange the one post-connect settle, replacing any pending one.
@@ -584,7 +690,9 @@ the snapshot is what restores focus with it.  `herdr-state-start\\='
 needs no RESYNC because it has just snapshotted.
 
 Realigning connection B afterwards, not before: reconciling is what
-makes the pane set final, and B subscribes the agent slice of it."
+makes the pane set final, and B subscribes the agent slice of it.  That
+ordering came free while the calls were synchronous; now it is a
+continuation, which is the whole reason the repair takes one."
   (setf (herdr-connection-settle-timer connection) nil)
   (when (herdr-connection-running connection)
     (if (herdr-connection-repairing connection)
@@ -598,29 +706,61 @@ makes the pane set final, and B subscribes the agent slice of it."
       (when (herdr-connection-resubscribe-timer connection)
         (cancel-timer (herdr-connection-resubscribe-timer connection))
         (setf (herdr-connection-resubscribe-timer connection) nil))
-      ;; The settle runs on a timer, so its synchronous calls are bound to
-      ;; the background timeout: a wedged server costs the refresh, not
-      ;; ten seconds of frozen editor that nobody asked for.  Plain
-      ;; `error' rather than `herdr-error' below, because
-      ;; `process-send-string' inside the RPC signals a plain error when
-      ;; the peer closes between connect and send — narrower handling let
-      ;; that escape the timer as a backtrace and lose the attempt.
-      (when resync
-        (let ((herdr-rpc-timeout (min herdr-rpc-timeout
-                                      herdr-rpc-background-timeout)))
-          (condition-case nil
-              (setf (herdr-connection-cache connection)
-                    (herdr-state-from-snapshot
-                     (alist-get 'snapshot (herdr-rpc-call connection "session.snapshot"))))
-            (error nil))))
-      (herdr-state-repair connection)
+      (herdr-state--settle-hydrate
+       connection resync
+       (lambda ()
+         (unless
+             (herdr-state-repair
+              connection
+              (lambda ()
+                (condition-case nil
+                    (herdr-state--open-pane-stream connection)
+                  (error (herdr-state--schedule-reconnect connection)))
+                ;; Announce after the pane set is final, so a listener
+                ;; that redraws from the whole cache does it once and
+                ;; sees everything.
+                (when resync
+                  (run-hook-with-args
+                   'herdr-state-change-functions "resync" nil))))
+           ;; The repair declined, so nothing has settled the pane set.
+           ;; Rebuilding B against an unsettled set is the thing this
+           ;; ordering exists to prevent, so the whole settle goes round
+           ;; again rather than the tail of it running anyway.
+           (herdr-state--schedule-settle connection resync)))))))
+
+(defun herdr-state--settle-hydrate (connection resync done)
+  "Replace CONNECTION\='s cache from a fresh snapshot, then call DONE.
+
+Does nothing but call DONE when RESYNC is nil, which is the start path:
+`herdr-state-start\=' has just snapshotted.
+
+Asynchronous for the reason the repair is.  This runs on a timer after
+a disconnect, which is exactly when the server is most likely to be
+gone or silent, and a synchronous snapshot there held the editor for
+the whole background timeout on a refresh nobody asked for.
+
+A snapshot that fails is not fatal to the settle: the reconcile that
+follows repairs membership on its own, and the focus the snapshot
+carries is restored by the next one.  So DONE runs either way, and the
+generation is what stops a reply from a session that has since stopped
+being installed over a newer cache."
+  (if (not resync)
+      (funcall done)
+    (let ((generation (herdr-connection-generation connection)))
       (condition-case nil
-          (herdr-state--open-pane-stream connection)
-        (error (herdr-state--schedule-reconnect connection)))
-      ;; Announce after the pane set is final, so a listener that redraws
-      ;; from the whole cache does it once and sees everything.
-      (when resync
-        (run-hook-with-args 'herdr-state-change-functions "resync" nil)))))
+          (herdr-rpc-call-async
+           connection "session.snapshot" nil
+           (lambda (result _error)
+             (when (equal generation
+                          (herdr-connection-generation connection))
+               (when-let* ((snapshot (alist-get 'snapshot result)))
+                 (setf (herdr-connection-cache connection)
+                       (herdr-state-from-snapshot snapshot)))
+               (funcall done)))
+           herdr-rpc-background-timeout)
+        ;; Plain `error' as well as `herdr-error': the peer can close
+        ;; between connect and send.
+        (error (funcall done))))))
 
 (defun herdr-state--handle-line (connection line)
   "Handle one NDJSON LINE from an event connection."
@@ -878,47 +1018,61 @@ cannot pronounce it stale."
                 ;; gone must not repopulate the cache `herdr-state-stop\='
                 ;; just emptied.
                 ((equal generation (herdr-connection-generation connection))))
-      (let* ((live-ids (mapcar (lambda (pane) (herdr-pane-id pane)) panes))
-             (cached-ids (seq-filter (lambda (id) (member id known-ids))
-                                     (herdr-state-pane-ids (herdr-state-current connection))))
-             (stale (seq-remove (lambda (id) (member id live-ids)) cached-ids))
-             (changed nil))
-        (dolist (id stale)
+      (herdr-state--fold-panes connection panes known-ids))))
+
+(defun herdr-state--fold-panes (connection panes known-ids)
+  "Fold the authoritative PANES into CONNECTION\='s cache.
+
+KNOWN-IDS is the cached pane set as it stood when the request went out.
+A pane that has appeared since cannot be pronounced stale by a reply
+built before it existed, which is why the comparison is against that
+set rather than against the cache as it is now.
+
+Returns non-nil when anything significant changed.  Shared by the
+synchronous reconcile and the asynchronous one, which differ only in
+how the list is obtained."
+  (let* ((live-ids (mapcar (lambda (pane) (herdr-pane-id pane)) panes))
+         (cached-ids (seq-filter
+                      (lambda (id) (member id known-ids))
+                      (herdr-state-pane-ids (herdr-state-current connection))))
+         (stale (seq-remove (lambda (id) (member id live-ids)) cached-ids))
+         (changed nil))
+    (dolist (id stale)
+      (setq changed t)
+      (setf (herdr-connection-cache connection)
+            (herdr-state-reduce (herdr-state-current connection) "pane_closed"
+                                `((pane_id . ,id)))))
+    (dolist (pane panes)
+      (let* ((id (herdr-pane-id pane))
+             (known (herdr-state-pane (herdr-state-current connection) id)))
+        (cond
+         ((null known)
           (setq changed t)
           (setf (herdr-connection-cache connection)
-                (herdr-state-reduce (herdr-state-current connection) "pane_closed"
-                                    `((pane_id . ,id)))))
-        (dolist (pane panes)
-          (let* ((id (herdr-pane-id pane))
-                 (known (herdr-state-pane (herdr-state-current connection) id)))
-            (cond
-             ((null known)
-              (setq changed t)
-              (setf (herdr-connection-cache connection)
-                    (herdr-state-reduce (herdr-state-current connection) "pane_created"
-                                        `((pane . ,pane)))))
-             ((herdr-pane-differs-p known pane)
-              ;; Replace the record rather than patching cwd alone: an
-              ;; agent label can change under us and a cache that only
-              ;; ever refreshed directories kept reporting the old one.
-              ;; The common case is a plain shell that someone starts
-              ;; Claude in: herdr relabels it `claude' of its own accord
-              ;; a few seconds later.
-              (setq changed t)
-              (setf (herdr-connection-cache connection)
-                    (herdr-state-reduce (herdr-state-current connection) "pane_updated"
-                                        `((pane . ,pane)))))
-             ((not (equal known pane))
-              ;; Volatile-only drift: refresh the record but stay
-              ;; silent, so titles track the server at poll cadence
-              ;; without the hook redrawing everything per poll.  See
-              ;; `herdr-pane-significant-fields'.
-              (setf (herdr-connection-cache connection)
-                    (herdr-state-reduce (herdr-state-current connection) "pane_updated"
-                                        `((pane . ,pane))))))))
-        (when changed
-          (run-hook-with-args 'herdr-state-change-functions "reconcile" nil))
-        changed))))
+                (herdr-state-reduce (herdr-state-current connection)
+                                    "pane_created" `((pane . ,pane)))))
+         ((herdr-pane-differs-p known pane)
+          ;; Replace the record rather than patching cwd alone: an
+          ;; agent label can change under us and a cache that only
+          ;; ever refreshed directories kept reporting the old one.
+          ;; The common case is a plain shell that someone starts
+          ;; Claude in: herdr relabels it `claude' of its own accord
+          ;; a few seconds later.
+          (setq changed t)
+          (setf (herdr-connection-cache connection)
+                (herdr-state-reduce (herdr-state-current connection)
+                                    "pane_updated" `((pane . ,pane)))))
+         ((not (equal known pane))
+          ;; Volatile-only drift: refresh the record but stay silent, so
+          ;; titles track the server at poll cadence without the hook
+          ;; redrawing everything per poll.  See
+          ;; `herdr-pane-significant-fields'.
+          (setf (herdr-connection-cache connection)
+                (herdr-state-reduce (herdr-state-current connection)
+                                    "pane_updated" `((pane . ,pane))))))))
+    (when changed
+      (run-hook-with-args 'herdr-state-change-functions "reconcile" nil))
+    changed))
 
 (defun herdr-state-reconcile-workspaces (connection)
   "Make the cached workspace set match the server.
@@ -942,29 +1096,39 @@ and updates in a single pass.  Returns non-nil when anything changed."
                                        (herdr-rpc-call connection "workspace.list"))))
               ;; See `herdr-state-reconcile-panes\=': same stop-mid-wait.
               ((equal generation (herdr-connection-generation connection))))
-    (let* ((live-ids (mapcar #'herdr-workspace-id workspaces))
-           (stale (seq-remove (lambda (w) (member (herdr-workspace-id w)
-                                                  live-ids))
-                              (herdr-state-workspaces (herdr-state-current connection))))
-           (changed nil))
-      (dolist (workspace stale)
-        (setq changed t)
-        (setf (herdr-connection-cache connection)
-              (herdr-state-reduce (herdr-state-current connection) "workspace_closed"
-                                  `((workspace_id
-                                     . ,(herdr-workspace-id workspace))))))
-      (dolist (workspace workspaces)
-        (let* ((id (herdr-workspace-id workspace))
-               (known (seq-find (lambda (w) (equal id (herdr-workspace-id w)))
-                                (herdr-state-workspaces (herdr-state-current connection)))))
-          (unless (equal known workspace)
-            (setq changed t)
-            (setf (herdr-connection-cache connection)
-                  (herdr-state-reduce (herdr-state-current connection) "workspace_updated"
-                                      `((workspace . ,workspace)))))))
-      (when changed
-        (run-hook-with-args 'herdr-state-change-functions "reconcile" nil))
-      changed)))
+    (herdr-state--fold-workspaces connection workspaces)))
+
+(defun herdr-state--fold-workspaces (connection workspaces)
+  "Fold the authoritative WORKSPACES into CONNECTION\='s cache.
+Returns non-nil when anything changed.  Shared by the synchronous
+reconcile and the asynchronous one."
+  (let* ((live-ids (mapcar #'herdr-workspace-id workspaces))
+         (stale (seq-remove
+                 (lambda (w) (member (herdr-workspace-id w) live-ids))
+                 (herdr-state-workspaces (herdr-state-current connection))))
+         (changed nil))
+    (dolist (workspace stale)
+      (setq changed t)
+      (setf (herdr-connection-cache connection)
+            (herdr-state-reduce (herdr-state-current connection)
+                                "workspace_closed"
+                                `((workspace_id
+                                   . ,(herdr-workspace-id workspace))))))
+    (dolist (workspace workspaces)
+      (let* ((id (herdr-workspace-id workspace))
+             (known (seq-find
+                     (lambda (w) (equal id (herdr-workspace-id w)))
+                     (herdr-state-workspaces
+                      (herdr-state-current connection)))))
+        (unless (equal known workspace)
+          (setq changed t)
+          (setf (herdr-connection-cache connection)
+                (herdr-state-reduce (herdr-state-current connection)
+                                    "workspace_updated"
+                                    `((workspace . ,workspace)))))))
+    (when changed
+      (run-hook-with-args 'herdr-state-change-functions "reconcile" nil))
+    changed))
 
 (defun herdr-state-refresh (connection)
   "Replace the cache from a fresh snapshot, leaving subscriptions alone.

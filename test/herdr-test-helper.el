@@ -75,6 +75,21 @@ connection it is handed and not from the variable."
        (ignore-errors (delete-process server))
        (ignore-errors (delete-file path)))))
 
+(defun herdr-test-wait-for (predicate &optional seconds)
+  "Pump the event loop until PREDICATE answers non-nil, or SECONDS elapse.
+Returns what PREDICATE answered, so a caller can `should' it directly.
+
+The repair and the settle are asynchronous: their requests go out and
+their replies arrive through process filters.  A test that asserts on
+the line after starting one is asserting that nothing has happened yet,
+which is true and useless."
+  (let ((deadline (+ (float-time) (or seconds 5)))
+        (value nil))
+    (while (and (not (setq value (funcall predicate)))
+                (< (float-time) deadline))
+      (accept-process-output nil 0.02))
+    value))
+
 (defun herdr-test-ok (request result)
   "Build a success line for REQUEST carrying RESULT."
   (concat (json-serialize `((id . ,(alist-get 'id request))
