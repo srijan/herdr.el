@@ -22,6 +22,7 @@
 (require 'subr-x)
 (require 'ansi-color)
 (require 'herdr-rpc)
+(require 'herdr-connection)
 (require 'herdr-state)
 (require 'herdr-select)
 (require 'herdr-term)

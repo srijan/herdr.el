@@ -17,6 +17,7 @@
 
 (require 'subr-x)
 (require 'herdr-rpc)
+(require 'herdr-connection)
 (require 'herdr-schema)
 (require 'herdr-state)
 (require 'herdr-select)

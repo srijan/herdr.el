@@ -27,8 +27,7 @@
 (defmacro herdr-call-test-with-schema (&rest body)
   "Run BODY with the captured protocol-22 schema loaded and no live state."
   (declare (indent 0) (debug t))
-  `(let ((herdr-connection--sole
-          (herdr-test-connection (herdr-state-from-snapshot nil)))
+  `(let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot nil))))
          (current-prefix-arg nil))
      (herdr-schema-load-file (herdr-current-connection)
                              herdr-call-test--fixture)

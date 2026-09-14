@@ -27,6 +27,7 @@
 (require 'herdr-tree)
 (require 'herdr-state)
 (require 'herdr-rpc)
+(require 'herdr-connection)
 (require 'herdr-cmd)
 (require 'herdr-workspace)
 

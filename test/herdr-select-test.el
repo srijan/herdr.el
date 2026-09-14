@@ -25,7 +25,7 @@
 
 (defmacro herdr-select-test-with-state (panes &rest body)
   (declare (indent 1) (debug t))
-  `(let ((herdr-connection--sole (herdr-test-connection (herdr-state-from-snapshot `((panes . ,,panes))))))
+  `(let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot `((panes . ,,panes)))))))
      ,@body))
 
 ;;; Annotations
@@ -218,7 +218,7 @@ unbounded reconcile here freezes ordinary buffer switching for the full
 `herdr-rpc-timeout' — the same class of freeze `herdr-server-live-p'
 and `herdr-state-repair' already guard against by binding
 down to `herdr-rpc-background-timeout'."
-  (let ((herdr-connection--sole (herdr-test-connection (herdr-state-from-snapshot nil)))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot nil))))
         (herdr-rpc-timeout 10.0)
         (herdr-rpc-background-timeout 2.0)
         seen-timeout)
@@ -348,7 +348,7 @@ asks, and a stub that answers calls cannot make it answer nil."
 
 (ert-deftest herdr-select-place-maps-a-row-back-to-a-path-with-a-space ()
   "The reduction cannot be a split: a directory name may contain a space."
-  (let ((herdr-connection--sole (herdr-test-connection (herdr-state-from-snapshot '()))))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot '())))))
     (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
               ((symbol-function 'project-known-project-roots)
                (lambda () '("/tmp/my project/")))

@@ -38,6 +38,7 @@
 (require 'json)
 (require 'subr-x)
 (require 'herdr-rpc)
+(require 'herdr-connection)
 
 (defun herdr-schema-load-file (connection path)
   "Load and cache the schema stored at PATH as CONNECTION's.

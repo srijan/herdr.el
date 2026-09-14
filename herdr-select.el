@@ -27,6 +27,7 @@
 (require 'subr-x)
 (require 'herdr-state)
 (require 'herdr-rpc)
+(require 'herdr-connection)
 (require 'herdr-term)
 (require 'herdr-pane)
 (require 'herdr-workspace)

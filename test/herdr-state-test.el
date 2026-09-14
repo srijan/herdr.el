@@ -1120,7 +1120,7 @@ nothing to reconnect, and a failed poll stays a failed poll."
                            (herdr-state-pane-ids (herdr-connection-cache (herdr-current-connection))))))
         (when (herdr-connection-reconnect-timer (herdr-current-connection))
           (cancel-timer (herdr-connection-reconnect-timer (herdr-current-connection))))))
-    (herdr-test-with-state (:running nil :reconnect-timer nil :reconnect-delay nil)(let* ((herdr-connection--sole (herdr-test-connection (herdr-state-empty))))
+    (herdr-test-with-state (:running nil :reconnect-timer nil :reconnect-delay nil)(let* ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty)))))
       (should-not (herdr-state-reconcile-panes (herdr-current-connection)))
       (should-not (herdr-connection-reconnect-timer (herdr-current-connection)))))))
 

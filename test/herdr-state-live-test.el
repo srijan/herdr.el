@@ -21,7 +21,7 @@
   "Run BODY capturing dispatched events into the list `events'."
   (declare (indent 0) (debug t))
   `(let* ((events nil)
-          (herdr-connection--sole (herdr-test-connection (herdr-state-empty)))
+          (herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty))))
           (herdr-state-change-functions
            (list (lambda (kind data) (push (cons kind data) events))))
           (proc (herdr-state-live-test--proc)))
@@ -108,7 +108,7 @@ therefore have a buffer without ever appearing on this connection."
 (ert-deftest herdr-state-start-signals-when-no-server ()
   "Starting without a server must fail cleanly and leave nothing running."
   (let* ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
-         (herdr-connection--sole (herdr-connection-local)))
+         (herdr-connections (herdr-test-connections (herdr-connection-local))))
     (herdr-state-stop (herdr-current-connection))
     (should-error (herdr-state-start (herdr-current-connection)) :type 'herdr-error)
     (should-not (herdr-state-running-p (herdr-current-connection)))))
@@ -146,7 +146,7 @@ swallowed 533 events.  0.9.0 removed the replay, so there is nothing
 to absorb either.  Anything that reintroduces a suppression window
 fails here."
   (let* ((events nil)
-         (herdr-connection--sole (herdr-test-connection (herdr-state-empty)))
+         (herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty))))
          (herdr-state-change-functions
           (list (lambda (kind data) (push (cons kind data) events))))
          (proc (herdr-state-live-test--proc)))

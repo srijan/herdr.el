@@ -68,7 +68,7 @@ spinning on a socket whose answer had already arrived."
 
 (ert-deftest herdr-rpc-call-without-server-signals-no-server ()
   (let* ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
-         (herdr-connection--sole (herdr-connection-local)))
+         (herdr-connections (herdr-test-connections (herdr-connection-local))))
     (let ((err (should-error (herdr-rpc-call (herdr-current-connection) "ping") :type 'herdr-error)))
       (should (equal (herdr-error-code err) "no_server")))))
 
@@ -418,11 +418,11 @@ is the cheapest proof that nothing behind the struct is still global."
   "Interactive commands arrive with no connection in hand, and a timer
 callback runs in an empty dynamic extent.  Both reach a server only
 because the resolver answers without one."
-  (let ((herdr-connection--sole nil))
+  (let ((herdr-connections nil))
     (should (herdr-connection-p (herdr-current-connection)))
     ;; The same connection each time, not a fresh one per call.
     (should (eq (herdr-current-connection) (herdr-current-connection))))
-  (let ((herdr-connection--sole nil)
+  (let ((herdr-connections nil)
         (fired nil))
     (let ((timer (run-at-time 0 nil (lambda ()
                                       (setq fired (herdr-current-connection))))))

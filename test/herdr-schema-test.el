@@ -14,7 +14,7 @@
 (defmacro herdr-schema-test-with-fixture (&rest body)
   "Run BODY with the captured protocol-22 schema loaded."
   (declare (indent 0) (debug t))
-  `(let ((herdr-connection--sole (herdr-test-connection)))
+  `(let ((herdr-connections (herdr-test-connections (herdr-test-connection))))
      (herdr-schema-load-file (herdr-current-connection)
                              herdr-schema-test--fixture)
      ,@body))
@@ -162,10 +162,10 @@ is what makes `herdr-call' with a prefix argument unusable."
   "A cache kept across a herdr upgrade means the drift test checks the
 old schema and reports no drift, which is the one thing it exists to
 find."
-  (let ((herdr-connection--sole (herdr-test-connection))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         fetched)
-    (setf (herdr-connection-schema herdr-connection--sole) '((schemas . nil))
-          (herdr-connection-schema-version herdr-connection--sole) "0.8.0")
+    (setf (herdr-connection-schema (herdr-current-connection)) '((schemas . nil))
+          (herdr-connection-schema-version (herdr-current-connection)) "0.8.0")
     (cl-letf (((symbol-function 'herdr-schema--server-version)
                (lambda (_connection) "0.9.0"))
               ;; A parsed schema, not a sentinel: `herdr-schema' reads
@@ -180,9 +180,9 @@ find."
       (herdr-schema (herdr-current-connection))
       (should fetched)
       (should (equal "0.9.0"
-                     (herdr-connection-schema-version herdr-connection--sole)))
+                     (herdr-connection-schema-version (herdr-current-connection))))
       (should (equal 22 (herdr-connection-schema-protocol
-                         herdr-connection--sole))))))
+                         (herdr-current-connection)))))))
 
 (ert-deftest herdr-schema-keeps-a-cache-the-server-still-matches ()
   "Shelling out to herdr on every schema question is the cost this cache
@@ -192,10 +192,10 @@ The version the server reports is a fresh string off the wire every
 time, never the one already held, so the comparison has to be `equal'.
 The stub copies its answer for that reason: handed the same object, an
 `eq' would pass here and fail against a real server."
-  (let ((herdr-connection--sole (herdr-test-connection))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         fetched)
-    (setf (herdr-connection-schema herdr-connection--sole) '((schemas . nil))
-          (herdr-connection-schema-version herdr-connection--sole) "0.9.0")
+    (setf (herdr-connection-schema (herdr-current-connection)) '((schemas . nil))
+          (herdr-connection-schema-version (herdr-current-connection)) "0.9.0")
     (cl-letf (((symbol-function 'herdr-schema--server-version)
                (lambda (_connection) (copy-sequence "0.9.0")))
               ((symbol-function 'herdr-schema--fetch)
@@ -238,7 +238,7 @@ the version it compared against lived only in a `defvar' that started
 each session nil.  A scratch `user-emacs-directory' left empty by the
 fetch catches a reintroduction at that path; the `boundp' catches one
 at any other."
-  (let ((herdr-connection--sole (herdr-test-connection))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         (user-emacs-directory
          (file-name-as-directory (make-temp-file "herdr-schema-test" t)))
         ;; A real stub executable rather than a `call-process' stub: the
@@ -254,7 +254,7 @@ at any other."
           (let ((herdr-executable stub))
             (herdr-schema--fetch (herdr-current-connection)))
           (should (equal 17 (alist-get 'protocol (herdr-connection-schema
-                                                 herdr-connection--sole))))
+                                                 (herdr-current-connection)))))
           (should-not (directory-files user-emacs-directory nil "\\`[^.]"))
           (should-not (boundp 'herdr-schema-cache-file))
           (let ((failing (herdr-schema-test--stub-executable "exit 3\n")))
@@ -281,7 +281,7 @@ then checks the curated commands against an API nobody is talking to.
 So the protocol the schema declares is recorded, and disagreeing with
 the server is something the package can be asked about rather than
 something it hides."
-  (let* ((herdr-connection--sole (herdr-test-connection))
+  (let* ((herdr-connections (herdr-test-connections (herdr-test-connection)))
          (stub (herdr-schema-test--stub-executable
                 "printf '{\"protocol\": 22, \"schemas\": {}}'\n")))
     (unwind-protect
@@ -299,7 +299,7 @@ something it hides."
 
 (ert-deftest herdr-schema-agrees-when-binary-and-server-match ()
   "The ordinary case must not report a mismatch."
-  (let* ((herdr-connection--sole (herdr-test-connection))
+  (let* ((herdr-connections (herdr-test-connections (herdr-test-connection)))
          (stub (herdr-schema-test--stub-executable
                 "printf '{\"protocol\": 22, \"schemas\": {}}'\n")))
     (unwind-protect
@@ -319,7 +319,7 @@ something it hides."
 `herdr-call' works with no server running, reading the binary's schema
 to build a request.  Reporting that as a mismatch would put a warning
 in front of every one of those."
-  (let* ((herdr-connection--sole (herdr-test-connection))
+  (let* ((herdr-connections (herdr-test-connections (herdr-test-connection)))
          (herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
          (stub (herdr-schema-test--stub-executable
                 "printf '{\"protocol\": 22, \"schemas\": {}}'\n")))
@@ -345,7 +345,7 @@ process died — reachable from the raw-method escape hatch right after
 `herdr update', which is exactly when the binary may be mid-restart.
 The bounded fetch gives up at `herdr-rpc-timeout', kills the process,
 and signals the same code the exit-status path uses."
-  (let ((herdr-connection--sole (herdr-test-connection))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         (herdr-rpc-timeout 0.3)
         (stub (herdr-schema-test--stub-executable "sleep 30\n")))
     (unwind-protect
@@ -357,7 +357,7 @@ and signals the same code the exit-status path uses."
             (should (equal "schema_unavailable" (herdr-error-code err))))
           ;; Generous bound: the point is seconds, not thirty.
           (should (< (- (float-time) start) 5))
-          (should-not (herdr-connection-schema herdr-connection--sole)))
+          (should-not (herdr-connection-schema (herdr-current-connection))))
       (delete-file stub))))
 
 (ert-deftest herdr-schema-two-connections-do-not-share-a-schema ()

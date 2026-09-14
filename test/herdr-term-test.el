@@ -607,7 +607,7 @@ to clean up rather than one to protect."
   (let* ((mine (generate-new-buffer " *pane*"))
          (theirs (generate-new-buffer " *other*"))
          (herdr-term--buffers (list (cons "w1:p1" mine)))
-         (herdr-connection--sole (herdr-test-connection (herdr-state-from-snapshot nil))))
+         (herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot nil)))))
     (unwind-protect
         (progn
           (should (herdr-term-buffer-p mine))

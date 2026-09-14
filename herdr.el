@@ -27,6 +27,7 @@
 ;;; Code:
 
 (require 'herdr-rpc)
+(require 'herdr-connection)
 (require 'herdr-state)
 (require 'herdr-term)
 (require 'herdr-cmd)

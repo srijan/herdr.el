@@ -40,7 +40,7 @@ is what reports it."
   (declare (indent 0) (debug t))
   `(progn
      (skip-unless (herdr-drift-test--server-p))
-     (let ((herdr-connection--sole (herdr-test-connection)))
+     (let ((herdr-connections (herdr-test-connections (herdr-test-connection))))
        (herdr-schema (herdr-current-connection))
        (skip-unless (herdr-schema-matches-server-p (herdr-current-connection)))
        ,@body)))

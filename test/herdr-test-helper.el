@@ -17,10 +17,16 @@
 ;; setter function that was never defined.
 (require 'herdr-rpc)
 (require 'herdr-state)
+(require 'herdr-connection)
 
 ;; macOS caps unix socket paths near 104 bytes and the standard temp
 ;; directory is already long, so build paths under /tmp directly.
 (defvar herdr-test--socket-counter 0)
+
+(defvar herdr-test--connection-counter 0
+  "Counter behind the names `herdr-test-connection\=' hands out.
+Distinct names, because the registry is keyed by name and two test
+connections sharing one would replace each other.")
 
 (defun herdr-test-socket-path ()
   "Return a fresh, unused unix socket path."
@@ -109,17 +115,23 @@ SEEDS is a plist of connection slots, so a test that used to bind
 state lives in the connection now, and a global is exactly what this
 removes."
   (declare (indent 1) (debug t))
-  `(let ((herdr-connection--sole (herdr-test-connection)))
+  `(let ((herdr-connections (herdr-test-connections (herdr-test-connection))))
      ,@(let ((rest seeds) forms)
          (while rest
            (let ((slot (pop rest)) (value (pop rest)))
              (push `(setf (,(intern (format "herdr-connection-%s"
                                             (substring (symbol-name slot) 1)))
-                           herdr-connection--sole)
+                           (herdr-current-connection))
                           ,value)
                    forms)))
          (nreverse forms))
      ,@body))
+
+(defun herdr-test-connections (connection)
+  "Return a registry holding CONNECTION alone.
+What a test binds `herdr-connections\=' to when it wants one connection
+and wants every resolution to reach it."
+  (list (cons (herdr-connection-name connection) connection)))
 
 (defun herdr-test-connection (&optional cache)
   "Return a fresh connection whose session cache is CACHE.
@@ -130,7 +142,9 @@ global.
 Inherits the socket of whatever connection is already current, so
 seeding inside `herdr-test-with-server' still talks to the fake server
 rather than silently reaching for the real one."
-  (let ((connection (herdr-connection-local)))
+  (let ((connection (herdr-connection-local))
+        (name (format "test-%d" (cl-incf herdr-test--connection-counter))))
+    (setf (herdr-connection-name connection) name)
     (setf (herdr-connection-socket-path connection)
           (herdr-connection-socket-path (herdr-current-connection)))
     (setf (herdr-connection-cache connection) (or cache (herdr-state-empty)))

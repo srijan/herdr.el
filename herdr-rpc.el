@@ -109,26 +109,6 @@ than the local one.  Nil for a local server, meaning leave
   (when-let* ((target (herdr-connection-ssh-target connection)))
     (format "/ssh:%s:" target)))
 
-(defvar herdr-connection--sole nil
-  "The one connection this package follows.
-A registry replaces this when there can be more than one.")
-
-(defun herdr-current-connection ()
-  "Return the connection an action started now belongs to.
-
-A function rather than a variable, because the transport must never
-read an ambient default: a caller that wants a connection asks for one
-here and hands it over.  Interactive commands arrive from
-\[execute-extended-command] and from keybindings with no connection in
-hand, so they resolve here at the point of action.
-
-Anything deferred must not.  A retry, a repair tick, a resubscribe, a
-reconnect or an async reply captures its connection when it is scheduled
-and carries it to the moment it fires; resolving late is how work
-scheduled against one server lands on another."
-  (or herdr-connection--sole
-      (setq herdr-connection--sole (herdr-connection-local))))
-
 (defun herdr-error-code (err)
   "Return the herdr error code carried by ERR, as a string."
   (nth 1 err))

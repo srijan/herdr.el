@@ -47,7 +47,7 @@ wrong workspace and creating one in the wrong directory are the two ways
 this goes wrong while still sending the right method."
   (dolist (case '(("/tmp/project/" "workspace.focus" workspace_id "w1")
                   ("/tmp/nowhere/" "workspace.create" cwd "/tmp/nowhere/")))
-    (let ((herdr-connection--sole (herdr-test-connection (herdr-project-test--state)))
+    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-project-test--state))))
           (default-directory (nth 0 case))
           wire params)
       (cl-letf (((symbol-function 'herdr-start) #'ignore)
@@ -68,7 +68,7 @@ this goes wrong while still sending the right method."
       (should (equal (list (nth 1 case)) wire))
       (should (equal (nth 3 case) (alist-get (nth 2 case) params)))))
   ;; A created workspace is named for the directory it is rooted in.
-  (let ((herdr-connection--sole (herdr-test-connection (herdr-project-test--state)))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-project-test--state))))
         (default-directory "/tmp/nowhere/")
         params)
     (cl-letf (((symbol-function 'herdr-start) #'ignore)
@@ -90,7 +90,7 @@ this goes wrong while still sending the right method."
 (ert-deftest herdr-project-prefers-the-project-root-over-the-default-directory ()
   "A command run from a file deep in a tree should reach the tree's
 workspace, not make one for the subdirectory it happened to be in."
-  (let ((herdr-connection--sole (herdr-test-connection (herdr-project-test--state)))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-project-test--state))))
         (default-directory "/tmp/project/src/deep/")
         wire params)
     (cl-letf (((symbol-function 'herdr-start) #'ignore)
@@ -196,7 +196,7 @@ because herdr bumped a minor is worse than one command misbehaving — and
 it warns once.  This runs at the front of `herdr-start', which runs at
 the front of every entry point, so warning per call is warning per
 command."
-  (let ((herdr-connection--sole (herdr-test-connection))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         said)
     (cl-letf (((symbol-function 'message)
                (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
@@ -215,7 +215,7 @@ command."
 
 (ert-deftest herdr-check-protocol-is-silent-when-the-versions-agree ()
   "The common case has to cost nothing and say nothing."
-  (let ((herdr-connection--sole (herdr-test-connection))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         said)
     (cl-letf (((symbol-function 'message) (lambda (&rest _) (push t said))))
       (herdr-test-with-server
@@ -224,13 +224,13 @@ command."
                   nil))
         (herdr--check-protocol (herdr-current-connection))))
     (should-not said)
-    (should-not (herdr-connection-protocol-warned herdr-connection--sole))))
+    (should-not (herdr-connection-protocol-warned (herdr-current-connection)))))
 
 (ert-deftest herdr-check-protocol-warns-once-per-connection ()
   "One flag for the package meant the first server to disagree silenced
 the check for every server after it — including the one just added,
 which is the one whose protocol is least likely to be known."
-  (let ((herdr-connection--sole (herdr-test-connection))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         said)
     (cl-letf (((symbol-function 'message)
                (lambda (fmt &rest args) (push (apply #'format fmt args) said))))

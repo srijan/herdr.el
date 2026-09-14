@@ -27,6 +27,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'herdr-rpc)
+(require 'herdr-connection)
 (require 'herdr-state)
 (require 'herdr-pane)
 

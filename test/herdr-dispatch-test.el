@@ -380,8 +380,7 @@ history.  A test that means to exercise known projects wraps its own body
 in a nested `cl-letf\\=' on the same symbol; the inner binding wins for its
 extent and this one still restores it afterwards."
   (declare (indent 1) (debug t))
-  `(let ((herdr-connection--sole
-          (herdr-test-connection (herdr-state-from-snapshot ,snapshot)))
+  `(let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot ,snapshot))))
          (herdr-dispatch--refresh-timer nil)
          (buffer (get-buffer-create herdr-dispatch-buffer-name)))
      (unwind-protect
@@ -411,15 +410,14 @@ session gets the same thing either way."
           (:unanswered (setq unanswered value))
           (:generation (setq generation value))
           (_ (error "Unknown worktree seed argument %S" key)))))
-    `(let ((herdr-connection--sole
-            (herdr-test-connection
-             (herdr-connection-cache (herdr-current-connection)))))
-       (setf (herdr-connection-worktrees herdr-connection--sole) ,listings
-             (herdr-connection-worktrees-pending herdr-connection--sole)
+    `(let ((herdr-connections (herdr-test-connections (herdr-test-connection
+             (herdr-connection-cache (herdr-current-connection))))))
+       (setf (herdr-connection-worktrees (herdr-current-connection)) ,listings
+             (herdr-connection-worktrees-pending (herdr-current-connection))
              ,pending
-             (herdr-connection-worktrees-unanswered herdr-connection--sole)
+             (herdr-connection-worktrees-unanswered (herdr-current-connection))
              ,unanswered
-             (herdr-connection-worktrees-generation herdr-connection--sole)
+             (herdr-connection-worktrees-generation (herdr-current-connection))
              ,generation)
        ,@body)))
 
@@ -2153,7 +2151,7 @@ round trip each one would otherwise cost -- sees only live roots."
 
 (ert-deftest herdr-dispatch-visit-creates-a-workspace-for-a-known-project ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (let ((herdr-connection--sole (herdr-test-connection (herdr-state-empty))))
+    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty)))))
       (search-forward "other-project (0)")
       ;; `focus' rides on the create: without it the workspace is made
       ;; but not focused, and going to "wherever the server is now"
@@ -2215,7 +2213,7 @@ tests that type before `herdr-known-project\\=', so it used to reach
 not being a linked worktree.  The guard is right; the row had no
 business arriving at it."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
-    (let ((herdr-connection--sole (herdr-test-connection (herdr-state-empty))))
+    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty)))))
      (herdr-dispatch-test--with-worktrees herdr-dispatch-test--main-checkout-worktrees
       (search-forward "main")
       (should (equal '((herdr-rpc-call "workspace.create"
@@ -2251,7 +2249,7 @@ poll behind, and a second workspace for one directory is the bug
 A row whose record cannot be found says so; it does not get treated as a
 checkout and opened."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
-    (let ((herdr-connection--sole (herdr-test-connection (herdr-state-empty))))
+    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty)))))
      (herdr-dispatch-test--with-worktrees nil
       (search-forward "main")
       (should (equal nil
@@ -2847,7 +2845,7 @@ server has focused, so `n\\=' here used to open a terminal in some other
 repository.  Nothing is open at this directory, so its root pane is what
 gets followed."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (let ((herdr-connection--sole (herdr-test-connection (herdr-state-empty)))
+    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty))))
           (calls nil)
           (followed nil))
       (search-forward "other-project (0)")
