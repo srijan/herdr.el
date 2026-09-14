@@ -48,7 +48,7 @@ schema by the drift test.")
 (defun herdr-cmd--current-pane-id ()
   "Return the id of the pane herdr currently considers focused."
   (ignore-errors
-    (alist-get 'pane_id (alist-get 'pane (herdr-rpc-call "pane.current")))))
+    (alist-get 'pane_id (alist-get 'pane (herdr-rpc-call (herdr-current-connection) "pane.current")))))
 
 (defun herdr-cmd--pane-description (pane-id)
   "Return a readable description of PANE-ID, retaining its exact id.
@@ -125,7 +125,7 @@ result greppable."
          (description (herdr-cmd--pane-description pane)))
     (if (y-or-n-p (format "Close pane %s? " description))
         (progn
-          (herdr-rpc-call "pane.close" `((pane_id . ,pane)))
+          (herdr-rpc-call (herdr-current-connection) "pane.close" `((pane_id . ,pane)))
           ;; Say something afterwards.  Closing reaps the pane's buffer,
           ;; so redisplay happens while the confirmation prompt is still
           ;; on screen and it otherwise sits there looking unanswered.
@@ -135,7 +135,7 @@ result greppable."
 (defun herdr-pane-rename (label &optional pane-id)
   "Rename PANE-ID, or the focused pane, to LABEL."
   (interactive (list (read-string "Pane label: ")))
-  (herdr-rpc-call "pane.rename"
+  (herdr-rpc-call (herdr-current-connection) "pane.rename"
                   `((pane_id . ,(or pane-id (herdr-select-target-pane)))
                     (label . ,label))))
 
@@ -147,7 +147,7 @@ each pane is a separate Emacs buffer and nothing repaints.  Emacs is
 moved to match."
   (interactive)
   (let ((pane (or pane-id (herdr-select-pane "Focus pane: "))))
-    (herdr-rpc-call "pane.focus" `((pane_id . ,pane)))
+    (herdr-rpc-call (herdr-current-connection) "pane.focus" `((pane_id . ,pane)))
     (or (herdr-term-select-pane pane)
         (herdr-cmd--select-pane-when-ready pane))
     pane))
@@ -205,7 +205,7 @@ test is enough."
   (interactive)
   (let* ((pane (or pane-id (herdr-select-target-pane "Read pane: ")))
          (source (or source (herdr-cmd--read-source)))
-         (result (herdr-rpc-call "pane.read"
+         (result (herdr-rpc-call (herdr-current-connection) "pane.read"
                                  `((pane_id . ,pane)
                                    (source . ,source)
                                    (lines . ,lines)
@@ -220,7 +220,7 @@ test is enough."
   (interactive (list (read-directory-name "Workspace directory: ")))
   (herdr-cmd--follow-new-pane
    (herdr-cmd--created-pane-id
-    (herdr-rpc-call "workspace.create"
+    (herdr-rpc-call (herdr-current-connection) "workspace.create"
                     `((cwd . ,(expand-file-name cwd))
                       (label . ,(or label (file-name-nondirectory
                                            (directory-file-name cwd))))
@@ -247,7 +247,7 @@ this without a race, which a preflight cannot."
         (message "herdr: workspace %s left open" description)
       (condition-case err
           (progn
-            (herdr-rpc-call "workspace.close" `((workspace_id . ,workspace)))
+            (herdr-rpc-call (herdr-current-connection) "workspace.close" `((workspace_id . ,workspace)))
             (message "herdr: closed workspace %s" description))
         (herdr-error
          ;; Only the group refusal.  Reading every `herdr-error' as a
@@ -259,7 +259,7 @@ this without a race, which a preflight cannot."
               (format "Workspace %s has linked worktrees; close the group? "
                       description))
              (progn
-               (herdr-rpc-call "workspace.close"
+               (herdr-rpc-call (herdr-current-connection) "workspace.close"
                                `((workspace_id . ,workspace) (close_group . t)))
                (message "herdr: closed workspace group %s" description))
            (message "herdr: workspace %s left open" description)))))))
@@ -267,7 +267,7 @@ this without a race, which a preflight cannot."
 (defun herdr-workspace-focus (&optional workspace-id)
   "Focus WORKSPACE-ID, prompting when not given, and follow it in Emacs."
   (interactive)
-  (herdr-rpc-call "workspace.focus"
+  (herdr-rpc-call (herdr-current-connection) "workspace.focus"
                   `((workspace_id . ,(or workspace-id
                                          (herdr-select-workspace "Focus: ")))))
   (herdr-cmd--follow-focus))
@@ -275,7 +275,7 @@ this without a race, which a preflight cannot."
 (defun herdr-workspace-rename (label &optional workspace-id)
   "Rename WORKSPACE-ID to LABEL."
   (interactive (list (read-string "New workspace label: ")))
-  (herdr-rpc-call "workspace.rename"
+  (herdr-rpc-call (herdr-current-connection) "workspace.rename"
                   `((workspace_id . ,(or workspace-id
                                          (herdr-select-workspace "Rename: ")))
                     (label . ,label))))
@@ -288,7 +288,7 @@ This is the command that pays for the package: one step from a branch
 name to a worktree with its own herdr workspace."
   (interactive (list (read-string "New worktree branch: ")
                      (read-string "Base ref (optional): ")))
-  (herdr-rpc-call "worktree.create"
+  (herdr-rpc-call (herdr-current-connection) "worktree.create"
                   `((branch . ,branch)
                     (base . ,(unless (string-empty-p (or base "")) base))
                     (cwd . ,(expand-file-name default-directory))
@@ -302,7 +302,7 @@ name to a worktree with its own herdr workspace."
          (description (herdr-cmd--workspace-description workspace)))
     (if (yes-or-no-p (format "Remove worktree workspace %s? " description))
         (progn
-          (herdr-rpc-call "worktree.remove"
+          (herdr-rpc-call (herdr-current-connection) "worktree.remove"
                           `((workspace_id . ,workspace)
                             (force . ,(if force t :false))))
           (message "herdr: removed worktree %s" description))
@@ -313,7 +313,7 @@ name to a worktree with its own herdr workspace."
 (defun herdr-agent-prompt (text &optional target)
   "Send TEXT as a prompt to the agent in TARGET."
   (interactive (list (read-string "Prompt: ")))
-  (herdr-rpc-call "agent.prompt"
+  (herdr-rpc-call (herdr-current-connection) "agent.prompt"
                   `((target . ,(or target (herdr-select-agent "Prompt agent: ")))
                     (text . ,text))))
 
@@ -330,7 +330,7 @@ focused, and anything that then asks the server \"where am I?\" answers
 with the pane the user was on before.  The reply names the new
 workspace\\='s root pane, so callers go there directly rather than asking."
   (herdr-cmd--created-pane-id
-   (herdr-rpc-call "workspace.create"
+   (herdr-rpc-call (herdr-current-connection) "workspace.create"
                    `((cwd . ,(expand-file-name directory))
                      (label . ,(herdr-cmd--workspace-label directory))
                      (focus . t)))))
@@ -345,7 +345,7 @@ about."
   (if-let* ((existing (herdr-state-workspace-for-directory
                        (herdr-state-current) root)))
       (progn
-        (herdr-rpc-call "workspace.focus"
+        (herdr-rpc-call (herdr-current-connection) "workspace.focus"
                         `((workspace_id . ,(herdr-workspace-id existing))))
         (herdr-term-select-focused))
     (or (herdr-cmd--follow-new-pane (herdr-cmd--create-workspace-pane root))
@@ -358,7 +358,7 @@ nil inherits the workspace directory.  One tab per agent, rather than a
 split: Emacs ignores herdr's layout, but the TUI does not, and N agents
 as N full-width tabs beats N slivers of one tab."
   (herdr-cmd--created-pane-id
-   (herdr-rpc-call "tab.create"
+   (herdr-rpc-call (herdr-current-connection) "tab.create"
                    `((workspace_id . ,workspace-id)
                      (cwd . ,cwd)
                      (focus . t)))))

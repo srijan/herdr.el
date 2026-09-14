@@ -837,7 +837,7 @@ arrival is not the reply's to condemn."
          (herdr-state-from-snapshot
           '((panes . (((pane_id . "w1:p1") (agent . "claude"))))))))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (method &optional _params)
+               (lambda (_connection method &optional _params)
                  (should (equal "pane.list" method))
                  ;; The event filter runs inside the wait and folds in a
                  ;; pane the server created after building this reply.
@@ -865,7 +865,7 @@ background bound, and fold the reply in when it lands."
         (captured nil)
         (callback nil))
     (cl-letf (((symbol-function 'herdr-rpc-call-async)
-               (lambda (method params cb &optional timeout)
+               (lambda (_connection method params cb &optional timeout)
                  (setq captured (list method params timeout)
                        callback cb)
                  'proc)))
@@ -902,7 +902,7 @@ the generation captured when the request went out must not."
         (kinds nil)
         (callback nil))
     (cl-letf (((symbol-function 'herdr-rpc-call-async)
-               (lambda (_method _params cb &optional _timeout)
+               (lambda (_connection _method _params cb &optional _timeout)
                  (setq callback cb) 'proc)))
       (let ((herdr-state-change-functions
              (list (lambda (kind _data) (push kind kinds)))))

@@ -279,7 +279,8 @@ visited has no buffer and a buffer switcher cannot switch to it."
   "Switch to PANE-ID's buffer and focus the pane in herdr."
   (when-let* ((buffer (herdr-term-buffer-for-pane pane-id)))
     (herdr-term--show buffer))
-  (ignore-errors (herdr-rpc-call "pane.focus" `((pane_id . ,pane-id)))))
+  (ignore-errors (herdr-rpc-call (herdr-current-connection)
+                                 "pane.focus" `((pane_id . ,pane-id)))))
 
 (defun herdr-select--consult-source ()
   "Return a `consult-buffer' source listing herdr panes that have buffers.

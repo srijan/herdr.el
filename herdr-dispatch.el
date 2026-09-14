@@ -632,6 +632,7 @@ callers are not inside `herdr-dispatch--protect\\='."
     (let ((generation herdr-dispatch--worktrees-generation))
       (condition-case err
           (herdr-rpc-call-async
+           (herdr-current-connection)
            "worktree.list" `((cwd . ,directory))
            (lambda (result error)
              (herdr-dispatch--worktrees-received
@@ -874,7 +875,7 @@ others refuse."
         (herdr-workspace-focus open)
       (let ((dir (herdr-state-workspace-directory (herdr-state-current)
                                                    workspace)))
-        (herdr-rpc-call "worktree.open"
+        (herdr-rpc-call (herdr-current-connection) "worktree.open"
                         `((branch . ,(alist-get 'branch worktree))
                           (cwd . ,dir)
                           (focus . t)))))))
@@ -1087,7 +1088,7 @@ An empty base ref means the current HEAD and is omitted from the call."
          (base (read-string
                 (format-prompt "Base ref" "the current HEAD") nil nil ""))
          (dir (herdr-state-workspace-directory (herdr-state-current) workspace)))
-    (herdr-rpc-call "worktree.create"
+    (herdr-rpc-call (herdr-current-connection) "worktree.create"
                     `((branch . ,branch)
                       (base . ,(unless (string-empty-p (or base "")) base))
                       (cwd . ,dir)

@@ -24,7 +24,7 @@
 
 (defun herdr-drift-test--server-p ()
   "Return non-nil when a herdr server is reachable."
-  (condition-case nil (progn (herdr-rpc-call "ping") t) (herdr-error nil)))
+  (condition-case nil (progn (herdr-rpc-call (herdr-current-connection) "ping") t) (herdr-error nil)))
 
 (defmacro herdr-drift-test-with-server (&rest body)
   "Run BODY, skipping the test when no herdr server is running.
@@ -43,13 +43,13 @@ is what reports it."
            (herdr-schema--cache-version nil)
            (herdr-schema--cache-protocol nil))
        (herdr-schema)
-       (skip-unless (herdr-schema-matches-server-p))
+       (skip-unless (herdr-schema-matches-server-p (herdr-current-connection)))
        ,@body)))
 
 (ert-deftest herdr-drift-protocol-matches ()
   :tags '(:live)
   (skip-unless (herdr-drift-test--server-p))
-  (let ((protocol (alist-get 'protocol (herdr-rpc-call "ping"))))
+  (let ((protocol (alist-get 'protocol (herdr-rpc-call (herdr-current-connection) "ping"))))
     (should (equal protocol herdr-protocol-version))))
 
 (ert-deftest herdr-drift-every-curated-method-still-exists ()
@@ -94,31 +94,31 @@ is what reports it."
   (skip-unless (herdr-drift-test--server-p))
   (let* ((before (alist-get 'panes
                             (alist-get 'snapshot
-                                       (herdr-rpc-call "session.snapshot"))))
+                                       (herdr-rpc-call (herdr-current-connection) "session.snapshot"))))
          (pane (alist-get 'pane_id
                           (alist-get 'pane
-                                     (herdr-rpc-call
+                                     (herdr-rpc-call (herdr-current-connection)
                                       "pane.split"
                                       '((direction . "right")))))))
     (unwind-protect
         (progn
-          (herdr-rpc-call "pane.rename" `((pane_id . ,pane)
+          (herdr-rpc-call (herdr-current-connection) "pane.rename" `((pane_id . ,pane)
                                           (label . "herdr-el-drift")))
-          (herdr-rpc-call "pane.send_text"
+          (herdr-rpc-call (herdr-current-connection) "pane.send_text"
                           `((pane_id . ,pane)
                             (text . "echo HERDR_DRIFT_OK\n")))
           (sleep-for 2)
           (let ((text (herdr-cmd-read-text
-                       (herdr-rpc-call "pane.read"
+                       (herdr-rpc-call (herdr-current-connection) "pane.read"
                                        `((pane_id . ,pane)
                                          (source . "recent_unwrapped")
                                          (strip_ansi . t))))))
             (should (string-match-p "HERDR_DRIFT_OK" text))))
-      (herdr-rpc-call "pane.close" `((pane_id . ,pane))))
+      (herdr-rpc-call (herdr-current-connection) "pane.close" `((pane_id . ,pane))))
     (sleep-for 1)
     (let ((after (alist-get 'panes
                             (alist-get 'snapshot
-                                       (herdr-rpc-call "session.snapshot")))))
+                                       (herdr-rpc-call (herdr-current-connection) "session.snapshot")))))
       (should (equal (mapcar (lambda (p) (alist-get 'pane_id p)) before)
                      (mapcar (lambda (p) (alist-get 'pane_id p)) after))))))
 
@@ -134,7 +134,7 @@ is what reports it."
           (while (< (float-time) deadline) (accept-process-output nil 0.1)))
         (let ((pane (alist-get 'pane_id
                                (alist-get 'pane
-                                          (herdr-rpc-call
+                                          (herdr-rpc-call (herdr-current-connection)
                                            "pane.split"
                                            '((direction . "right")))))))
           (let ((deadline (+ (float-time) 5)))
@@ -142,7 +142,7 @@ is what reports it."
                         (not (herdr-state-pane (herdr-state-current) pane)))
               (accept-process-output nil 0.1)))
           (should (herdr-state-pane (herdr-state-current) pane))
-          (herdr-rpc-call "pane.close" `((pane_id . ,pane)))
+          (herdr-rpc-call (herdr-current-connection) "pane.close" `((pane_id . ,pane)))
           (let ((deadline (+ (float-time) 5)))
             (while (and (< (float-time) deadline)
                         (herdr-state-pane (herdr-state-current) pane))

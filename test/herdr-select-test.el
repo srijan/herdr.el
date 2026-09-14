@@ -239,7 +239,7 @@ down to `herdr-rpc-background-timeout'."
     (unwind-protect
         (let ((herdr-term--buffers (list (cons "w1:p1" target))))
           (cl-letf (((symbol-function 'herdr-rpc-call)
-                     (lambda (method params)
+                     (lambda (_connection method params)
                        (when (equal method "pane.focus")
                          (setq focused (alist-get 'pane_id params))))))
             (save-window-excursion

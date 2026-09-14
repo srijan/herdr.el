@@ -437,12 +437,12 @@ unusable PTY."
   (let (shown quit)
     (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
               ((symbol-function 'ghostel-exec) #'ignore)
-              ((symbol-function 'herdr-server-live-p) (lambda () t))
+              ((symbol-function 'herdr-server-live-p) (lambda (_connection) t))
               ((symbol-function 'herdr-term--show)
                (lambda (buf) (setq shown buf)))
               ((symbol-function 'quit-windows-on)
                (lambda (buf &rest _) (setq quit buf))))
-      (let ((buffer (herdr-term--bootstrap-server)))
+      (let ((buffer (herdr-term--bootstrap-server (herdr-current-connection))))
         (unwind-protect
             (progn
               (should (eq buffer shown))
@@ -456,12 +456,12 @@ unusable PTY."
     (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
               ((symbol-function 'ghostel-exec) #'ignore)
               ((symbol-function 'herdr-term--show) #'ignore)
-              ((symbol-function 'herdr-server-live-p) (lambda () nil))
+              ((symbol-function 'herdr-server-live-p) (lambda (_connection) nil))
               ((symbol-function 'quit-windows-on)
                (lambda (buf &rest _) (setq quit buf))))
       (unwind-protect
           (progn
-            (should-error (herdr-term--bootstrap-server))
+            (should-error (herdr-term--bootstrap-server (herdr-current-connection)))
             (should (eq (get-buffer herdr-term-bootstrap-buffer-name) quit)))
         (when (get-buffer herdr-term-bootstrap-buffer-name)
           (kill-buffer herdr-term-bootstrap-buffer-name))))))
@@ -618,7 +618,7 @@ to a forty-second frozen startup."
         (seen nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
                (lambda (&rest _) (setq seen herdr-rpc-timeout) '((ok . t)))))
-      (should (herdr-server-live-p))
+      (should (herdr-server-live-p (herdr-current-connection)))
       (should (equal 2.0 seen)))))
 
 

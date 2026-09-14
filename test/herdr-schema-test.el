@@ -162,7 +162,7 @@ find."
         (herdr-schema--cache-version "0.8.0")
         fetched)
     (cl-letf (((symbol-function 'herdr-schema--server-version)
-               (lambda () "0.9.0"))
+               (lambda (_connection ) "0.9.0"))
               ;; A parsed schema, not a sentinel: `herdr-schema' reads
               ;; the protocol out of what the fetch produced, so a stub
               ;; that returns something no fetch can return would assert
@@ -187,13 +187,13 @@ The stub copies its answer for that reason: handed the same object, an
         (herdr-schema--cache-version "0.9.0")
         fetched)
     (cl-letf (((symbol-function 'herdr-schema--server-version)
-               (lambda () (copy-sequence "0.9.0")))
+               (lambda (_connection ) (copy-sequence "0.9.0")))
               ((symbol-function 'herdr-schema--fetch)
                (lambda () (setq fetched t))))
       (herdr-schema)
       (should-not fetched))
     ;; An unreachable server is not evidence that the cache is stale.
-    (cl-letf (((symbol-function 'herdr-schema--server-version) (lambda () nil))
+    (cl-letf (((symbol-function 'herdr-schema--server-version) (lambda (_connection ) nil))
               ((symbol-function 'herdr-schema--fetch)
                (lambda () (setq fetched t))))
       (herdr-schema)
@@ -286,7 +286,7 @@ something it hides."
             (herdr-schema)
             ;; The schema is the binary's, and says so.
             (should (equal 22 (herdr-schema-protocol)))
-            (should-not (herdr-schema-matches-server-p))))
+            (should-not (herdr-schema-matches-server-p (herdr-current-connection)))))
       (delete-file stub))))
 
 (ert-deftest herdr-schema-agrees-when-binary-and-server-match ()
@@ -304,7 +304,7 @@ something it hides."
                     nil))
           (let ((herdr-executable stub))
             (herdr-schema)
-            (should (herdr-schema-matches-server-p))))
+            (should (herdr-schema-matches-server-p (herdr-current-connection)))))
       (delete-file stub))))
 
 (ert-deftest herdr-schema-unreachable-server-is-not-a-mismatch ()
@@ -322,7 +322,7 @@ in front of every one of those."
     (unwind-protect
         (let ((herdr-executable stub))
           (herdr-schema)
-          (should (herdr-schema-matches-server-p)))
+          (should (herdr-schema-matches-server-p (herdr-current-connection))))
       (delete-file stub))))
 
 (defun herdr-schema-test--stub-executable (body)

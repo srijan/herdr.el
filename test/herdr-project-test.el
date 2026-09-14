@@ -205,8 +205,8 @@ command."
             (cons (herdr-test-ok
                    req `((protocol . ,(1+ herdr-protocol-version))))
                   nil))
-        (herdr--check-protocol)
-        (herdr--check-protocol)))
+        (herdr--check-protocol (herdr-current-connection))
+        (herdr--check-protocol (herdr-current-connection))))
     (should (= 1 (length said)))
     (should (string-match-p (number-to-string (1+ herdr-protocol-version))
                             (car said)))
@@ -222,7 +222,7 @@ command."
           (lambda (req)
             (cons (herdr-test-ok req `((protocol . ,herdr-protocol-version)))
                   nil))
-        (herdr--check-protocol)))
+        (herdr--check-protocol (herdr-current-connection))))
     (should-not said)
     (should-not herdr--protocol-warned)))
 
@@ -231,7 +231,7 @@ command."
 again: a second event stream would double every event the cache folds."
   (let (starts ensures)
     (cl-letf (((symbol-function 'herdr-term-ensure)
-               (lambda () (push t ensures)))
+               (lambda (_connection ) (push t ensures)))
               ((symbol-function 'herdr--check-protocol) #'ignore)
               ((symbol-function 'herdr-state-running-p) (lambda () t))
               ((symbol-function 'herdr-state-start) (lambda () (push t starts))))
@@ -244,7 +244,7 @@ again: a second event stream would double every event the cache folds."
 been primed."
   (let (starts ensures)
     (cl-letf (((symbol-function 'herdr-term-ensure)
-               (lambda () (push t ensures)))
+               (lambda (_connection ) (push t ensures)))
               ((symbol-function 'herdr--check-protocol) #'ignore)
               ((symbol-function 'herdr-state-running-p) (lambda () nil))
               ((symbol-function 'herdr-state-start) (lambda () (push t starts))))

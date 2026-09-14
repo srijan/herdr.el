@@ -49,12 +49,16 @@ real server sends after every non-subscription request."
            (ignore-errors (delete-process client))))))))
 
 (defmacro herdr-test-with-server (responder &rest body)
-  "Run BODY with `herdr-socket-path' bound to a fake server using RESPONDER."
+  "Run BODY talking to a fake server using RESPONDER.
+Binds the sole connection as well as `herdr-socket-path', because the
+transport reads its socket from the connection it is handed and not from
+the variable."
   (declare (indent 1) (debug t))
   `(let* ((path (herdr-test-socket-path))
           (server (herdr-test-start-server path ,responder)))
      (unwind-protect
-         (let ((herdr-socket-path path))
+         (let* ((herdr-socket-path path)
+                (herdr-connection--sole (herdr-connection-local)))
            ,@body)
        (ignore-errors (delete-process server))
        (ignore-errors (delete-file path)))))

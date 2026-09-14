@@ -942,9 +942,13 @@ which is why a `pcase' over the type cannot be mis-ordered."
   "Calls recorded by `herdr-dispatch-test--recorder', newest first.")
 
 (defun herdr-dispatch-test--recorder (name)
-  "Return a function recording each call to it as (NAME . ARGS)."
+  "Return a function recording each call to it as (NAME . ARGS).
+A leading connection is dropped.  These assertions are about which
+command ran with which parameters; that a connection was passed at all
+is `herdr-rpc-call-refuses-to-guess-a-connection\='s job."
   (lambda (&rest args)
-    (push (cons name args) herdr-dispatch-test--calls)
+    (push (cons name (if (herdr-connection-p (car args)) (cdr args) args))
+          herdr-dispatch-test--calls)
     nil))
 
 (defmacro herdr-dispatch-test-with-recorders (names &rest body)
@@ -1162,7 +1166,7 @@ can stand in it — is one BODY can hold open for as long as it likes."
   (declare (indent 0) (debug t))
   `(let ((herdr-dispatch-test--async nil))
      (cl-letf (((symbol-function 'herdr-rpc-call-async)
-                (lambda (method params callback &optional timeout)
+                (lambda (_connection method params callback &optional timeout)
                   (setq herdr-dispatch-test--async
                         (append herdr-dispatch-test--async
                                 (list (list method params callback timeout))))
@@ -2641,7 +2645,7 @@ ancestor must not stop it firing when point really is on the heading."
   "tab.create takes a workspace_id rather than a pane to split into."
   (let ((params nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method p) (setq params p) nil))
+               (lambda (_connection _method p) (setq params p) nil))
               ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
       (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
         (search-forward "w1:p2")
@@ -2703,7 +2707,7 @@ than inherited from `herdr-worktree-create\\='."
   (let ((params nil)
         (prompts nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method p) (setq params p) nil))
+               (lambda (_connection _method p) (setq params p) nil))
               ((symbol-function 'herdr-state-workspace-directory)
                (lambda (_state _id) "/tmp/herdr.el/"))
               ((symbol-function 'read-string)
@@ -2727,7 +2731,7 @@ than inherited from `herdr-worktree-create\\='."
 than the current HEAD."
   (let ((params nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method p) (setq params p) nil))
+               (lambda (_connection _method p) (setq params p) nil))
               ((symbol-function 'herdr-state-workspace-directory)
                (lambda (_state _id) "/tmp/herdr.el/"))
               ((symbol-function 'read-string)
@@ -2805,7 +2809,7 @@ Real state rather than mocked accessors, for the reason given in
   "A pane row resolves through its own record to its workspace."
   (let ((workspace-id nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method params)
+               (lambda (_connection _method params)
                  (setq workspace-id (alist-get 'workspace_id params))
                  '((root_pane . ((pane_id . "w1:p9"))))))
               ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
@@ -2849,7 +2853,7 @@ gets followed."
           (followed nil))
       (search-forward "other-project (0)")
       (cl-letf (((symbol-function 'herdr-rpc-call)
-                 (lambda (method params)
+                 (lambda (_connection method params)
                    (push (cons method params) calls)
                    '((root_pane . ((pane_id . "w7:p1"))))))
                 ((symbol-function 'herdr-cmd--follow-new-pane)
@@ -2873,7 +2877,7 @@ same directory is what `herdr-state-workspace-for-directory\\=' prevents."
           (calls nil))
       (search-forward "other-project (0)")
       (cl-letf (((symbol-function 'herdr-rpc-call)
-                 (lambda (method params)
+                 (lambda (_connection method params)
                    (push (cons method params) calls)
                    '((root_pane . ((pane_id . "w9:p2"))))))
                 ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
@@ -2898,7 +2902,7 @@ pointing past."
           (calls nil))
       (search-forward "fix")
       (cl-letf (((symbol-function 'herdr-rpc-call)
-                 (lambda (method params)
+                 (lambda (_connection method params)
                    (push (cons method params) calls)
                    '((root_pane . ((pane_id . "w8:p1"))))))
                 ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
@@ -2930,7 +2934,7 @@ underneath — but `tab.create\\=' needs a workspace id, not a pane, and the
 heading is that id directly."
   (let ((params nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method p) (setq params p) nil))
+               (lambda (_connection _method p) (setq params p) nil))
               ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
       (herdr-dispatch-test-with-start-tree
         (search-forward "herdr.el")

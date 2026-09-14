@@ -108,7 +108,9 @@ therefore have a buffer without ever appearing on this connection."
 
 (ert-deftest herdr-state-start-signals-when-no-server ()
   "Starting without a server must fail cleanly and leave nothing running."
-  (let ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock"))
+  (let* ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
+         (herdr-connection--sole (herdr-connection-local))
+         (herdr-connection--sole (herdr-connection-local)))
     (herdr-state-stop)
     (should-error (herdr-state-start) :type 'herdr-error)
     (should-not (herdr-state-running-p))))
@@ -452,7 +454,8 @@ for nothing."
 
 (ert-deftest herdr-state-reconcile-leaves-the-cache-alone-when-unreachable ()
   "A failed poll must not empty the cache."
-  (let ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
+  (let* ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
+         (herdr-connection--sole (herdr-connection-local))
         (herdr-state--current
          (herdr-state-from-snapshot
           '((panes . (((pane_id . "w1:p1"))))))))
@@ -547,7 +550,7 @@ real process through it: an unmarked drop must schedule a reconnect."
     (let ((herdr-state--running t)
           (herdr-state--reconnect-timer nil)
           (herdr-state--reconnect-delay nil)
-          (proc (herdr-rpc-connect "herdr-sentinel-test" #'ignore
+          (proc (herdr-rpc-connect (herdr-current-connection) "herdr-sentinel-test" #'ignore
                                    #'herdr-state--sentinel)))
       (unwind-protect
           (progn
@@ -578,7 +581,7 @@ event."
     (let ((herdr-state--running t)
           (herdr-state--reconnect-timer nil)
           (herdr-state--reconnect-delay nil)
-          (proc (herdr-rpc-connect "herdr-sentinel-test" #'ignore
+          (proc (herdr-rpc-connect (herdr-current-connection) "herdr-sentinel-test" #'ignore
                                    #'herdr-state--sentinel)))
       (herdr-state--close proc)
       (let ((deadline (+ (float-time) 1)))
@@ -646,7 +649,8 @@ nothing when nothing has changed."
       (should-not (herdr-state-reconcile-workspaces)))))
 
 (ert-deftest herdr-state-reconcile-workspaces-leaves-the-cache-alone-when-unreachable ()
-  (let ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
+  (let* ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
+         (herdr-connection--sole (herdr-connection-local))
         (herdr-state--current
          (herdr-state-from-snapshot
           '((workspaces . (((workspace_id . "w1"))))))))

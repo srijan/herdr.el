@@ -54,6 +54,68 @@ this.  A server too slow to answer forfeits that refresh, not the UI."
 
 (define-error 'herdr-error "herdr error")
 
+;;; The connection
+;;
+;; A connection is a value the package passes around, the shape
+;; `jsonrpc.el' and `eglot.el' settled on: the transport takes it as an
+;; argument and never reads an ambient default.
+
+(defvar herdr-connection--tokens 0
+  "Counter behind `herdr-connection-token'.")
+
+(cl-defstruct (herdr-connection (:constructor herdr-connection--make)
+                                (:copier nil))
+  "One herdr server this package follows.
+
+TOKEN is allocated once and never written again.  The struct is mutable
+and `equal' on a struct compares fields, so a key holding the struct
+itself would stop matching the moment a process or a cache slot changed
+under it; a composite key holds the token instead."
+  (token (cl-incf herdr-connection--tokens))
+  name
+  socket-path
+  ssh-target
+  tunnel
+  ;; Session cache and its two event streams, per KTD6.
+  (cache nil) (global-process nil) (pane-process nil) (pane-stream-ids nil)
+  (reconnect-timer nil) (reconnect-delay nil) (resubscribe-timer nil)
+  (settle-timer nil) (repair-timer nil) (repairing nil)
+  (generation 0) (running nil)
+  ;; Worktree cache, reached only through its interface.
+  (worktrees nil) (worktrees-pending nil) (worktrees-unanswered nil)
+  (worktrees-generation 0)
+  ;; Handshake and schema, one answer per server rather than per package.
+  (protocol-warned nil) (schema nil) (schema-protocol nil)
+  (schema-mismatch-warned nil))
+
+(defun herdr-connection-local ()
+  "Return a connection to the local server at `herdr-socket-path'."
+  (herdr-connection--make :name "local" :socket-path herdr-socket-path))
+
+(defun herdr-connection-remote-p (connection)
+  "Return non-nil when CONNECTION reaches its server over SSH."
+  (and (herdr-connection-ssh-target connection) t))
+
+(defvar herdr-connection--sole nil
+  "The one connection this package follows.
+A registry replaces this when there can be more than one.")
+
+(defun herdr-current-connection ()
+  "Return the connection an action started now belongs to.
+
+A function rather than a variable, because the transport must never
+read an ambient default: a caller that wants a connection asks for one
+here and hands it over.  Interactive commands arrive from
+\[execute-extended-command] and from keybindings with no connection in
+hand, so they resolve here at the point of action.
+
+Anything deferred must not.  A retry, a repair tick, a resubscribe, a
+reconnect or an async reply captures its connection when it is scheduled
+and carries it to the moment it fires; resolving late is how work
+scheduled against one server lands on another."
+  (or herdr-connection--sole
+      (setq herdr-connection--sole (herdr-connection-local))))
+
 (defun herdr-error-code (err)
   "Return the herdr error code carried by ERR, as a string."
   (nth 1 err))
@@ -104,11 +166,14 @@ cannot tell a list of alists from a single alist."
                      :object-type 'alist :array-type 'list
                      :null-object nil :false-object nil))
 
-(defun herdr-rpc-connect (name filter sentinel)
-  "Open a connection to the herdr socket named NAME.
+(defun herdr-rpc-connect (connection name filter sentinel)
+  "Open a socket to CONNECTION\='s server, as a process named NAME.
 FILTER and SENTINEL are installed on the process.  Signals `herdr-error'
-with code \"no_server\" when the socket is absent or refuses."
-  (let ((path (expand-file-name herdr-socket-path)))
+with code \"no_server\" when the socket is absent or refuses.
+
+CONNECTION comes first so a caller that forgets it gets a wrong-type
+error rather than a call against whichever server was ambient."
+  (let ((path (expand-file-name (herdr-connection-socket-path connection))))
     (condition-case err
         (make-network-process
          :name name :family 'local :service path
@@ -127,13 +192,14 @@ with code \"no_server\" when the socket is absent or refuses."
         (herdr-rpc--signal (alist-get 'code err) (alist-get 'message err))
       (alist-get 'result payload))))
 
-(defun herdr-rpc-call (method &optional params)
-  "Call METHOD with PARAMS synchronously and return its result alist.
+(defun herdr-rpc-call (connection method &optional params)
+  "Call METHOD with PARAMS on CONNECTION and return its result alist.
 Signals `herdr-error' on a server error, an unreachable socket, or a
 timeout."
   (let* ((chunks nil)
          (closed nil)
          (proc (herdr-rpc-connect
+                connection
                 (format "herdr-rpc-%s" method)
                 (lambda (_proc chunk) (push chunk chunks))
                 (lambda (_proc _event) (setq closed t)))))
@@ -160,8 +226,8 @@ timeout."
       (when (process-live-p proc)
         (delete-process proc)))))
 
-(defun herdr-rpc-call-async (method params callback &optional timeout)
-  "Call METHOD with PARAMS, invoking CALLBACK when the response arrives.
+(defun herdr-rpc-call-async (connection method params callback &optional timeout)
+  "Call METHOD with PARAMS on CONNECTION, invoking CALLBACK on the response.
 CALLBACK receives (RESULT ERROR), exactly one of them non-nil, and is
 called exactly once.  Returns the process, which may be deleted to
 abandon the call.  Nil TIMEOUT waits indefinitely.
@@ -195,6 +261,7 @@ instead leaves an armed TIMEOUT free to deliver a second callback."
                           `((code . "bad_response")
                             (message . ,(error-message-string err))))))))))
     (let ((proc (herdr-rpc-connect
+                 connection
                  (format "herdr-rpc-async-%s" method)
                  (lambda (_proc chunk) (push chunk chunks))
                  (lambda (_proc _event) (funcall finish)))))

@@ -107,21 +107,21 @@ bounded wait every socket RPC already uses."
         (when (process-live-p proc)
           (delete-process proc))))))
 
-(defun herdr-schema--server-version ()
-  "Return the running server's version string, or nil if unreachable."
-  (ignore-errors (alist-get 'version (herdr-rpc-call "ping"))))
+(defun herdr-schema--server-version (connection)
+  "Return CONNECTION\='s server version string, or nil if unreachable."
+  (ignore-errors (alist-get 'version (herdr-rpc-call connection "ping"))))
 
-(defun herdr-schema--server-protocol ()
-  "Return the running server's protocol number, or nil if unreachable."
-  (ignore-errors (alist-get 'protocol (herdr-rpc-call "ping"))))
+(defun herdr-schema--server-protocol (connection)
+  "Return CONNECTION\='s server protocol number, or nil if unreachable."
+  (ignore-errors (alist-get 'protocol (herdr-rpc-call connection "ping"))))
 
 (defun herdr-schema-protocol ()
   "Return the protocol the loaded schema declares.
 This is the binary's answer, not the server's."
   (alist-get 'protocol (or herdr-schema--cache (herdr-schema))))
 
-(defun herdr-schema-matches-server-p ()
-  "Return non-nil when the loaded schema describes the running server.
+(defun herdr-schema-matches-server-p (connection)
+  "Return non-nil when the loaded schema describes CONNECTION\='s server.
 
 There is no socket method for the schema, so it can only come from the
 local `herdr\=' binary.  When that binary is a different build from the
@@ -131,25 +131,32 @@ every check made against it answers the wrong question.
 An unreachable server is not a mismatch.  `herdr-call\=' reads the
 schema with no server running, and reporting that as a disagreement
 would warn on every one of those."
-  (let ((server (herdr-schema--server-protocol))
+  (let ((server (herdr-schema--server-protocol connection))
         (schema (herdr-schema-protocol)))
     (or (null server) (null schema) (equal server schema))))
 
-(defun herdr-schema--warn-on-mismatch ()
-  "Say once when the schema and the server describe different APIs."
-  (unless (or herdr-schema--mismatch-warned (herdr-schema-matches-server-p))
+(defun herdr-schema--warn-on-mismatch (connection)
+  "Say once when the schema and CONNECTION\='s server describe different APIs."
+  (unless (or herdr-schema--mismatch-warned
+              (herdr-schema-matches-server-p connection))
     (setq herdr-schema--mismatch-warned t)
     (message
      "herdr.el: %s speaks protocol %s but the running server speaks %s; \
 schema-driven prompts and drift checks describe the binary, not the server"
-     herdr-executable (herdr-schema-protocol) (herdr-schema--server-protocol))))
+     herdr-executable (herdr-schema-protocol)
+     (herdr-schema--server-protocol connection))))
 
 (defun herdr-schema ()
   "Return the herdr API schema, fetching it if needed.
 The schema is held for as long as the server reports the version it
 was captured from: `herdr update' mid-session drops it, so the drift
-test cannot check yesterday's schema and report no drift."
-  (let ((version (herdr-schema--server-version)))
+test cannot check yesterday's schema and report no drift.
+
+Resolves its own connection rather than taking one, because the cache
+it guards is still one cache for the package.  Moving that cache into
+the connection is what makes this take an argument."
+  (let* ((connection (herdr-current-connection))
+         (version (herdr-schema--server-version connection)))
     (when (and herdr-schema--cache
                herdr-schema--cache-version
                version
@@ -160,8 +167,8 @@ test cannot check yesterday's schema and report no drift."
       (herdr-schema--fetch)
       (setq herdr-schema--cache-version version)
       (setq herdr-schema--cache-protocol
-            (alist-get 'protocol herdr-schema--cache))))
-  (herdr-schema--warn-on-mismatch)
+            (alist-get 'protocol herdr-schema--cache)))
+    (herdr-schema--warn-on-mismatch connection))
   herdr-schema--cache)
 
 ;;; Navigation

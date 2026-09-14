@@ -104,7 +104,7 @@ and never read."
 
 ;;; Server lifecycle
 
-(defun herdr-server-live-p ()
+(defun herdr-server-live-p (connection)
   "Return non-nil when the herdr server answers a ping.
 
 The ping is bound to `herdr-rpc-background-timeout': this is a liveness
@@ -115,13 +115,13 @@ the startup loop alone could block for forty."
   (let ((herdr-rpc-timeout (min herdr-rpc-timeout
                                 herdr-rpc-background-timeout)))
     (condition-case nil
-        (progn (herdr-rpc-call "ping") t)
+        (progn (herdr-rpc-call connection "ping") t)
       (herdr-error nil))))
 
 (defconst herdr-term-bootstrap-buffer-name "*herdr-bootstrap*"
   "Buffer for the client that brings the server up; killed once it has.")
 
-(defun herdr-term--bootstrap-server ()
+(defun herdr-term--bootstrap-server (connection)
   "Start a herdr client long enough to bring the server up.
 
 herdr has no headless start command, so the server is brought up by
@@ -142,10 +142,10 @@ can hang on an unusable PTY until the timeout gives up."
         ;; one more full probe on top of it before the error finally
         ;; surfaced.
         (let ((deadline (+ (float-time) herdr-server-start-timeout))
-              (live (herdr-server-live-p)))
+              (live (herdr-server-live-p connection)))
           (while (and (not live) (< (float-time) deadline))
             (sit-for 0.2)
-            (setq live (herdr-server-live-p)))
+            (setq live (herdr-server-live-p connection)))
           (unless live
             (error "herdr server did not come up within %ss"
                    herdr-server-start-timeout)))
@@ -193,7 +193,9 @@ Asks the server rather than trusting the cache, because focus may have
 moved as a side effect of the command that just ran."
   (when-let* ((pane (ignore-errors
                       (alist-get 'pane_id
-                                 (alist-get 'pane (herdr-rpc-call "pane.current"))))))
+                                 (alist-get 'pane (herdr-rpc-call
+                                                   (herdr-current-connection)
+                                                   "pane.current"))))))
     (herdr-term-select-pane pane)))
 
 (defun herdr-term-buffer-for-pane (pane-id)
@@ -384,11 +386,11 @@ trips to be told nothing moved."
 
 ;;; Interface
 
-(defun herdr-term-ensure ()
-  "Make sure the terminals exist, starting the server if needed."
+(defun herdr-term-ensure (connection)
+  "Make sure CONNECTION\='s terminals exist, starting its server if needed."
   (require 'ghostel)
-  (let ((bootstrap (unless (herdr-server-live-p)
-                     (herdr-term--bootstrap-server))))
+  (let ((bootstrap (unless (herdr-server-live-p connection)
+                     (herdr-term--bootstrap-server connection))))
     (add-hook 'herdr-state-change-functions #'herdr-term--on-state-change)
     (prog1
         (progn

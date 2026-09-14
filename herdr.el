@@ -47,10 +47,10 @@ because herdr bumped a minor is worse than one command misbehaving."
 
 (defvar herdr--protocol-warned nil)
 
-(defun herdr--check-protocol ()
-  "Warn once if the server speaks a protocol this package does not know."
+(defun herdr--check-protocol (connection)
+  "Warn once if CONNECTION\='s server speaks a protocol this package does not know."
   (unless herdr--protocol-warned
-    (when-let* ((pong (ignore-errors (herdr-rpc-call "ping")))
+    (when-let* ((pong (ignore-errors (herdr-rpc-call connection "ping")))
                 (protocol (alist-get 'protocol pong)))
       (unless (equal protocol herdr-protocol-version)
         (setq herdr--protocol-warned t)
@@ -63,13 +63,16 @@ some commands may misbehave"
 (defun herdr-start ()
   "Bring up herdr inside Emacs: server, terminals, and the event stream."
   (interactive)
-  (herdr-term-ensure)
-  (herdr--check-protocol)
-  (unless (herdr-state-running-p)
-    (herdr-state-start))
-  ;; Twice: the second pass has the cache, which is what decides what to
-  ;; attach.
-  (herdr-term-ensure))
+  ;; Resolved once and carried, not resolved again at each step: the
+  ;; connection an action belongs to is settled when the action starts.
+  (let ((connection (herdr-current-connection)))
+    (herdr-term-ensure connection)
+    (herdr--check-protocol connection)
+    (unless (herdr-state-running-p)
+      (herdr-state-start))
+    ;; Twice: the second pass has the cache, which is what decides what to
+    ;; attach.
+    (herdr-term-ensure connection)))
 
 ;;;###autoload
 (defun herdr-stop ()
