@@ -31,7 +31,8 @@ one of the two is in the cache under that name."
   (let ((state (herdr-state-from-snapshot
                 '((workspaces . (((workspace_id . "w1") (label . "ws"))
                                  ((workspace_id . "w2") (label . "api"))))))))
-    (should (equal "api" (alist-get 'label (herdr-state-workspace state "w2"))))
+    (should (equal "api" (herdr-workspace-label
+                          (herdr-state-workspace state "w2"))))
     (should-not (herdr-state-workspace state "/tmp/not-a-workspace/"))
     (should-not (herdr-state-workspace state "w9"))))
 
@@ -199,7 +200,8 @@ went on showing the old name."
       ;; A rename carries nothing else, so nothing else may be lost.
       (should (equal 3 (herdr-workspace-pane-count workspace))))
     ;; Pure, as ever.
-    (should (equal "web" (alist-get 'label (car (herdr-state-workspaces state)))))))
+    (should (equal "web" (herdr-workspace-label
+                          (car (herdr-state-workspaces state)))))))
 
 (ert-deftest herdr-state-reduce-workspace-renamed-for-an-unknown-id-is-a-noop ()
   (let* ((state (herdr-state-test--seed))
@@ -209,7 +211,8 @@ went on showing the old name."
     ;; nothing must be indistinguishable from one that never arrived.
     (should (eq state next))
     (should (= 1 (length (herdr-state-workspaces next))))
-    (should (equal "web" (alist-get 'label (car (herdr-state-workspaces next)))))))
+    (should (equal "web" (herdr-workspace-label
+                          (car (herdr-state-workspaces next)))))))
 
 (defun herdr-state-test--ws-seed ()
   "State with four workspaces w1..w4 in order, for reorder tests."
@@ -409,12 +412,12 @@ home rather than only through `herdr-project' in test/herdr-project-test.el."
                 '((workspaces . (((workspace_id . "w1"))))
                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
                              (cwd . "/tmp/project"))))))))
-    (should (equal "w1" (alist-get 'workspace_id
-                                   (herdr-state-workspace-for-directory
-                                    state "/tmp/project"))))
-    (should (equal "w1" (alist-get 'workspace_id
-                                   (herdr-state-workspace-for-directory
-                                    state "/tmp/project/"))))))
+    (should (equal "w1" (herdr-workspace-id
+                         (herdr-state-workspace-for-directory
+                          state "/tmp/project"))))
+    (should (equal "w1" (herdr-workspace-id
+                         (herdr-state-workspace-for-directory
+                          state "/tmp/project/"))))))
 
 (ert-deftest herdr-state-workspace-for-directory-is-nil-for-an-unknown-root ()
   (let ((state (herdr-state-from-snapshot
@@ -596,6 +599,95 @@ reconcile has just made authoritative."
         (herdr-state-repair)
         (should (equal '(workspaces panes) order))))))
 
+(ert-deftest herdr-state-reconcile-drops-a-reply-from-a-stopped-session ()
+  "`herdr-rpc-call\\=' services due timers while it waits, so the session can
+stop underneath a reconcile.  A reply that lands afterwards must not
+repopulate the cache the stop just emptied, or the modeline advertises
+the dead session's agents until the mode is toggled."
+  (herdr-state-test--with-quiet-session
+    (setq herdr-state--running t
+          herdr-state--current
+          (herdr-state-from-snapshot
+           '((panes . (((pane_id . "w1:p1") (agent . "claude")))))))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (&rest _)
+                 ;; The stop fires inside the wait.
+                 (setq herdr-state--running nil
+                       herdr-state--generation (1+ herdr-state--generation)
+                       herdr-state--current (herdr-state-empty))
+                 '((panes . (((pane_id . "w1:p1") (agent . "claude"))))))))
+      (should-not (herdr-state-reconcile-panes))
+      (should-not (herdr-state-pane-ids herdr-state--current)))))
+
+(ert-deftest herdr-state-reconcile-workspaces-drops-a-reply-from-a-stopped-session ()
+  "The workspace half of the same window."
+  (herdr-state-test--with-quiet-session
+    (setq herdr-state--running t
+          herdr-state--current
+          (herdr-state-from-snapshot '((workspaces . nil))))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (&rest _)
+                 (setq herdr-state--running nil
+                       herdr-state--generation (1+ herdr-state--generation)
+                       herdr-state--current (herdr-state-empty))
+                 '((workspaces . (((workspace_id . "w1") (label . "web"))))))))
+      (should-not (herdr-state-reconcile-workspaces))
+      (should-not (herdr-state-workspaces herdr-state--current)))))
+
+(ert-deftest herdr-state-repair-skips-workspaces-when-panes-just-failed ()
+  "A `pane.list\\=' that failed has scheduled a reconnect.  Asking
+`workspace.list\\=' over the same wedged socket spends a second background
+timeout on an answer that is not coming, doubling the freeze this
+function binds the timeout to avoid."
+  (herdr-state-test--with-quiet-session
+    (let ((workspaces-called nil))
+      (setq herdr-state--running t)
+      (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
+                 (lambda () (herdr-state--schedule-reconnect) nil))
+                ((symbol-function 'herdr-state-reconcile-workspaces)
+                 (lambda () (setq workspaces-called t) nil)))
+        (should (herdr-state-repair))
+        (should herdr-state--reconnect-timer)
+        (should-not workspaces-called)))))
+
+(ert-deftest herdr-state-repair-reconciles-workspaces-during-a-pending-reconnect ()
+  "Only the tick that schedules the reconnect skips.  A backoff already
+pending says nothing about whether this tick's `pane.list\\=' answered, and
+suppressing the workspace half through the whole backoff would stop
+repairing workspaces exactly when the cache is most likely wrong."
+  (herdr-state-test--with-quiet-session
+    (let ((workspaces-called nil))
+      (setq herdr-state--running t
+            herdr-state--reconnect-timer (run-at-time 3600 nil #'ignore))
+      (cl-letf (((symbol-function 'herdr-state-reconcile-panes) (lambda () nil))
+                ((symbol-function 'herdr-state-reconcile-workspaces)
+                 (lambda () (setq workspaces-called t) nil)))
+        (should (herdr-state-repair))
+        (should workspaces-called)))))
+
+(ert-deftest herdr-state-subscribe-closes-its-process-when-the-send-fails ()
+  "`process-send-string\\=' signals when the peer closes between connect and
+send.  Until the subscribe returns, the process is in no variable, so
+nothing downstream could close it and a failed start leaked one."
+  (let ((closed nil))
+    (cl-letf (((symbol-function 'herdr-rpc-connect)
+               (lambda (&rest _) 'a-process))
+              ((symbol-function 'process-put) #'ignore)
+              ((symbol-function 'process-send-string)
+               (lambda (&rest _) (error "peer closed before send")))
+              ((symbol-function 'herdr-state--close)
+               (lambda (proc) (push proc closed))))
+      (should-error (herdr-state--subscribe "herdr-events-global" []))
+      (should (equal '(a-process) closed)))))
+
+(ert-deftest herdr-state-repair-returns-non-nil-when-it-ran ()
+  "The return is the contract callers branch on."
+  (herdr-state-test--with-quiet-session
+    (setq herdr-state--running t)
+    (cl-letf (((symbol-function 'herdr-state-reconcile-panes) #'ignore)
+              ((symbol-function 'herdr-state-reconcile-workspaces) #'ignore))
+      (should (herdr-state-repair)))))
+
 (ert-deftest herdr-state-repair-after-a-stop-does-nothing ()
   "A debounce armed before the stop must not spend a background timeout
 on a socket the session no longer holds."
@@ -677,6 +769,23 @@ against a pane set nothing settled."
                  (lambda (&optional resync) (setq rescheduled (list t resync)))))
         (herdr-state--settle t)
         (should (equal '(t t) rescheduled))
+        (should-not opened)))))
+
+(ert-deftest herdr-state-settle-defers-without-a-resync-too ()
+  "The startup settle carries no RESYNC, and it depends on the repair
+just as much as the reconnect path does."
+  (herdr-state-test--with-quiet-session
+    (let ((opened nil)
+          (rescheduled 'unset))
+      (setq herdr-state--running t
+            herdr-state--repairing t)
+      (cl-letf (((symbol-function 'herdr-state--open-pane-stream)
+                 (lambda () (setq opened t)))
+                ((symbol-function 'herdr-state--schedule-settle)
+                 (lambda (&optional resync) (setq rescheduled resync))))
+        (herdr-state--settle)
+        (should-not rescheduled)
+        (should-not (eq 'unset rescheduled))
         (should-not opened)))))
 
 (ert-deftest herdr-state-start-rollback-releases-a-half-open-session ()

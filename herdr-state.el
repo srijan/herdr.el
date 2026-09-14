@@ -517,13 +517,20 @@ removed the replay, so there is nothing left to absorb either."
   "Reconcile the cached pane set, then the workspace set.
 Returns non-nil when it ran.  `herdr-rpc-call\\=' services due timers while
 it waits, so a caller that finds one in flight gets nil and decides for
-itself: the timer skips its tick, `herdr-state--settle\\=' defers."
+itself: the timer skips its tick, `herdr-state--settle\\=' defers.  The
+guard covers the paths that arrive on a timer, not the on-demand
+reconciles in `herdr-select\\=' and `herdr-dispatch\\=', which must not skip."
   (when (and herdr-state--running (not herdr-state--repairing))
-    (let ((herdr-state--repairing t)
+    (let ((reconnecting herdr-state--reconnect-timer)
+          (herdr-state--repairing t)
           (herdr-rpc-timeout (min herdr-rpc-timeout
                                   herdr-rpc-background-timeout)))
       (herdr-state-reconcile-panes)
-      (herdr-state-reconcile-workspaces)
+      ;; A `pane.list\=' that just failed has scheduled a reconnect, so
+      ;; `workspace.list\=' would spend a second background timeout on the
+      ;; same wedged socket for an answer that is not coming either.
+      (unless (and (null reconnecting) herdr-state--reconnect-timer)
+        (herdr-state-reconcile-workspaces))
       t)))
 
 (defun herdr-state--arm-repair-timer ()
@@ -670,14 +677,20 @@ every subsequent event."
     (herdr-state--schedule-reconnect)))
 
 (defun herdr-state--subscribe (name subscriptions)
-  "Open an event connection called NAME carrying SUBSCRIPTIONS."
+  "Open an event connection called NAME carrying SUBSCRIPTIONS.
+Closes its own process if the subscribe signals: until this returns the
+process is in no variable, so nothing else could close it."
   (let ((proc (herdr-rpc-connect name #'herdr-state--filter
                                  #'herdr-state--sentinel)))
-    (process-put proc 'herdr-pending "")
-    (process-send-string
-     proc (herdr-rpc-encode (herdr-rpc--next-id) "events.subscribe"
-                            `((subscriptions . ,subscriptions))))
-    proc))
+    (condition-case err
+        (progn
+          (process-put proc 'herdr-pending "")
+          (process-send-string
+           proc (herdr-rpc-encode (herdr-rpc--next-id) "events.subscribe"
+                                  `((subscriptions . ,subscriptions))))
+          proc)
+      (error (herdr-state--close proc)
+             (signal (car err) (cdr err))))))
 
 (defvar herdr-state--pane-stream-ids nil
   "Pane ids connection B was last built against.
@@ -864,12 +877,18 @@ Capture the cached ids BEFORE the call.  `herdr-rpc-call\\='s wait
 services the event-stream filters, so the cache can gain a pane while
 the reply is in flight, and a reply built before that pane existed
 cannot pronounce it stale."
-  (let ((known-ids (herdr-state-pane-ids herdr-state--current)))
+  (let ((known-ids (herdr-state-pane-ids herdr-state--current))
+        (generation herdr-state--generation))
     (when-let* ((panes (condition-case nil
                            (alist-get 'panes (herdr-rpc-call "pane.list"))
                          (error (when herdr-state--running
                                   (herdr-state--schedule-reconnect))
-                                nil))))
+                                nil)))
+                ;; The wait services due timers, so the session can stop
+                ;; underneath this call.  A reply from a session that is
+                ;; gone must not repopulate the cache `herdr-state-stop\='
+                ;; just emptied.
+                ((equal generation herdr-state--generation)))
       (let* ((live-ids (mapcar (lambda (pane) (herdr-pane-id pane)) panes))
              (cached-ids (seq-filter (lambda (id) (member id known-ids))
                                      (herdr-state-pane-ids herdr-state--current)))
@@ -928,9 +947,12 @@ in the dispatcher, the modeline, and every picker for the rest of the
 `workspace.list', like `pane.list', takes no required parameters and
 answers with every live workspace, so one call resolves both closures
 and updates in a single pass.  Returns non-nil when anything changed."
-  (when-let* ((workspaces (ignore-errors
+  (when-let* ((generation herdr-state--generation)
+              (workspaces (ignore-errors
                             (alist-get 'workspaces
-                                       (herdr-rpc-call "workspace.list")))))
+                                       (herdr-rpc-call "workspace.list"))))
+              ;; See `herdr-state-reconcile-panes\=': same stop-mid-wait.
+              ((equal generation herdr-state--generation)))
     (let* ((live-ids (mapcar #'herdr-workspace-id workspaces))
            (stale (seq-remove (lambda (w) (member (herdr-workspace-id w)
                                                   live-ids))

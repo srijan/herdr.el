@@ -40,9 +40,11 @@ appear in one place from one command and in another place from a different comma
 has its own option; see [The dashboard](#the-dashboard).
 
 herdr does not send an event when the working directory changes. A directory therefore reaches
-the cache only when herdr.el asks for one, which is what `herdr-state-repair-interval` paces; see
-[The event stream](#the-event-stream). Terminal buffers follow the cache and ask for nothing of
-their own.
+the cache only when herdr.el asks for one. Two things pace those asks. `herdr-state-repair-interval`
+is the backstop, and it runs whether or not a terminal buffer exists; see
+[The event stream](#the-event-stream). With `herdr-term-track-directory` on, a burst of events also
+nudges one, grouped by `herdr-term-directory-debounce`, so a `cd` shows up at the debounce interval
+rather than at the backstop's.
 
 ## The dashboard
 
