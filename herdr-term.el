@@ -306,7 +306,7 @@ terminal."
           ;; other path.
           (herdr-term--show buffer)
           (ghostel-exec buffer herdr-executable args)
-          (herdr-term--set-directory buffer pane)
+          (herdr-term--set-directory connection buffer pane)
           (push (cons (herdr-term--key connection pane-id) buffer)
                 herdr-term--buffers))
       (error
@@ -403,10 +403,21 @@ than read when it fires: a timer callback runs in an empty extent."
     (cancel-timer herdr-term--directory-debounce-timer))
   (setq herdr-term--directory-debounce-timer nil))
 
-(defun herdr-term--set-directory (buffer pane)
-  "Point BUFFER's `default-directory' at PANE's working directory."
+(defun herdr-term--set-directory (connection buffer pane)
+  "Point BUFFER\='s `default-directory\=' at PANE\='s working directory.
+
+The pane\='s directory is a path on CONNECTION\='s own machine, so for a
+remote server it is given the TRAMP prefix that says so.  Assigning it
+verbatim would strip the buffer\='s remoteness and silently retarget it
+at a local path of the same name."
   (when-let* (((buffer-live-p buffer))
-              (dir (herdr-pane-directory pane)))
+              (dir (herdr-connection-file-name
+                    connection (herdr-pane-directory-name pane)))
+              ;; Checked only where checking is cheap and means
+              ;; anything.  A remote path would cost a stat over TRAMP
+              ;; per pane per poll to ask a question the server has
+              ;; already answered about its own machine.
+              ((or (file-remote-p dir) (file-directory-p dir))))
     (with-current-buffer buffer
       (unless (equal default-directory dir)
         (setq default-directory dir)))))
@@ -417,7 +428,7 @@ than read when it fires: a timer callback runs in an empty extent."
     (let ((state (herdr-state-current connection)))
       (dolist (cell (herdr-term--buffers-for connection))
         (when-let* ((pane (herdr-state-pane state (car cell))))
-          (herdr-term--set-directory (cdr cell) pane))))))
+          (herdr-term--set-directory connection (cdr cell) pane))))))
 
 (defun herdr-term--on-state-change (connection kind _data)
   "Resync CONNECTION\='s terminal buffers after its cache changed.

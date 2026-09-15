@@ -705,9 +705,14 @@ nothing to mirror from it."
   (dolist (root known-project-roots)
     (let ((key (herdr-dispatch--worktree-key-for-root root)))
       (when (herdr-dispatch--worktrees-wanted-p connection key)
+        ;; The root is a file name Emacs holds; the request is a
+        ;; directory the server has to be able to open.  A TRAMP root
+        ;; survives `expand-file-name' unchanged and reaches the server
+        ;; as `/ssh:host:/srv/project/'.
         (herdr-dispatch--fetch-worktrees
          connection key
-         (file-name-as-directory (expand-file-name root)))))))
+         (file-name-as-directory
+          (herdr-connection-server-path connection root)))))))
 
 (defun herdr-dispatch--retry-unanswered-worktrees (connection)
   "Forget every workspace that has no answer, and ask again.
@@ -1045,11 +1050,22 @@ the same reason and with more at stake; see
 The prompt defaults to the directory of the workspace at point.  The
 label is left to herdr, which names a workspace after its directory."
   (let* ((target (herdr-dispatch-target-at-point))
+         (connection (if target
+                         (herdr-dispatch-target-connection target)
+                       (herdr-current-connection)))
+         ;; Both halves have to name the same machine as the server.
+         ;; `read-directory-name' completes against whatever filesystem
+         ;; its default names, so a remote server given a local default
+         ;; browses the wrong machine — and no amount of prefix
+         ;; stripping afterwards repairs a path chosen there.
          (default (or (when-let* ((id (and target
                                            (herdr-dispatch-target-workspace
                                             target))))
-                        (herdr-state-workspace-directory
-                         (herdr-state-current) id))
+                        (herdr-connection-file-name
+                         connection
+                         (herdr-state-workspace-directory
+                          (herdr-state-current connection) id)))
+                      (herdr-connection-host-directory connection)
                       default-directory)))
     (herdr-workspace-create
      (read-directory-name "Workspace directory: " default))))

@@ -39,6 +39,54 @@
 
 ;;; The registry
 
+(defun herdr-connection--host (path)
+  "Return the host part of PATH\\='s TRAMP prefix, or nil when it is local.
+The user is deliberately ignored: `/ssh:shadow:\\=' and
+`/ssh:me@shadow:\\=' name the same machine, and refusing a path because
+the two were spelled differently would be this package inventing a
+distinction TRAMP does not make."
+  (when-let* ((remote (file-remote-p (or path ""))))
+    (let ((host (file-remote-p remote 'host)))
+      (and host (downcase host)))))
+
+(defun herdr-connection-file-name (connection path)
+  "Return PATH, which CONNECTION\\='s server named, as a file name Emacs can use.
+
+A remote server names paths on its own machine, so a buffer pointed at
+one verbatim is pointed at a local path of the same name — usually one
+that does not exist, and occasionally one that does and is not it.  The
+TRAMP prefix is what makes the name mean the machine it came from."
+  (when path
+    (if-let* ((prefix (herdr-connection-host-directory connection)))
+        (concat prefix (file-local-name path))
+      path)))
+
+(defun herdr-connection-server-path (connection path)
+  "Return PATH, which Emacs named, as CONNECTION\\='s server would name it.
+
+A server cannot use a TRAMP file name: it names a machine, and the
+server already knows which machine it is on.  So the prefix is stripped
+— but only once the prefix and the connection agree about the machine,
+because a path from a buffer on some third host is a path on neither and
+stripping it would hand the server a filename that resolves to
+something arbitrary.  A local path offered to a remote server is the
+same mistake the other way round.
+
+Signals `herdr-error\\=' on a mismatch rather than guessing, since every
+guess here names a real directory on the wrong machine."
+  (when path
+    (let ((path-host (herdr-connection--host path))
+          (server-host (herdr-connection--host
+                        (herdr-connection-host-directory connection))))
+      (unless (equal path-host server-host)
+        (signal 'herdr-error
+                (list "wrong_host"
+                      (format "%s is on %s; %s is on %s"
+                              path (or path-host "this machine")
+                              (herdr-connection-name connection)
+                              (or server-host "this machine")))))
+      (file-local-name (expand-file-name path)))))
+
 (defvar herdr-connections nil
   "Alist of (NAME . CONNECTION) for every connection being followed.
 

@@ -246,9 +246,13 @@ a zero-sized one, so the order is load-bearing rather than incidental."
             (kill-buffer buffer)))))))
 
 (ert-deftest herdr-term-attach-cleans-up-when-any-step-fails ()
-  "Not only the exec: a display action that signals, or a pane whose cwd
-is not a string, used to leave the same unregistered live buffer through
-a different door."
+  "Not only the exec: a display action that signals used to leave the same
+unregistered live buffer through a different door.
+
+A pane whose cwd is not a string used to be a third door, by reaching
+`file-directory-p' with a number.  It is validated now instead of
+signalling: a malformed field is a directory the buffer cannot follow,
+not a reason to refuse the terminal."
   (let ((state (herdr-state-from-snapshot
                 '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
                              (agent . "claude") (terminal_id . "t7")
@@ -258,10 +262,13 @@ a different door."
       (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
                 ((symbol-function 'ghostel-exec) #'ignore)
                 ((symbol-function 'herdr-term--show) #'ignore))
-        ;; `herdr-pane-directory' asks `file-directory-p' about a number.
-        (should-error (herdr-term--attach (herdr-current-connection) state (herdr-state-pane state "w1:p1")))
-        (should (null herdr-term--buffers))
-        (should (null (seq-difference (buffer-list) before))))
+        ;; A cwd of 42 names no directory, and the attach carries on.
+        (let ((buffer (herdr-term--attach (herdr-current-connection) state
+                                          (herdr-state-pane state "w1:p1"))))
+          (should (buffer-live-p buffer))
+          (should (equal 1 (length herdr-term--buffers)))
+          (kill-buffer buffer))
+        (setq herdr-term--buffers nil))
       (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
                 ((symbol-function 'ghostel-exec) #'ignore)
                 ((symbol-function 'herdr-term--show)
@@ -276,14 +283,14 @@ a different door."
   (with-temp-buffer
     (let ((buffer (current-buffer)))
       (setq default-directory "/")
-      (herdr-term--set-directory buffer '((cwd . "/tmp")))
+      (herdr-term--set-directory (herdr-current-connection) buffer '((cwd . "/tmp")))
       (should (equal "/tmp/" default-directory)))))
 
 (ert-deftest herdr-term-set-directory-ignores-a-missing-directory ()
   "A stale cwd must not leave `default-directory' pointing at nothing."
   (with-temp-buffer
     (setq default-directory "/")
-    (herdr-term--set-directory (current-buffer)
+    (herdr-term--set-directory (herdr-current-connection) (current-buffer)
                                '((cwd . "/no/such/place/anywhere")))
     (should (equal "/" default-directory))))
 
@@ -775,6 +782,33 @@ a cache slot changed under it — which is every reconnect."
                 (herdr-connection-global-process connection) 'a-process)
           (should (eq buffer (herdr-term-buffer-for-pane connection "w1:p1"))))
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest herdr-term-a-remote-pane-keeps-its-buffer-remote ()
+  "The pane's reported directory is a path on the server's machine.
+Syncing it verbatim strips the buffer's remoteness, which is the defect:
+the buffer then names a local path of the same name."
+  (let ((remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
+        (local (herdr-connection--make :name "local"))
+        (buffer (generate-new-buffer " *pane*"))
+        (pane '((pane_id . "w1:p1") (cwd . "/srv/app"))))
+    (unwind-protect
+        (progn
+          (herdr-term--set-directory remote buffer pane)
+          (should (equal "/ssh:shadow:/srv/app/"
+                         (buffer-local-value 'default-directory buffer)))
+          (should (file-remote-p
+                   (buffer-local-value 'default-directory buffer)))
+          ;; A local pane's buffer is not made remote.  A real
+          ;; directory, because the local half still checks the local
+          ;; filesystem — which is exactly what it cannot do for the
+          ;; remote one.
+          (herdr-term--set-directory local buffer '((pane_id . "w1:p1")
+                                                    (cwd . "/tmp")))
+          (should (equal "/tmp/"
+                         (buffer-local-value 'default-directory buffer)))
+          (should-not (file-remote-p
+                       (buffer-local-value 'default-directory buffer))))
+      (kill-buffer buffer))))
 
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here

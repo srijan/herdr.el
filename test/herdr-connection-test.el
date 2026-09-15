@@ -334,5 +334,79 @@ sentinel finds nothing left to want."
     (should-not (herdr-connection-tunnel connection))
     (should-not (herdr-connection-list))))
 
+;;; Paths cross a machine boundary in both directions
+
+(ert-deftest herdr-connection-file-name-names-the-machine-a-path-is-on ()
+  "A remote server names paths on its own machine.  Pointing a buffer at
+one verbatim points it at a local path of the same name — usually one
+that does not exist, occasionally one that does and is not it."
+  (let ((local (herdr-connection--make :name "local"))
+        (remote (herdr-connection--make :name "shadow" :ssh-target "shadow")))
+    (should (equal "/srv/app/" (herdr-connection-file-name local "/srv/app/")))
+    (should (equal "/ssh:shadow:/srv/app/"
+                   (herdr-connection-file-name remote "/srv/app/")))
+    ;; Already remote: not doubled.
+    (should (equal "/ssh:shadow:/srv/app/"
+                   (herdr-connection-file-name remote "/ssh:shadow:/srv/app/")))
+    (should-not (herdr-connection-file-name remote nil))))
+
+(ert-deftest herdr-connection-server-path-strips-what-a-server-cannot-use ()
+  "A server cannot use a TRAMP file name: it names a machine, and the
+server already knows which machine it is on."
+  (let ((local (herdr-connection--make :name "local"))
+        (remote (herdr-connection--make :name "shadow" :ssh-target "shadow")))
+    (should (equal "/srv/app/" (herdr-connection-server-path local "/srv/app/")))
+    (should (equal "/srv/app/"
+                   (herdr-connection-server-path remote "/ssh:shadow:/srv/app/")))
+    ;; The user part is not a distinction TRAMP makes, so it is not one
+    ;; this makes either.
+    (should (equal "/srv/app/"
+                   (herdr-connection-server-path
+                    (herdr-connection--make :name "s" :ssh-target "me@shadow")
+                    "/ssh:shadow:/srv/app/")))))
+
+(ert-deftest herdr-connection-server-path-refuses-a-path-on-another-machine ()
+  "Every guess here names a real directory on the wrong machine, so there
+is no safe default: a local path offered to a remote server and a remote
+path offered to a local one are the same mistake in two directions."
+  (let ((local (herdr-connection--make :name "local"))
+        (remote (herdr-connection--make :name "shadow" :ssh-target "shadow")))
+    (let ((err (should-error (herdr-connection-server-path
+                              local "/ssh:elsewhere:/srv/app/")
+                             :type 'herdr-error)))
+      (should (equal "wrong_host" (herdr-error-code err))))
+    (should-error (herdr-connection-server-path remote "/srv/app/")
+                  :type 'herdr-error)
+    (should-error (herdr-connection-server-path
+                   remote "/ssh:elsewhere:/srv/app/")
+                  :type 'herdr-error)))
+
+(ert-deftest herdr-cmd-creating-from-a-tramp-buffer-sends-a-server-path ()
+  "`expand-file-name' on a TRAMP `default-directory' produces
+`/ssh:host:/path', and handing the server that is handing it a filename
+it cannot open."
+  (let* ((remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
+         (herdr-connections (herdr-test-connections remote))
+         (sent nil))
+    (cl-letf (((symbol-function 'herdr-rpc-call)
+               (lambda (_connection _method params) (setq sent params) nil))
+              ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore)
+              ((symbol-function 'herdr-cmd--created-pane-id) #'ignore))
+      (herdr-workspace-create "/ssh:shadow:/srv/app/")
+      (should (equal "/srv/app/" (alist-get 'cwd sent)))
+      (should-not (file-remote-p (alist-get 'cwd sent))))))
+
+(ert-deftest herdr-dispatch-a-known-root-reaches-its-server-as-a-server-path ()
+  "A TRAMP root survives `expand-file-name' unchanged and would reach the
+server as `/ssh:host:/srv/project/'."
+  (let ((remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
+        (asked nil))
+    (cl-letf (((symbol-function 'herdr-dispatch--fetch-worktrees)
+               (lambda (_connection _key directory) (push directory asked))))
+      (herdr-dispatch--request-known-project-worktrees
+       remote '("/ssh:shadow:/srv/project"))
+      (should (equal '("/srv/project/") asked))
+      (should-not (file-remote-p (car asked))))))
+
 (provide 'herdr-connection-test)
 ;;; herdr-connection-test.el ends here

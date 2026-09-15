@@ -106,10 +106,21 @@ way to know where it is.
 
 `foreground_cwd\\=' is the fallback: a pane that has not reported a cwd of
 its own may still say where its foreground process is."
+  (when-let* ((dir (herdr-pane-directory-name pane)))
+    (when (file-directory-p dir) dir)))
+
+(defun herdr-pane-directory-name (pane)
+  "Return PANE\\='s working directory as a directory name, unchecked.
+
+`herdr-pane-directory\\=' asks the filesystem whether it exists; this does
+not, because the filesystem it would ask is the wrong one whenever the
+pane belongs to a server on another machine.  Checking a remote path
+properly means a stat over TRAMP per pane per poll, and the server
+tracks its own machine\\='s directories and republishes them, so it is the
+better authority anyway."
   (when-let* ((dir (or (alist-get 'cwd pane)
                        (alist-get 'foreground_cwd pane))))
-    (when (file-directory-p dir)
-      (file-name-as-directory dir))))
+    (and (stringp dir) (file-name-as-directory dir))))
 
 (defun herdr-pane-cwd (pane)
   "Return the cwd PANE reports, unchecked, or nil.

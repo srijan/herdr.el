@@ -225,13 +225,14 @@ test is enough."
 (defun herdr-workspace-create (cwd &optional label)
   "Create a workspace rooted at CWD called LABEL."
   (interactive (list (read-directory-name "Workspace directory: ")))
-  (herdr-cmd--follow-new-pane
-   (herdr-cmd--created-pane-id
-    (herdr-rpc-call (herdr-current-connection) "workspace.create"
-                    `((cwd . ,(expand-file-name cwd))
-                      (label . ,(or label (file-name-nondirectory
-                                           (directory-file-name cwd))))
-                      (focus . t))))))
+  (let ((connection (herdr-current-connection)))
+    (herdr-cmd--follow-new-pane
+     (herdr-cmd--created-pane-id
+      (herdr-rpc-call connection "workspace.create"
+                      `((cwd . ,(herdr-connection-server-path connection cwd))
+                        (label . ,(or label (file-name-nondirectory
+                                             (directory-file-name cwd))))
+                        (focus . t)))))))
 
 (defun herdr-workspace-close (&optional workspace-id)
   "Close WORKSPACE-ID, prompting when not given.
@@ -295,11 +296,13 @@ This is the command that pays for the package: one step from a branch
 name to a worktree with its own herdr workspace."
   (interactive (list (read-string "New worktree branch: ")
                      (read-string "Base ref (optional): ")))
-  (herdr-rpc-call (herdr-current-connection) "worktree.create"
-                  `((branch . ,branch)
-                    (base . ,(unless (string-empty-p (or base "")) base))
-                    (cwd . ,(expand-file-name default-directory))
-                    (focus . t))))
+  (let ((connection (herdr-current-connection)))
+    (herdr-rpc-call connection "worktree.create"
+                    `((branch . ,branch)
+                      (base . ,(unless (string-empty-p (or base "")) base))
+                      (cwd . ,(herdr-connection-server-path
+                               connection default-directory))
+                      (focus . t)))))
 
 (defun herdr-worktree-remove (&optional workspace-id force)
   "Remove the worktree workspace WORKSPACE-ID, forcing when FORCE."
@@ -336,11 +339,13 @@ name to a worktree with its own herdr workspace."
 focused, and anything that then asks the server \"where am I?\" answers
 with the pane the user was on before.  The reply names the new
 workspace\\='s root pane, so callers go there directly rather than asking."
-  (herdr-cmd--created-pane-id
-   (herdr-rpc-call (herdr-current-connection) "workspace.create"
-                   `((cwd . ,(expand-file-name directory))
-                     (label . ,(herdr-cmd--workspace-label directory))
-                     (focus . t)))))
+  (let ((connection (herdr-current-connection)))
+    (herdr-cmd--created-pane-id
+     (herdr-rpc-call connection "workspace.create"
+                     `((cwd . ,(herdr-connection-server-path
+                                connection directory))
+                       (label . ,(herdr-cmd--workspace-label directory))
+                       (focus . t))))))
 
 (defun herdr-cmd-open-workspace-for (root)
   "Focus the workspace at ROOT, creating it if absent, and go there.
