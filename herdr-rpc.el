@@ -101,7 +101,7 @@ under it; a composite key holds the token instead."
   (worktrees-generation 0)
   ;; Handshake and schema, one answer per server rather than per package.
   (protocol-warned nil) (schema nil) (schema-version nil)
-  (schema-protocol nil) (schema-mismatch-warned nil))
+  (schema-mismatch-warned nil))
 
 (defun herdr-connection-local ()
   "Return a connection to the local server at `herdr-socket-path'."
@@ -149,12 +149,6 @@ params serialize as {} rather than null."
       (when (cdr cell)
         (puthash (symbol-name (car cell)) (cdr cell) table)))
     table))
-
-(defun herdr-rpc-array (items)
-  "Return ITEMS as a vector, which is how JSON arrays must be built.
-Every array-typed parameter must go through here: `json-serialize'
-cannot tell a list of alists from a single alist."
-  (vconcat items))
 
 (defun herdr-rpc-encode (id method params)
   "Encode a request with ID, METHOD and PARAMS as one NDJSON line."

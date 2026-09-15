@@ -256,13 +256,11 @@ guarantee a timeout already gets."
         (setq proc (herdr-rpc-call-async (herdr-current-connection) "ping" nil #'ignore))
         (should-not (memq proc (process-list)))))))
 
-(ert-deftest herdr-rpc-array-serializes-as-a-json-array ()
-  "A list of alists is ambiguous to `json-serialize'; vectors are not."
+(ert-deftest herdr-rpc-encode-serializes-a-vector-as-a-json-array ()
   (let ((json (herdr-rpc-encode
                "1" "events.subscribe"
-               `((subscriptions . ,(herdr-rpc-array
-                                    (list '((type . "pane.created"))
-                                          '((type . "pane.closed")))))))))
+               `((subscriptions . ,(vconcat '(((type . "pane.created"))
+                                              ((type . "pane.closed")))))))))
     (should (string-match-p
              "\"subscriptions\":\\[{\"type\":\"pane.created\"},{\"type\":\"pane.closed\"}\\]"
              json))))

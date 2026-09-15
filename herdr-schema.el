@@ -40,15 +40,6 @@
 (require 'herdr-rpc)
 (require 'herdr-connection)
 
-(defun herdr-schema-load-file (connection path)
-  "Load and cache the schema stored at PATH as CONNECTION's.
-Used by the tests to stand a captured schema up without a herdr on
-`exec-path'."
-  (setf (herdr-connection-schema connection)
-        (with-temp-buffer
-          (insert-file-contents path)
-          (herdr-rpc-decode (buffer-string)))))
-
 (defun herdr-schema--fetch (connection)
   "Shell out to herdr for CONNECTION's schema, bounded by `herdr-rpc-timeout'.
 
@@ -102,13 +93,9 @@ bounded wait every socket RPC already uses."
         (when (process-live-p proc)
           (delete-process proc))))))
 
-(defun herdr-schema--server-version (connection)
-  "Return CONNECTION\='s server version string, or nil if unreachable."
-  (ignore-errors (alist-get 'version (herdr-rpc-call connection "ping"))))
-
-(defun herdr-schema--server-protocol (connection)
-  "Return CONNECTION\='s server protocol number, or nil if unreachable."
-  (ignore-errors (alist-get 'protocol (herdr-rpc-call connection "ping"))))
+(defun herdr-schema--pong (connection)
+  "Return CONNECTION\='s answer to a ping, or nil if unreachable."
+  (ignore-errors (herdr-rpc-call connection "ping")))
 
 (defun herdr-schema-protocol (connection)
   "Return the protocol CONNECTION\='s loaded schema declares.
@@ -116,8 +103,9 @@ This is the binary's answer, not the server's."
   (alist-get 'protocol (or (herdr-connection-schema connection)
                            (herdr-schema connection))))
 
-(defun herdr-schema-matches-server-p (connection)
+(defun herdr-schema-matches-server-p (connection &optional pong)
   "Return non-nil when the loaded schema describes CONNECTION\='s server.
+PONG is the server\='s ping answer, asked for when not given.
 
 There is no socket method for the schema, so it can only come from a
 `herdr\=' binary.  When that binary is a different build from the running
@@ -127,14 +115,16 @@ made against it answers the wrong question.
 An unreachable server is not a mismatch.  `herdr-call\=' reads the
 schema with no server running, and reporting that as a disagreement
 would warn on every one of those."
-  (let ((server (herdr-schema--server-protocol connection))
+  (let ((server (alist-get 'protocol (or pong (herdr-schema--pong connection))))
         (schema (herdr-schema-protocol connection)))
     (or (null server) (null schema) (equal server schema))))
 
-(defun herdr-schema--warn-on-mismatch (connection)
-  "Say once when the schema and CONNECTION\='s server describe different APIs."
+(defun herdr-schema--warn-on-mismatch (connection pong)
+  "Say once when the schema and CONNECTION\='s ping answer PONG disagree.
+A nil PONG is an unreachable server, which is not a disagreement."
   (unless (or (herdr-connection-schema-mismatch-warned connection)
-              (herdr-schema-matches-server-p connection))
+              (null pong)
+              (herdr-schema-matches-server-p connection pong))
     (setf (herdr-connection-schema-mismatch-warned connection) t)
     (message
      "herdr.el: %s's %s speaks protocol %s but its server speaks %s; \
@@ -142,7 +132,7 @@ schema-driven prompts and drift checks describe the binary, not the server"
      (herdr-connection-name connection)
      (herdr-connection-executable connection)
      (herdr-schema-protocol connection)
-     (herdr-schema--server-protocol connection))))
+     (alist-get 'protocol pong))))
 
 (defun herdr-schema (connection)
   "Return CONNECTION\='s API schema, fetching it if needed.
@@ -152,7 +142,8 @@ test cannot check yesterday's schema and report no drift.
 
 Per connection, not per package: two servers have two binaries and two
 schemas, and one cache cannot hold both."
-  (let ((version (herdr-schema--server-version connection)))
+  (let* ((pong (herdr-schema--pong connection))
+         (version (alist-get 'version pong)))
     (when (and (herdr-connection-schema connection)
                (herdr-connection-schema-version connection)
                version
@@ -162,10 +153,8 @@ schemas, and one cache cannot hold both."
       (setf (herdr-connection-schema-mismatch-warned connection) nil))
     (unless (herdr-connection-schema connection)
       (herdr-schema--fetch connection)
-      (setf (herdr-connection-schema-version connection) version)
-      (setf (herdr-connection-schema-protocol connection)
-            (alist-get 'protocol (herdr-connection-schema connection))))
-    (herdr-schema--warn-on-mismatch connection))
+      (setf (herdr-connection-schema-version connection) version))
+    (herdr-schema--warn-on-mismatch connection pong))
   (herdr-connection-schema connection))
 
 ;;; Navigation
@@ -255,14 +244,8 @@ One of `enum', `string', `boolean', `integer', `number', `object',
 
 (defun herdr-schema--type-symbol (type)
   "Map JSON Schema TYPE to a symbol this package uses."
-  (pcase type
-    ("string" 'string)
-    ("boolean" 'boolean)
-    ("integer" 'integer)
-    ("number" 'number)
-    ("object" 'object)
-    ("array" 'array)
-    (_ nil)))
+  (and (member type '("string" "boolean" "integer" "number" "object" "array"))
+       (intern type)))
 
 ;;; Prompting
 
@@ -286,12 +269,11 @@ Returns a value ready to hand to `herdr-rpc-call', or nil to omit it."
        (let ((raw (read-string (format "%s (JSON): " name))))
          (if (string-empty-p raw) nil (herdr-rpc-decode raw))))
       ('array
-       ;; `herdr-rpc-decode' gives a list, which an array-typed
-       ;; parameter cannot be: it must go through `herdr-rpc-array' or
-       ;; `json-serialize' fails before the request goes out.
+       ;; `herdr-rpc-decode' gives a list; `json-serialize' needs a
+       ;; vector to tell an array from an alist.
        (let ((raw (read-string (format "%s (JSON): " name))))
          (if (string-empty-p raw) nil
-           (herdr-rpc-array (herdr-rpc-decode raw)))))
+           (vconcat (herdr-rpc-decode raw)))))
       (_
        (let ((raw (read-string prompt)))
          (if (string-empty-p raw) nil raw))))))

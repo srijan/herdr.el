@@ -5,7 +5,7 @@
 ;; Author: Eddie Jesinsky
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-;; Package-Requires: ((emacs "28.1") (magit-section "3.3"))
+;; Package-Requires: ((emacs "28.1") (magit-section "4.0"))
 
 ;;; Commentary:
 
@@ -112,48 +112,13 @@ thirty-odd roots against five workspaces."
   :type 'boolean
   :group 'herdr)
 
-(defcustom herdr-dispatch-fold-indicators nil
-  "Value `magit-section-visibility-indicators\\=' takes in the dispatcher.
-Nil, the default, picks a pair per frame; see
-`herdr-dispatch--fold-indicators\\='.
-
-The same margin characters for graphical and terminal frames, which is
-neither half of the magit default.  That default is
-`(magit-fringe-bitmap> . magit-fringe-bitmapv)\\=' in a graphical frame —
-an arrow in the left fringe, which several themes render at such low
-contrast that it reads as nothing at all, and which is off past the
-window edge rather than beside the text it describes — and an ellipsis
-appended to collapsed headings in a terminal frame, which marks the
-collapsed sections and leaves the expandable ones unmarked.  So on the
-default the two frame types disagree about what a foldable line even
-looks like, and neither answer is legible.
-
-A character indicator is drawn in the left margin instead, which
-terminal frames have and fringes they do not, so both frame types show
-the same `▸\\=' beside a collapsed heading and `▾\\=' beside an expanded
-one.  The margin has to be wide enough to hold it: see
-`herdr-dispatch-mode\\='.  Car before cdr because that is the order
-`magit-section-maybe-update-visibility-indicator\\=' reads them in —
-the car is what a hidden section gets."
-  :type '(choice (const :tag "Choose a pair for the frame" nil)
-                 (repeat (cons character character)))
-  :group 'herdr)
-
 (defun herdr-dispatch--fold-indicators ()
-  "Return the fold indicators to use, honouring the user\\='s setting.
-
-Falls back to arrows, or to ASCII where the arrows cannot be drawn.
-That question is asked here, from `herdr-dispatch-mode\\=', rather than
-once at load: under `emacs --daemon\\=' the library is loaded before any
-frame exists, so a load-time `char-displayable-p\\=' is answered against
-no display at all and the ASCII fallback is then frozen for the life of
-the session.  Asking on mode entry answers against a frame the user
-actually has.  A daemon serving a graphical and a terminal frame at once
-still gets one answer per dashboard buffer, which is the best a
-buffer-local value can do."
-  (or herdr-dispatch-fold-indicators
-      (let ((pair (if (char-displayable-p ?▾) '(?▸ . ?▾) '(?> . ?v))))
-        (list pair pair))))
+  "Return `magit-section-visibility-indicators\\=' for the current frame.
+The same margin character in graphical and terminal frames, asked on
+mode entry rather than at load so a daemon answers against a real
+frame."
+  (let ((pair (if (char-displayable-p ?▾) '(?▸ . ?▾) '(?> . ?v))))
+    (list pair pair)))
 
 (define-derived-mode herdr-dispatch-mode magit-section-mode "herdr"
   "Major mode for the herdr dispatcher."
@@ -280,10 +245,8 @@ each, so the buffer does not end in one, and outside the sections rather
 than inside, so folding a workspace does not swallow the gap that sets
 it apart from the next.
 
-`magit-insert-section\\=' takes its type as an unevaluated symbol, so the
-types are spelled out rather than passed through.  A runtime `eval\\='
-would collapse these into one branch; explicit branches byte-compile
-and do not need defending."
+Leaves — panes and worktrees — are inserted as content, the rest as
+foldable headings."
   (let ((depth (or depth 0))
         (separate nil))
     (dolist (node nodes)
@@ -292,50 +255,19 @@ and do not need defending."
             (children (nth 3 node)))
         (when (and separate (= depth 0)) (insert ?\n))
         (setq separate t)
-        (pcase (nth 0 node)
-          ('herdr-server
-           (herdr-dispatch--apply-fold
-            (magit-insert-section (herdr-server value)
-              (herdr-dispatch--insert-container line depth)
-              (herdr-dispatch--insert-nodes children (1+ depth)))))
-          ('herdr-workspace
-           (herdr-dispatch--apply-fold
-            (magit-insert-section (herdr-workspace value)
-              (herdr-dispatch--insert-container line depth)
-              (herdr-dispatch--insert-nodes children (1+ depth)))))
-          ('herdr-pane
-           (magit-insert-section (herdr-pane value)
-             (herdr-dispatch--insert-leaf line depth)
-             (herdr-dispatch--insert-nodes children (1+ depth))))
-          ('herdr-panes
-           (herdr-dispatch--apply-fold
-            (magit-insert-section (herdr-panes value)
-              (herdr-dispatch--insert-container line depth)
-              (herdr-dispatch--insert-nodes children (1+ depth)))))
-          ('herdr-worktree
-           (magit-insert-section (herdr-worktree value)
-             (herdr-dispatch--insert-leaf line depth)
-             (herdr-dispatch--insert-nodes children (1+ depth))))
-          ('herdr-known-project
-           ;; A heading when it owns rows, a leaf when it owns none.
-           ;; The rows used to hang under a `worktrees (N)' heading,
-           ;; which was the foldable thing; hanging them off the project
-           ;; row directly left a repository of sixteen checkouts as
-           ;; sixteen rows with nothing to collapse them.  Still a leaf
-           ;; when it has no children, because a fold indicator beside
-           ;; something with nothing to fold is what
-           ;; `herdr-dispatch--insert-container' exists to avoid.
-           (herdr-dispatch--apply-fold
-            (magit-insert-section (herdr-known-project value)
-              (if children
-                  (herdr-dispatch--insert-container line depth)
-                (herdr-dispatch--insert-leaf line depth))
-              (herdr-dispatch--insert-nodes children (1+ depth)))))
-          ('herdr-known-projects
-           (herdr-dispatch--apply-fold
-            (magit-insert-section (herdr-known-projects value)
-              (herdr-dispatch--insert-container line depth)
-              (herdr-dispatch--insert-nodes children (1+ depth))))))))))
+        (let ((type (nth 0 node))
+              (leaf (memq (nth 0 node) '(herdr-pane herdr-worktree))))
+          ;; A known project is a heading when it owns rows, a leaf when
+          ;; it owns none: a fold indicator beside nothing to fold is
+          ;; what `herdr-dispatch--insert-container' exists to avoid.
+          (when (and (eq type 'herdr-known-project) (null children))
+            (setq leaf t))
+          (herdr-dispatch--apply-fold
+           (magit-insert-section ((eval type) value)
+             (if leaf
+                 (herdr-dispatch--insert-leaf line depth)
+               (herdr-dispatch--insert-container line depth))
+             (herdr-dispatch--insert-nodes children (1+ depth)))))))))
 
 ;;; The object at point
 
@@ -485,34 +417,8 @@ reported rather than raised.  DOCSTRING documents the command."
 
 ;;; Worktrees
 ;;
-;; The four globals above are storage.  Everything else asks the cache
-;; four questions: what a key's listing is, what record a path names,
-;; whether an event makes the cache stale, and what still needs
-;; fetching.
-
-(defun herdr-dispatch--worktree-key-for-workspace (workspace-id)
-  "Return the cache key for WORKSPACE-ID.
-The key stays a plain string: `herdr-dispatch-refresh\\=' hands the listing
-alist straight to `herdr-tree-build\\=', which looks it up with `assoc\\=' on
-bare strings in four places.  Widening it to carry a server is the
-multi-connection work\\='s job, and it starts here."
-  workspace-id)
-
-(defun herdr-dispatch--worktree-key-for-root (root)
-  "Return the cache key for the known-project ROOT.
-One alist holds listings under workspace ids and under project roots, so
-the cache names that mixed domain rather than pretending to be
-workspace-only.  ROOT is used verbatim, because it is also the id the
-renderer draws the row under."
-  root)
-
-(defun herdr-dispatch--worktrees-listings (connection)
-  "Return every cached listing, as the alist `herdr-tree-build\\=' takes."
-  (herdr-connection-worktrees connection))
-
-(defun herdr-dispatch--worktrees-listing (connection key)
-  "Return the worktrees cached under KEY, which may legitimately be nil."
-  (cdr (assoc key (herdr-connection-worktrees connection))))
+;; The listings live on the connection, as an alist keyed by workspace
+;; id or by known-project root, the shape `herdr-tree-build' takes.
 
 (defun herdr-dispatch--worktrees-answered-p (connection key)
   "Return non-nil when KEY has an answer.
@@ -530,12 +436,6 @@ Neither answered nor already in flight."
   "Return non-nil when KEY\\='s request has gone out and not been answered.
 The marker is what stops the next of many refreshes asking again."
   (and (member key (herdr-connection-worktrees-pending connection)) t))
-
-(defun herdr-dispatch--worktrees-epoch (connection)
-  "Return the generation a request issued now would carry.
-A reply from any other epoch was invalidated in flight and is dropped
-whole.  The number itself is storage; that it moved is the contract."
-  (herdr-connection-worktrees-generation connection))
 
 (defun herdr-dispatch--worktrees-unanswered-reason (connection key)
   "Return why KEY was cached without an answer, or nil.
@@ -594,8 +494,8 @@ the whole cache is invalidated."
 (defun herdr-dispatch--worktrees-received (connection key generation found error)
   "Cache FOUND as KEY\\='s worktrees and ask for a redraw.
 
-GENERATION is what `herdr-dispatch--worktrees-epoch\\=' answered when the
-request went out.  A reply from an older generation was invalidated while
+GENERATION is the connection\\='s worktrees generation when the request
+went out.  A reply from an older generation was invalidated while
 it was in flight, so it is dropped whole: it neither writes the cache nor
 touches the pending set, which by then describes the refetch that
 replaced it rather than this request.
@@ -707,15 +607,14 @@ replaces it is either an answer or a failure, and neither is retried
 here."
   (dolist (workspace (herdr-state-workspaces state))
     (let* ((id (herdr-workspace-id workspace))
-           (key (herdr-dispatch--worktree-key-for-workspace id))
            (directory (herdr-state-workspace-directory state id)))
       (when (and directory
                  (eq 'no-directory
                      (herdr-dispatch--worktrees-unanswered-reason
-                      connection key)))
-        (herdr-dispatch--forget-one-worktrees connection key))
-      (when (herdr-dispatch--worktrees-wanted-p connection key)
-        (herdr-dispatch--fetch-worktrees connection key directory)))))
+                      connection id)))
+        (herdr-dispatch--forget-one-worktrees connection id))
+      (when (herdr-dispatch--worktrees-wanted-p connection id)
+        (herdr-dispatch--fetch-worktrees connection id directory)))))
 
 (defun herdr-dispatch--request-known-project-worktrees (connection known-project-roots)
   "Ask for the worktrees of every root in KNOWN-PROJECT-ROOTS with none cached.
@@ -729,16 +628,13 @@ handles specially for a workspace with no panes yet — no-directory,
 retried once a directory exists — and it cannot arise here, so there is
 nothing to mirror from it."
   (dolist (root known-project-roots)
-    (let ((key (herdr-dispatch--worktree-key-for-root root)))
-      (when (herdr-dispatch--worktrees-wanted-p connection key)
-        ;; The root is a file name Emacs holds; the request is a
-        ;; directory the server has to be able to open.  A TRAMP root
-        ;; survives `expand-file-name' unchanged and reaches the server
-        ;; as `/ssh:host:/srv/project/'.
-        (herdr-dispatch--fetch-worktrees
-         connection key
-         (file-name-as-directory
-          (herdr-connection-server-path connection root)))))))
+    (when (herdr-dispatch--worktrees-wanted-p connection root)
+      ;; The root is a file name Emacs holds; the request is a directory
+      ;; the server has to be able to open.
+      (herdr-dispatch--fetch-worktrees
+       connection root
+       (file-name-as-directory
+        (herdr-connection-server-path connection root))))))
 
 (defun herdr-dispatch--retry-unanswered-worktrees (connection)
   "Forget every workspace that has no answer, and ask again.
@@ -819,10 +715,9 @@ not the same repository."
   (seq-find (lambda (candidate)
               (equal path (herdr-worktree-path candidate)))
             (apply #'append
-                   (mapcar #'cdr (herdr-dispatch--worktrees-listings
-                                  connection)))))
+                   (mapcar #'cdr (herdr-connection-worktrees connection)))))
 
-(defun herdr-dispatch--checked-worktree (connection target)
+(defun herdr-dispatch--checked-worktree (target)
   "Return TARGET\\='s WorktreeInfo, or refuse the row.
 
 The one place every worktree verb settles whether a row may be acted on,
@@ -832,8 +727,9 @@ renderer declines to draw, so a stale row cannot be acted on.
 Three refusals, in the order the answers arrive.  A row with no cached
 record first, or the others read fields off nil and announce that a row
 whose record was merely missing is the repository\\='s own checkout.  Then
-`herdr-worktree-linked-p\\=', and `herdr-worktree-open-as-p\\=' against
-the workspace the row sits inside, both qualified by CONNECTION.
+`herdr-worktree-linked-p\\=', and `herdr-tree-own-workspace-p\\=' against
+the workspace the row sits inside.  The record and the row come from
+one connection\\='s listings, so bare ids compare soundly.
 
 The last is the guard that matters: `k\\=' on such a row otherwise
 resolves to the workspace the row is nested inside."
@@ -852,16 +748,14 @@ resolves to the workspace the row is nested inside."
         (user-error
          "herdr: %s is the repository's own checkout, not one of its worktrees"
          name))
-      (when (herdr-worktree-open-as-p
-             connection worktree
-             (herdr-workspace-qualified
-              connection (herdr-dispatch-target-workspace target)))
+      (when (herdr-tree-own-workspace-p
+             worktree (herdr-dispatch-target-workspace target))
         (user-error
          "herdr: %s is the workspace this list belongs to, not one of its worktrees"
          name))
       worktree)))
 
-(defun herdr-dispatch--worktree-workspace (connection target)
+(defun herdr-dispatch--worktree-workspace (target)
   "Return the id of the workspace TARGET\\='s worktree is open as.
 
 `worktree.remove\\=' and `workspace.focus\\=' both address a workspace, and a
@@ -874,7 +768,7 @@ this refuses rather than guesses.
 Whether the row may be acted on at all is settled first, by
 `herdr-dispatch--checked-worktree\\='.  Only the question this function\\='s
 own name asks is left here."
-  (let ((worktree (herdr-dispatch--checked-worktree connection target)))
+  (let ((worktree (herdr-dispatch--checked-worktree target)))
     (or (herdr-worktree-open-workspace-id worktree)
         (user-error "herdr: worktree %s is not open as a workspace (RET opens it)"
                     (or (herdr-worktree-branch worktree)
@@ -904,12 +798,6 @@ Folding is a heading\\='s one useful action, hence the hint."
 (herdr-dispatch-defverb herdr-dispatch-open-worktree (&optional target)
   "Open the worktree at point as a workspace.
 
-Calls `worktree.open\\=' directly rather than through `herdr-worktree-open\\=',
-which derives its `cwd\\=' from the calling buffer's `default-directory\\=' —
-here that would be `*herdr-agents*\\=', not the worktree's own workspace,
-so the request would resolve against whatever directory the dispatcher
-buffer happened to hold rather than the workspace at point.
-
 Resolves through `herdr-dispatch--checked-worktree\\=' like every
 other worktree verb.  It cannot use `herdr-dispatch--worktree-workspace\\='
 itself, which refuses a worktree that is not open as a workspace —
@@ -919,7 +807,7 @@ reading the record directly is what let this command act on rows the
 others refuse."
   (let* ((target (or target (herdr-dispatch-target-at-point)))
          (connection (herdr-dispatch-target-connection target))
-         (worktree (herdr-dispatch--checked-worktree connection target))
+         (worktree (herdr-dispatch--checked-worktree target))
          (workspace (or (herdr-dispatch-target-workspace target)
                         (user-error "herdr: point is not on a workspace"))))
     (if-let* ((open (herdr-worktree-open-workspace-id worktree)))
@@ -1056,8 +944,7 @@ the same reason and with more at stake; see
        (herdr-workspace-close (herdr-dispatch-target-value target)))
       ('herdr-worktree
        (herdr-worktree-remove
-        (herdr-dispatch--worktree-workspace
-         (herdr-dispatch-target-connection target) target)))
+        (herdr-dispatch--worktree-workspace target)))
       ('herdr-known-project
        (user-error
         "herdr: a known project with no workspace open has nothing to close"))
@@ -1142,8 +1029,6 @@ focused workspace."
 
 (herdr-dispatch-defverb herdr-dispatch-create-worktree ()
   "Create a git worktree from the workspace at point.
-Calls `worktree.create\\=' directly: `herdr-worktree-create\\=' would take
-its `cwd\\=' from `*herdr-agents*\\=' rather than the workspace at point.
 An empty base ref means the current HEAD and is omitted from the call."
   (let* ((target (herdr-dispatch-target-at-point))
          (workspace (or (and target (herdr-dispatch-target-workspace target))
@@ -1151,13 +1036,10 @@ An empty base ref means the current HEAD and is omitted from the call."
          (branch (read-string "New worktree branch: "))
          (base (read-string
                 (format-prompt "Base ref" "the current HEAD") nil nil ""))
-         (dir (herdr-state-workspace-directory (herdr-state-current) workspace))
+         (dir (or (herdr-state-workspace-directory (herdr-state-current) workspace)
+                  (user-error "herdr: workspace %s has no directory yet" workspace)))
          (connection (herdr-current-connection)))
-    (herdr-rpc-call connection "worktree.create"
-                    `((branch . ,branch)
-                      (base . ,(unless (string-empty-p (or base "")) base))
-                      (cwd . ,dir)
-                      (focus . t)))
+    (herdr-worktree-create branch base dir)
     (herdr-dispatch--forget-worktrees connection)
     (herdr-dispatch-refresh)))
 
@@ -1219,87 +1101,24 @@ there are several: one server needs no telling that it is the only one."
   (format "%d %s%s" n noun (if (= n 1) "" "s")))
 
 (defun herdr-dispatch--position-at (position)
-  "Return (IDENT COLUMN . POSITION) describing POSITION, or nil.
-Section identity rather than a line number: a pane closing above point
-used to move you to a different agent than the one you were reading.
-The raw position rides along as the last resort; see
-`herdr-dispatch--position-restore\\='.
-
-Columns are counted as if nothing were folded; see
-`herdr-dispatch--position-restore\\=' for why."
-  (save-excursion
-    (let ((buffer-invisibility-spec nil))
-      (goto-char position)
-      ;; A separator between two rows belongs to the root section, whose
-      ;; start is the header — so saving it would climb to the top of the
-      ;; buffer on the next redraw.  The nearest row is saved instead.
-      ;; The header line is the root legitimately and stays as it is.
-      (unless (or (herdr-dispatch--row-p)
-                  (= (line-beginning-position) (point-min)))
-        (goto-char (herdr-dispatch--nearest-row (line-beginning-position))))
-      (when-let* ((section (magit-current-section)))
-        (list (magit-section-ident section) (current-column) (point))))))
-
-(defun herdr-dispatch--row-p ()
-  "Return non-nil when point is on a line that names something.
-A blank separator line belongs to the root section, whose ident is one
-element long; every real row has its own key consed onto that.  Nil with
-no section at all, which is an empty buffer before the first draw."
-  (when-let* ((section (magit-current-section)))
-    (cdr (magit-section-ident section))))
-
-(defun herdr-dispatch--nearest-row (position)
-  "Return the start of the nearest line to POSITION that names something.
-Forward first, then backward, then POSITION itself."
+  "Return (SECTION LINE CHAR) for POSITION, or nil.
+A blank separator belongs to the root, so the row below it is saved
+instead; the header, on the first line, is the root legitimately."
   (save-excursion
     (goto-char position)
-    (or (and (herdr-dispatch--row-p) position)
-        (save-excursion
-          (catch 'found
-            (while (zerop (forward-line 1))
-              (when (eobp) (throw 'found nil))
-              (when (herdr-dispatch--row-p)
-                (throw 'found (line-beginning-position))))))
-        (save-excursion
-          (catch 'found
-            (while (zerop (forward-line -1))
-              (when (herdr-dispatch--row-p)
-                (throw 'found (line-beginning-position))))))
-        position)))
+    (when (and (eq (magit-current-section) magit-root-section)
+               (> (line-number-at-pos) 1))
+      (forward-line (if (eobp) -1 1)))
+    (when-let* ((section (magit-current-section)))
+      (cons section (magit-section-get-relative-position section)))))
 
 (defun herdr-dispatch--position-restore (position)
-  "Return where POSITION now lands.
-POSITION is an (IDENT COLUMN POSITION) list from
-`herdr-dispatch--position-at\\='.  The section, else its nearest surviving
-ancestor, else the saved position taken to the nearest row.  The walk
-stops short of the root, whose start is the header line.
-
-Columns are counted with `buffer-invisibility-spec\\=' unbound: a line
-inside a folded section has no width while the fold is in force."
-  (let* ((original (car position))
-         (ident original)
-         (column (nth 1 position))
-         (raw (nth 2 position)))
-    (while (and (cdr ident) (not (magit-get-section ident)))
-      (setq ident (cdr ident)))
-    (save-excursion
-      (let ((buffer-invisibility-spec nil)
-            (clamp (lambda ()
-                     (goto-char (max (point-min)
-                                     (min (or raw (point-min)) (point-max))))
-                     (line-beginning-position))))
-        (cond
-         ;; A real row the redraw still builds.
-         ((and (cdr ident) (magit-get-section ident))
-          (goto-char (oref (magit-get-section ident) start)))
-         ;; Point was on the header, which is the root legitimately.
-         ((eq ident original)
-          (goto-char (funcall clamp)))
-         ;; Every row above point died, so there is nowhere to walk to.
-         (t
-          (goto-char (herdr-dispatch--nearest-row (funcall clamp)))))
-        (move-to-column column)
-        (point)))))
+  "Return where POSITION, from `herdr-dispatch--position-at\\=', now lands.
+The same section, else a sibling or ancestor that survived the redraw;
+`magit-section-goto-successor\\=' decides."
+  (save-excursion
+    (apply #'magit-section-goto-successor position)
+    (point)))
 
 (defun herdr-dispatch-refresh (&optional force)
   "Redraw the dispatcher from the cache, keeping point and fold state.
@@ -1414,7 +1233,7 @@ they are being shown together."
 (defun herdr-dispatch--tree-for (connection)
   "Return CONNECTION\\='s own subtree."
   (herdr-tree-build (herdr-state-current connection)
-                    (herdr-dispatch--worktrees-listings connection)
+                    (herdr-connection-worktrees connection)
                     (herdr-dispatch--roots-for connection)))
 
 (defun herdr-dispatch--cancel-refresh ()

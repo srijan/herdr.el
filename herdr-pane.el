@@ -59,10 +59,6 @@ workspace labelled \"\" was a real buffer name."
   "Return the id of the workspace PANE belongs to, or nil."
   (alist-get 'workspace_id pane))
 
-(defun herdr-pane-tab-id (pane)
-  "Return the id of the tab PANE sits in, or nil."
-  (alist-get 'tab_id pane))
-
 (defun herdr-pane-label (pane)
   "Return the label somebody set on PANE, or nil."
   (alist-get 'label pane))
@@ -84,10 +80,6 @@ no agent in it."
 The detected kind, not the one to show: `display_agent\\=' outranks this
 for display but does not decide whether a pane has an agent at all."
   (alist-get 'agent pane))
-
-(defun herdr-pane-agent-p (pane)
-  "Return non-nil when PANE has an agent in it."
-  (and (herdr-pane-agent pane) t))
 
 (defun herdr-pane-display-agent (pane)
   "Return the agent kind to show for PANE, or nil.

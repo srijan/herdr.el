@@ -51,18 +51,6 @@ is how `herdr-start\\=' gets its connection."
       ;; The same one next time, not a fresh one per call.
       (should (eq connection (herdr-current-connection))))))
 
-(ert-deftest herdr-current-connection-prefers-the-dispatching-one ()
-  "An asynchronous callback runs in an empty extent, so a listener it
-reaches would otherwise resolve whatever the user last looked at."
-  (let* ((local (herdr-connection--make :name "local"))
-         (shadow (herdr-connection--make :name "shadow"))
-         (herdr-connections (list (cons "local" local)
-                                  (cons "shadow" shadow))))
-    (should (eq local (herdr-current-connection)))
-    (herdr-connection-with-dispatch shadow
-      (should (eq shadow (herdr-current-connection))))
-    (should (eq local (herdr-current-connection)))))
-
 (ert-deftest herdr-current-connection-prefers-the-buffer-over-the-registry ()
   "A command typed in a terminal buffer means that buffer's server,
 whatever else is on screen."
@@ -89,17 +77,6 @@ buffer-local cannot serve."
     ;; answering nil.
     (let ((herdr-connection-resolvers (list #'ignore (lambda () shadow))))
       (should (eq shadow (herdr-current-connection))))))
-
-(ert-deftest herdr-current-connection-dispatch-outranks-the-buffer ()
-  "A reply that lands while some other herdr buffer happens to be
-current belongs to the connection it was dispatched under."
-  (let* ((local (herdr-connection--make :name "local"))
-         (shadow (herdr-connection--make :name "shadow"))
-         (herdr-connections (list (cons "local" local))))
-    (with-temp-buffer
-      (setq herdr-buffer-connection local)
-      (herdr-connection-with-dispatch shadow
-        (should (eq shadow (herdr-current-connection)))))))
 
 ;;; Connecting and disconnecting
 
@@ -170,7 +147,10 @@ already has."
                       command))
       ;; Non-interactive, or a forward that needs a password hangs a
       ;; command nobody is watching.
-      (should (member "BatchMode=yes" command)))))
+      (should (member "BatchMode=yes" command))
+      ;; A listening forward sends nothing itself, so without probes a
+      ;; sleeping laptop keeps a dead ssh that every RPC waits out.
+      (should (member "ServerAliveInterval=15" command)))))
 
 (ert-deftest herdr-connection-socket-path-stays-inside-the-platform-limit ()
   "macOS caps `sun_path' at 104 bytes, which is the tighter of the two

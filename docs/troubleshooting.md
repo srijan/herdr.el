@@ -50,7 +50,7 @@ command.
 
 **Cause.** One dependency is missing.
 
-**Correction.** Install `magit-section` 3.3 or a later version. Install `ghostel` from its
+**Correction.** Install `magit-section` 4.0 or a later version. Install `ghostel` from its
 repository.
 
 No file here names `transient`, but `magit-section` requires one and asks for a recent version.

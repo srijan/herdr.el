@@ -121,7 +121,7 @@ JSON parse error."
                                  (herdr-current-connection)
                                  "workspace.create" "env")))))
     ;; Arrays come back as vectors, not lists: `json-serialize' cannot
-    ;; tell a list of alists from a single alist, so `herdr-rpc-array'
+    ;; tell a list of alists from a single alist, so `vconcat'
     ;; is what makes an array parameter unambiguous on the wire — a
     ;; list here would signal wrong-type-argument before any request
     ;; went out.
@@ -166,8 +166,8 @@ find."
         fetched)
     (setf (herdr-connection-schema (herdr-current-connection)) '((schemas . nil))
           (herdr-connection-schema-version (herdr-current-connection)) "0.8.0")
-    (cl-letf (((symbol-function 'herdr-schema--server-version)
-               (lambda (_connection) "0.9.0"))
+    (cl-letf (((symbol-function 'herdr-schema--pong)
+               (lambda (_connection) '((version . "0.9.0"))))
               ;; A parsed schema, not a sentinel: `herdr-schema' reads
               ;; the protocol out of what the fetch produced, so a stub
               ;; that returns something no fetch can return would assert
@@ -181,8 +181,7 @@ find."
       (should fetched)
       (should (equal "0.9.0"
                      (herdr-connection-schema-version (herdr-current-connection))))
-      (should (equal 22 (herdr-connection-schema-protocol
-                         (herdr-current-connection)))))))
+      (should (equal 22 (herdr-schema-protocol (herdr-current-connection)))))))
 
 (ert-deftest herdr-schema-keeps-a-cache-the-server-still-matches ()
   "Shelling out to herdr on every schema question is the cost this cache
@@ -196,14 +195,14 @@ The stub copies its answer for that reason: handed the same object, an
         fetched)
     (setf (herdr-connection-schema (herdr-current-connection)) '((schemas . nil))
           (herdr-connection-schema-version (herdr-current-connection)) "0.9.0")
-    (cl-letf (((symbol-function 'herdr-schema--server-version)
-               (lambda (_connection) (copy-sequence "0.9.0")))
+    (cl-letf (((symbol-function 'herdr-schema--pong)
+               (lambda (_connection) (list (cons 'version (copy-sequence "0.9.0")))))
               ((symbol-function 'herdr-schema--fetch)
                (lambda (_connection) (setq fetched t))))
       (herdr-schema (herdr-current-connection))
       (should-not fetched))
     ;; An unreachable server is not evidence that the cache is stale.
-    (cl-letf (((symbol-function 'herdr-schema--server-version)
+    (cl-letf (((symbol-function 'herdr-schema--pong)
                (lambda (_connection) nil))
               ((symbol-function 'herdr-schema--fetch)
                (lambda (_connection) (setq fetched t))))

@@ -7,16 +7,13 @@
 (require 'herdr-tree)
 (require 'herdr-test-helper)
 
-;; Required outright rather than guarded.  These tests used to open with
-;; `(when (require 'magit-section nil t) (require 'herdr-dispatch))' and
-;; every one of them with a `skip-unless', which made a bare `make test'
-;; skip 97 of 325 tests — all of them these — and report success.  It
-;; also made a magit-section that failed to load indistinguishable from
-;; one that was not installed, so a broken dependency read as a skip.
-;; `test/herdr-deps.el' now finds magit-section before any test file is
-;; loaded, and fails loudly when it cannot, so there is nothing left
-;; here to be conditional about.
+;; Required outright: a guarded require once let a missing magit-section
+;; skip every test here and report success.
 (require 'herdr-dispatch)
+
+(defun herdr-dispatch-test--listing (key)
+  "Return the worktrees cached under KEY on the current connection."
+  (cdr (assoc key (herdr-connection-worktrees (herdr-current-connection)))))
 
 (defmacro herdr-dispatch-test-with-buffer (nodes &rest body)
   "Render NODES into a temporary dispatcher buffer and run BODY there."
@@ -661,17 +658,10 @@ cancel nothing."
       (herdr-dispatch--cancel-refresh)
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
-(ert-deftest herdr-dispatch-refresh-falls-back-to-the-parent-when-the-row-dies ()
-  "Killing the pane under point threw point to the end of the buffer.
-
-`herdr-dispatch--position-restore' answered nil when the ident named a
-section the redraw no longer builds, and the caller simply skipped its
-`goto-char' — leaving point wherever `erase-buffer' and the inserts had
-left it, which is `point-max'.  Reported from a live session: close a
-terminal from the dashboard and point jumps to the bottom.
-
-The nearest surviving ancestor is where it goes instead, so closing a
-pane leaves you on its workspace."
+(ert-deftest herdr-dispatch-refresh-falls-back-to-a-sibling-when-the-row-dies ()
+  "Killing the pane under point used to throw point to the end of the
+buffer.  `magit-section-goto-successor' lands on a surviving sibling,
+else the parent."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
     (goto-char (point-min))
@@ -682,18 +672,13 @@ pane leaves you on its workspace."
                               '((pane_id . "w1:p2"))))
     (herdr-dispatch-refresh)
     (should-not (= (point) (point-max)))
-    (should (equal '((herdr-workspace . "w1") (herdr-root))
+    (should (equal '((herdr-pane . "w1:p1") (herdr-workspace . "w1") (herdr-root))
                    (magit-section-ident (magit-current-section))))))
 
 (ert-deftest herdr-dispatch-refresh-lands-near-a-workspace-that-went-with-its-pane ()
-  "Closing the last pane closes the workspace, so the ancestor walk runs
-out of ancestors and reaches the root — whose start is the header line,
-at the top of the buffer.  For a session of any size that is a jump, and
-the row the user wants is the one that took the dead workspace's place.
-
-So the walk stops short of the root and the saved buffer position is
-used instead, clamped and normalised to the start of its line.  Here
-that is the next workspace."
+  "Closing the last pane closes the workspace.  The successor walk runs
+out of siblings and ancestors of the pane and settles on the workspace
+that took the dead one's place, not the header."
   (herdr-dispatch-test-in-dispatcher
       '((workspaces . (((workspace_id . "w1") (label . "web") (pane_count . 1))
                        ((workspace_id . "w2") (label . "api") (pane_count . 1))))
@@ -717,8 +702,7 @@ that is the next workspace."
     ;; is expected to leave you on.
     (should-not (= (point) (point-max)))
     (should-not (= (point) (point-min)))
-    (should (equal '((herdr-pane . "w2:p1") (herdr-workspace . "w2")
-                     (herdr-root))
+    (should (equal '((herdr-workspace . "w2") (herdr-root))
                    (magit-section-ident (magit-current-section))))))
 
 (ert-deftest herdr-dispatch-refresh-skips-the-blank-line-between-rows ()
@@ -784,7 +768,7 @@ restore resolved the root ident the same way."
     (search-forward "api")
     (forward-line -1)
     (goto-char (line-beginning-position))
-    (should-not (herdr-dispatch--row-p))
+    (should (eq magit-root-section (magit-current-section)))
     (should-not (= (point) (point-min)))
     (herdr-dispatch-test--pane-event "w1:p1" "working" 2)
     (herdr-dispatch-refresh)
@@ -825,7 +809,8 @@ usually fires while the dashboard is not the selected window."
                                       '((pane_id . "w1:p2"))))
             (herdr-dispatch-refresh)
             (should-not (= (window-point window) (point-max)))
-            (should (equal '((herdr-workspace . "w1") (herdr-root))
+            (should (equal '((herdr-pane . "w1:p1") (herdr-workspace . "w1")
+                             (herdr-root))
                            (save-excursion
                              (goto-char (window-point window))
                              (magit-section-ident (magit-current-section))))))
@@ -1222,7 +1207,7 @@ the case that tells the two apart."
       (herdr-dispatch-refresh t)
       (herdr-dispatch-test--reply 0 '((worktrees . nil)))
       (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
-      (should-not (herdr-dispatch--worktrees-listing (herdr-current-connection) "w1"))
+      (should-not (herdr-dispatch-test--listing "w1"))
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested))))))
@@ -1358,7 +1343,7 @@ be true — this test is what confirms it rather than assumes it."
        1 '((worktrees . (((path . "/tmp/api-spike")
                           (is_linked_worktree . t) (branch . "spike"))))))
       (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
-      (should-not (herdr-dispatch--worktrees-listing (herdr-current-connection) "w1"))
+      (should-not (herdr-dispatch-test--listing "w1"))
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested)))
@@ -1382,7 +1367,7 @@ cache entry that stops it."
             (herdr-dispatch-refresh t)
             (dotimes (_ 19) (herdr-dispatch-refresh))
             (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w3"))
-            (should-not (herdr-dispatch--worktrees-listing (herdr-current-connection) "w3"))
+            (should-not (herdr-dispatch-test--listing "w3"))
             (should (equal '("w1" "w2" "w3") (nreverse attempts)))
             (should (equal '("/tmp/web/" "/tmp/api/")
                            (herdr-dispatch-test--requested))))
@@ -1449,7 +1434,7 @@ request for the same workspace."
       (herdr-dispatch-refresh)
       (should (equal 4 (length herdr-dispatch-test--async)))
       (herdr-dispatch-test--reply 2 '((worktrees . (fresh))))
-      (should (equal '(fresh) (herdr-dispatch--worktrees-listing (herdr-current-connection) "w1"))))))
+      (should (equal '(fresh) (herdr-dispatch-test--listing "w1"))))))
 
 (ert-deftest herdr-dispatch-a-reply-after-the-buffer-is-killed-is-harmless ()
   "The dashboard can be killed between the request and the reply.
@@ -1506,7 +1491,7 @@ request for the same workspace here."
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal 4 (length herdr-dispatch-test--async)))
       (herdr-dispatch-test--reply 2 '((worktrees . (fresh))))
-      (should (equal '(fresh) (herdr-dispatch--worktrees-listing (herdr-current-connection) "w1"))))))
+      (should (equal '(fresh) (herdr-dispatch-test--listing "w1"))))))
 
 (ert-deftest herdr-dispatch-a-dead-server-caches-rather-than-signalling ()
   "Opening the dashboard while herdr is not running is the common failure.
@@ -1529,7 +1514,7 @@ rest of the session after the first failure."
       (herdr-dispatch-refresh t)
       (dolist (id '("w1" "w2"))
         (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) id))
-        (should-not (herdr-dispatch--worktrees-listing (herdr-current-connection) id))
+        (should-not (herdr-dispatch-test--listing id))
         (should (eq 'error (herdr-dispatch--worktrees-unanswered-reason (herdr-current-connection) id)))
         (should-not (herdr-dispatch--worktrees-in-flight-p (herdr-current-connection) id))))
     ;; And the dashboard still draws, which is the point of not signalling.
@@ -1588,8 +1573,7 @@ refetch of the session."
           (save-window-excursion (herdr-agents))
           (should (equal "/tmp/web-feat"
                          (alist-get 'path
-                                    (car (herdr-dispatch--worktrees-listing
-                                           (herdr-current-connection) "w1")))))
+                                    (car (herdr-dispatch-test--listing "w1")))))
           (should (equal '("/tmp/web/" "/tmp/api/")
                          (herdr-dispatch-test--requested))))
       (herdr-dispatch--cancel-refresh)
@@ -1605,11 +1589,11 @@ Anything less leaves a workspace that is neither cached, nor pending, nor
 asked again."
   (herdr-dispatch-test--with-worktrees '(("w1" . (ignored)))
     :pending '("w2") :unanswered '(("w3" . error)) :generation 7
-    (let ((before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
+    (let ((before (herdr-connection-worktrees-generation (herdr-current-connection))))
       (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "worktree_created" nil)
-      (should-not (herdr-dispatch--worktrees-listings (herdr-current-connection)))
+      (should-not (herdr-connection-worktrees (herdr-current-connection)))
       (should-not (herdr-dispatch--worktrees-unanswered (herdr-current-connection)))
-      (should-not (equal before (herdr-dispatch--worktrees-epoch (herdr-current-connection)))))))
+      (should-not (equal before (herdr-connection-worktrees-generation (herdr-current-connection)))))))
 
 (ert-deftest herdr-dispatch-closing-a-workspace-drops-the-cache ()
   "A worktree listing must not outlive the workspaces it describes.
@@ -1631,7 +1615,7 @@ would then press RET on."
         ("w2" . (((path . "/tmp/sibling") (is_linked_worktree . t)
                   (open_workspace_id . "w1")))))
     :pending '("w3") :unanswered '(("w4" . error)) :generation 7
-    (let ((before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
+    (let ((before (herdr-connection-worktrees-generation (herdr-current-connection))))
       (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "workspace_closed"
                                             '((workspace_id . "w1")))
       (should-not (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
@@ -1639,7 +1623,7 @@ would then press RET on."
       (should-not (herdr-dispatch--worktrees-unanswered (herdr-current-connection)))
       ;; Requests already on the wire have to be abandoned too, or one
       ;; lands afterwards and writes the entry straight back.
-      (should-not (equal before (herdr-dispatch--worktrees-epoch (herdr-current-connection)))))))
+      (should-not (equal before (herdr-connection-worktrees-generation (herdr-current-connection)))))))
 
 (ert-deftest herdr-dispatch-every-worktree-event-drops-the-cache ()
   "Four events change what worktrees exist or where they are open.
@@ -1652,10 +1636,10 @@ was, with nothing to say so."
                   "worktree_removed" "workspace_closed"))
     (herdr-dispatch-test--with-worktrees '(("w1" . (ignored)))
       :generation 7
-      (let ((before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
+      (let ((before (herdr-connection-worktrees-generation (herdr-current-connection))))
         (herdr-dispatch--invalidate-worktrees (herdr-current-connection) kind '((workspace_id . "w1")))
-        (should-not (herdr-dispatch--worktrees-listings (herdr-current-connection)))
-        (should-not (equal before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))))))
+        (should-not (herdr-connection-worktrees (herdr-current-connection)))
+        (should-not (equal before (herdr-connection-worktrees-generation (herdr-current-connection))))))))
 
 (ert-deftest herdr-dispatch-worktree-invalidation-unhooks-with-the-buffer ()
   "Left on the hook after the dashboard dies, this goes on dropping a
@@ -1691,34 +1675,34 @@ or every visit pays for a full re-fetch."
         (when buffer (kill-buffer buffer)))
       (herdr-dispatch-test--with-worktrees '(("w1" . (stale)))
         :generation 3
-        (let ((before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
+        (let ((before (herdr-connection-worktrees-generation (herdr-current-connection))))
          (unwind-protect
             (progn
               (herdr-agents)
-              (should-not (herdr-dispatch--worktrees-listings (herdr-current-connection)))
-              (should-not (equal before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
+              (should-not (herdr-connection-worktrees (herdr-current-connection)))
+              (should-not (equal before (herdr-connection-worktrees-generation (herdr-current-connection))))
               ;; The buffer it made has to be a dispatcher, or every key
               ;; the dashboard binds lands in fundamental-mode.
               (should (with-current-buffer herdr-dispatch-buffer-name
                         (derived-mode-p 'herdr-dispatch-mode)))
               ;; Already open: reopening keeps what is known.
               (herdr-dispatch-test--with-worktrees '(("w1" . (fresh)))
-                :generation (herdr-dispatch--worktrees-epoch (herdr-current-connection))
-                (let ((kept (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
+                :generation (herdr-connection-worktrees-generation (herdr-current-connection))
+                (let ((kept (herdr-connection-worktrees-generation (herdr-current-connection))))
                   (herdr-agents)
                   (should (equal '(fresh)
-                                 (herdr-dispatch--worktrees-listing (herdr-current-connection) "w1")))
-                  (should (equal kept (herdr-dispatch--worktrees-epoch (herdr-current-connection)))))))
+                                 (herdr-dispatch-test--listing "w1")))
+                  (should (equal kept (herdr-connection-worktrees-generation (herdr-current-connection)))))))
           (let ((buffer (get-buffer herdr-dispatch-buffer-name)))
             (when buffer (kill-buffer buffer)))))))))
 
 (ert-deftest herdr-dispatch-unrelated-events-keep-the-cache ()
   (herdr-dispatch-test--with-worktrees '(("w1" . (ignored)))
     :generation 7
-    (let ((before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
+    (let ((before (herdr-connection-worktrees-generation (herdr-current-connection))))
       (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "pane_updated" nil)
-      (should (herdr-dispatch--worktrees-listings (herdr-current-connection)))
-      (should (equal before (herdr-dispatch--worktrees-epoch (herdr-current-connection)))))))
+      (should (herdr-connection-worktrees (herdr-current-connection)))
+      (should (equal before (herdr-connection-worktrees-generation (herdr-current-connection)))))))
 
 (ert-deftest herdr-dispatch-refresh-draws-a-populated-worktrees-cache ()
   "The worktrees branch of the renderer, exercised end-to-end.
@@ -1841,28 +1825,6 @@ room for it, or the overlay is silently dropped."
       (should (characterp (cdr pair)))
       (should-not (equal (car pair) (cdr pair))))
     (should (> left-margin-width 0))))
-
-(ert-deftest herdr-dispatch-fold-indicators-are-chosen-per-frame-and-settable ()
-  "Asking at load time is asking the wrong frame.
-
-`herdr-dispatch-fold-indicators\\=' used to be a `defconst\\=' whose value
-came from `char-displayable-p\\=' as the library loaded.  Under
-`emacs --daemon\\=' that runs before any frame exists, so the answer is
-given for a display nobody is looking at and the ASCII fallback is then
-frozen for the whole session — and a `defconst\\=' cannot be customised
-out of it either, unlike the magit option it replaces.  The choice is
-now made on mode entry, and the user\\='s setting wins outright."
-  (herdr-dispatch-test-with-dispatcher
-    (let ((herdr-dispatch-fold-indicators '((?+ . ?-) (?+ . ?-))))
-      (should (equal '((?+ . ?-) (?+ . ?-)) (herdr-dispatch--fold-indicators)))
-      (herdr-dispatch-mode)
-      (should (equal '((?+ . ?-) (?+ . ?-))
-                     magit-section-visibility-indicators)))
-    ;; Nil, the default, still answers with a usable pair.
-    (let ((herdr-dispatch-fold-indicators nil))
-      (dolist (pair (herdr-dispatch--fold-indicators))
-        (should (characterp (car pair)))
-        (should (characterp (cdr pair)))))))
 
 (ert-deftest herdr-dispatch-draws-fold-indicators-on-a-fresh-render ()
   "magit writes indicators in `magit-section-show' and
@@ -2531,7 +2493,6 @@ checkout, which is a different problem with a different fix."
       (search-forward "open as w2")
       (let ((message (cadr (should-error
                             (herdr-dispatch--checked-worktree
-                             (herdr-current-connection)
                              (herdr-dispatch-target-at-point))
                             :type 'user-error))))
         (should (string-match-p "no worktree listing" message))
@@ -2691,7 +2652,6 @@ where the verb it replaced said which row you needed."
     (should (equal "herdr: point is not on a worktree"
                    (condition-case err
                        (herdr-dispatch--checked-worktree
-                        (herdr-current-connection)
                         (herdr-dispatch-target-at-point))
                      (user-error (error-message-string err)))))))
 
@@ -2713,9 +2673,7 @@ somewhere else entirely while the verb runs."
                          (herdr-dispatch-open-worktree target))))))))
 
 (ert-deftest herdr-dispatch-create-worktree-omits-an-empty-base ()
-  "A blank base must not reach the server as an empty string.  This verb
-calls `herdr-rpc-call\\=' directly, so the contract is reasserted rather
-than inherited from `herdr-worktree-create\\='."
+  "A blank base must not reach the server as an empty string."
   (let ((params nil)
         (prompts nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
@@ -2737,6 +2695,18 @@ than inherited from `herdr-worktree-create\\='."
         (should (= 2 (length prompts)))
         (should (string-match-p "branch" (nth 1 prompts)))
         (should (string-match-p "Base ref" (nth 0 prompts)))))))
+
+(ert-deftest herdr-dispatch-create-worktree-refuses-a-workspace-with-no-directory ()
+  "A workspace with no pane yet has no directory; the worktree must not
+be created off the dashboard buffer's own directory instead."
+  (cl-letf (((symbol-function 'herdr-rpc-call)
+             (lambda (&rest _) (error "must not be called")))
+            ((symbol-function 'herdr-state-workspace-directory)
+             (lambda (_state _id) nil))
+            ((symbol-function 'read-string) (lambda (&rest _) "feature")))
+    (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+      (search-forward "herdr.el")
+      (should-error (herdr-dispatch-create-worktree) :type 'user-error))))
 
 (ert-deftest herdr-dispatch-create-worktree-passes-a-base-that-was-given ()
   "The capability the prompt replaced: a worktree off something other
@@ -2977,40 +2947,13 @@ own TUI never asks for."
 
 ;;; The worktree cache answers questions
 
-;; Every test below asks the cache rather than reading its alists, and
-;; seeds it through one constructor.  The four globals are storage.
-
-(ert-deftest herdr-dispatch-worktree-keys-are-strings-from-two-domains ()
-  "One alist holds listings under workspace ids and under project roots.
-Both keys stay plain strings: `herdr-dispatch-refresh' hands the listing
-alist to `herdr-tree-build', which looks it up with `assoc'."
-  (let ((from-workspace (herdr-dispatch--worktree-key-for-workspace "w1"))
-        (from-root (herdr-dispatch--worktree-key-for-root "/tmp/proj/")))
-    (should (stringp from-workspace))
-    (should (stringp from-root))
-    (should-not (equal from-workspace from-root))))
-
-(ert-deftest herdr-dispatch-a-constructed-key-is-found-by-the-renderer ()
-  "Driven through `herdr-tree-build' rather than through the cache, so
-this fails if the constructor ever starts decorating its keys."
-  (let* ((key (herdr-dispatch--worktree-key-for-workspace "w1"))
-         (state (herdr-state-from-snapshot
-                 '((workspaces . (((workspace_id . "w1") (label . "one"))))
-                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
-                              (tab_id . "w1:t1") (cwd . "/tmp")))))))
-         (nodes (herdr-tree-build
-                 state (list (cons key '(((path . "/tmp/wt")
-                                          (is_linked_worktree . t)
-                                          (branch . "feat/x"))))))))
-    (should (seq-find (lambda (node) (eq 'herdr-worktree (nth 0 node)))
-                      (nth 3 (car nodes))))))
 
 (ert-deftest herdr-dispatch-an-empty-answer-is-an-answer ()
   "A repository with no worktrees caches as an entry whose value is nil
 and must not be asked again, which is why every guard uses `assoc'."
   (herdr-dispatch-test--with-worktrees '(("w1" . nil))
     (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
-    (should-not (herdr-dispatch--worktrees-listing (herdr-current-connection) "w1"))
+    (should-not (herdr-dispatch-test--listing "w1"))
     (should-not (herdr-dispatch--worktrees-wanted-p (herdr-current-connection) "w1"))))
 
 (ert-deftest herdr-dispatch-a-key-never-asked-is-wanted ()
@@ -3077,7 +3020,7 @@ connection."
   (let ((one (herdr-test-connection))
         (two (herdr-test-connection)))
     (herdr-dispatch--worktrees-received
-     one "w1" (herdr-dispatch--worktrees-epoch one)
+     one "w1" (herdr-connection-worktrees-generation one)
      '(((path . "/tmp/one-feat"))) nil)
     (should (herdr-dispatch--worktrees-answered-p one "w1"))
     (should-not (herdr-dispatch--worktrees-answered-p two "w1"))
@@ -3091,10 +3034,10 @@ invalidation would throw away another's answer as though it were stale."
   (let ((one (herdr-test-connection))
         (two (herdr-test-connection))
         (kept nil))
-    (setq kept (herdr-dispatch--worktrees-epoch one))
+    (setq kept (herdr-connection-worktrees-generation one))
     (herdr-dispatch--forget-worktrees two)
-    (should (equal kept (herdr-dispatch--worktrees-epoch one)))
-    (should-not (equal kept (herdr-dispatch--worktrees-epoch two)))))
+    (should (equal kept (herdr-connection-worktrees-generation one)))
+    (should-not (equal kept (herdr-connection-worktrees-generation two)))))
 
 (ert-deftest herdr-dispatch-a-path-resolves-only-within-its-own-server ()
   "A path is a path on some machine.  Two servers can each hold a

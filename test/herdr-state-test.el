@@ -165,10 +165,8 @@ whichever way herdr fills the field in."
   (let* ((s (herdr-state-test--seed))
          (s (herdr-state-reduce s "workspace_created"
                                 '((workspace . ((workspace_id . "w2")
-                                                (label . "other"))))))
-         (s (herdr-state-reduce s "workspace_focused" '((workspace_id . "w2")))))
+                                                (label . "other")))))))
     (should (= 2 (length (herdr-state-workspaces s))))
-    (should (equal "w2" (herdr-state-focused-workspace-id s)))
     (let ((s (herdr-state-reduce s "workspace_closed" '((workspace_id . "w2")))))
       (should (= 1 (length (herdr-state-workspaces s)))))))
 
@@ -740,8 +738,8 @@ stop on one server drop an answer meant for another."
         (two (herdr-connection-local)))
     (setf (herdr-connection-running one) t)
     (herdr-state-stop one)
-    (should (= 1 (herdr-state-generation one)))
-    (should (= 0 (herdr-state-generation two)))))
+    (should (= 1 (herdr-connection-generation one)))
+    (should (= 0 (herdr-connection-generation two)))))
 
 (ert-deftest herdr-state-reconcile-drops-a-reply-from-a-stopped-session ()
   "`herdr-rpc-call\\=' services due timers while it waits, so the session can

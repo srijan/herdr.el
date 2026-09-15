@@ -1,23 +1,16 @@
 EMACS ?= emacs
 EXTRA_LOAD_PATH ?=
 
-## `test/herdr-deps.el' is loaded before anything else and puts
-## magit-section on the load path, searching the package
-## directories elpaca, package.el and straight.el use.  Not finding
-## them is a hard error naming EXTRA_LOAD_PATH.
-##
-## That is what lets every target treat magit-section as the declared
-## dependency it is.  It used to be treated as optional in two places:
-## the dispatcher tests skipped themselves when it was absent, and
-## `compile' left herdr-dispatch.el out of the compile set unless
-## EXTRA_LOAD_PATH said where the library was.  Measured, that meant a
-## bare `make test' skipped 97 of 325 tests — every `herdr-dispatch-'
-## test there is — and reported success, while `make compile' never
-## compiled the file at all.
-##
-## EXTRA_LOAD_PATH still works and still wins: it is added to the load
-## path ahead of the search, and herdr-deps only looks for what
-## `locate-library' cannot already answer.
+## `emacs -Q' initialises no package system.  `package-initialize' runs
+## before any -L, so the -L entries outrank package.el's copies; the
+## elpaca and straight.el builds of magit-section and what it needs are
+## added by name.  `../../builds' serves a checkout under elpaca's own
+## repos/ directory.  EXTRA_LOAD_PATH goes first and wins.
+EMACS_DIR := $(shell $(EMACS) -Q --batch --eval '(princ user-emacs-directory)')
+DEP_LIBS  := magit-section transient compat dash llama cond-let
+DEP_DIRS  := $(foreach root,../../builds $(EMACS_DIR)var/elpaca/builds \
+                            $(EMACS_DIR)straight/build, \
+               $(wildcard $(addprefix $(root)/,$(DEP_LIBS))))
 
 ## `load-prefer-newer' before anything is loaded, because it defaults to
 ## nil: `require' takes the .elc whenever one exists, however old.  That
@@ -25,18 +18,16 @@ EXTRA_LOAD_PATH ?=
 ## rather than the working tree — a source edit could pass, or fail, on
 ## code that is no longer there.  Measured while checking that a test
 ## caught a deliberate break: it did not, and the break was invisible.
-BATCH := $(EMACS) -Q --batch -L . -L test $(addprefix -L ,$(EXTRA_LOAD_PATH)) \
+BATCH := $(EMACS) -Q --batch \
            --eval '(setq load-prefer-newer t)' \
-           -l test/herdr-deps.el
+           --eval '(package-initialize)' \
+           -L . -L test $(addprefix -L ,$(EXTRA_LOAD_PATH) $(DEP_DIRS)) \
+           --eval '(unless (locate-library "magit-section") \
+                     (error "herdr: magit-section not found; make <target> EXTRA_LOAD_PATH=/path/to/magit-section"))'
 
 TESTS := $(wildcard test/*-test.el)
 SRC   := $(filter-out %-autoloads.el,$(wildcard *.el))
 
-## herdr-deps.el gates every target, so it meets the same warning bar as
-## the sources it loads them with.  It was the one file the item-2 gate
-## did not cover: `SRC' is the package's own root *.el, and a file that
-## decides whether the build runs at all was never byte-compiled.
-COMPILE_SRC := $(SRC) test/herdr-deps.el
 
 ## A hang is not a pass, and without a deadline it is not a failure
 ## either — it is a CI job killed with no output, which reads as
@@ -71,7 +62,7 @@ test-live:
 ## Byte-compile everything, treating warnings as failures.
 compile:
 	$(BATCH) --eval '(setq byte-compile-error-on-warn t)' \
-	  -f batch-byte-compile $(COMPILE_SRC)
+	  -f batch-byte-compile $(SRC)
 
 clean:
 	rm -f *.elc test/*.elc

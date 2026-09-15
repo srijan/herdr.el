@@ -109,6 +109,13 @@ which is true and useless."
                             (error . ((code . ,code) (message . ,message)))))
           "\n"))
 
+(defun herdr-schema-load-file (connection path)
+  "Cache the schema stored at PATH as CONNECTION\\='s, needing no herdr binary."
+  (setf (herdr-connection-schema connection)
+        (with-temp-buffer
+          (insert-file-contents path)
+          (herdr-rpc-decode (buffer-string)))))
+
 (defmacro herdr-test-with-state (seeds &rest body)
   "Run BODY with the sole connection seeded from SEEDS.
 SEEDS is a plist of connection slots, so a test that used to bind

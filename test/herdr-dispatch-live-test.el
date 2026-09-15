@@ -5,10 +5,7 @@
 (require 'ert)
 (require 'herdr-rpc)
 (require 'herdr-state)
-;; Unconditionally, for the reason given at the top of
-;; herdr-dispatch-test.el: `test/herdr-deps.el' has already put
-;; magit-section on the load path, so a `(require 'magit-section nil t)'
-;; here would only turn a broken dependency back into a silent skip.
+;; Unconditionally, for the reason given at the top of herdr-dispatch-test.el.
 (require 'herdr-dispatch)
 
 (defun herdr-dispatch-live-test--server-p ()

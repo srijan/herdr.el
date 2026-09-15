@@ -100,12 +100,12 @@ without the gate a stop-and-restart leaves it selecting buffers for the
 old session — and without the captured connection a retry scheduled
 against one server lands on whichever the user looked at next, silently,
 because the id exists on both."
-  (let ((generation (herdr-state-generation connection)))
+  (let ((generation (herdr-connection-generation connection)))
     (letrec ((attempts 0)
              (check
               (lambda ()
                 (setq attempts (1+ attempts))
-                (when (= generation (herdr-state-generation connection))
+                (when (= generation (herdr-connection-generation connection))
                   (cond
                    ((herdr-term-select-pane connection pane-id))
                    ((< attempts 20) (run-at-time 0.25 nil check)))))))
@@ -228,14 +228,7 @@ test is enough."
 (defun herdr-workspace-create (cwd &optional label)
   "Create a workspace rooted at CWD called LABEL."
   (interactive (list (read-directory-name "Workspace directory: ")))
-  (let ((connection (herdr-current-connection)))
-    (herdr-cmd--follow-new-pane
-     (herdr-cmd--created-pane-id
-      (herdr-rpc-call connection "workspace.create"
-                      `((cwd . ,(herdr-connection-server-path connection cwd))
-                        (label . ,(or label (file-name-nondirectory
-                                             (directory-file-name cwd))))
-                        (focus . t)))))))
+  (herdr-cmd--follow-new-pane (herdr-cmd--create-workspace-pane cwd label)))
 
 (defun herdr-workspace-close (&optional workspace-id)
   "Close WORKSPACE-ID, prompting when not given.
@@ -292,18 +285,18 @@ this without a race, which a preflight cannot."
 
 ;;; Worktrees
 
-(defun herdr-worktree-create (branch &optional base)
+(defun herdr-worktree-create (branch &optional base cwd)
   "Create a git worktree for BRANCH off BASE and open it as a workspace.
-This is the command that pays for the package: one step from a branch
-name to a worktree with its own herdr workspace."
+CWD is the repository as the server names it; nil means the current
+directory."
   (interactive (list (read-string "New worktree branch: ")
                      (read-string "Base ref (optional): ")))
   (let ((connection (herdr-current-connection)))
     (herdr-rpc-call connection "worktree.create"
                     `((branch . ,branch)
                       (base . ,(unless (string-empty-p (or base "")) base))
-                      (cwd . ,(herdr-connection-server-path
-                               connection default-directory))
+                      (cwd . ,(or cwd (herdr-connection-server-path
+                                       connection default-directory)))
                       (focus . t)))))
 
 (defun herdr-worktree-remove (&optional workspace-id force)
@@ -335,8 +328,9 @@ name to a worktree with its own herdr workspace."
   "Return the label a workspace created at DIRECTORY takes."
   (file-name-nondirectory (directory-file-name directory)))
 
-(defun herdr-cmd--create-workspace-pane (directory)
-  "Create a focused workspace at DIRECTORY and return its root pane\\='s id.
+(defun herdr-cmd--create-workspace-pane (directory &optional label)
+  "Create a focused workspace at DIRECTORY called LABEL.
+Return its root pane\\='s id.
 `focus\\=' rides on the create: without it the workspace is made but not
 focused, and anything that then asks the server \"where am I?\" answers
 with the pane the user was on before.  The reply names the new
@@ -346,7 +340,7 @@ workspace\\='s root pane, so callers go there directly rather than asking."
      (herdr-rpc-call connection "workspace.create"
                      `((cwd . ,(herdr-connection-server-path
                                 connection directory))
-                       (label . ,(herdr-cmd--workspace-label directory))
+                       (label . ,(or label (herdr-cmd--workspace-label directory)))
                        (focus . t))))))
 
 (defun herdr-cmd-open-workspace-for (root)

@@ -1,27 +1,11 @@
 ;;; herdr-select-test.el --- Tests for herdr completion -*- lexical-binding: t; -*-
 
-;;; Commentary:
-
-;; The integrations here touch third-party variables on their own
-;; release schedules.  `marginalia-annotator-registry' was renamed to
-;; `marginalia-annotators', and referencing the old name unguarded broke
-;; Emacs startup with a void-variable error.  A cosmetic integration
-;; must degrade instead.
-
 ;;; Code:
 
 (require 'ert)
 (require 'herdr-select)
 (require 'herdr-term)
 (require 'herdr-test-helper)
-
-;; Declared, deliberately unbound: `let' on an undeclared symbol under
-;; lexical binding is invisible to `boundp' elsewhere, which is exactly
-;; what these tests exercise.  Marking them special makes the bindings
-;; dynamic without giving them a global value, so the "API is unknown"
-;; case still sees them unbound.
-(defvar marginalia-annotators)
-(defvar marginalia-annotator-registry)
 
 (defmacro herdr-select-test-with-state (panes &rest body)
   (declare (indent 1) (debug t))
@@ -102,17 +86,6 @@ else."
     (should (= 1 (length offered)))
     (should (string-match-p "Lantern" (car offered)))))
 
-(ert-deftest herdr-select-pane-picker-does-not-annotate-the-row-twice ()
-  "The row is the candidate now; annotating it again would print it twice."
-  (let (annotator)
-    (herdr-select-test-with-state '(((pane_id . "w1:p1")))
-      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
-                ((symbol-function 'herdr-select--read)
-                 (lambda (_prompt candidates _category annotate)
-                   (setq annotator annotate) (car candidates))))
-        (herdr-select-pane)))
-    (should-not (funcall annotator "w1:p1"))))
-
 (ert-deftest herdr-select-row-id-reduces-a-row-and-passes-an-id-through ()
   "Rows come from the pickers and bare ids from consult, embark and the
 dispatcher.  A workspace label may hold spaces; the id never does, and
@@ -150,43 +123,6 @@ remove."
     (should (string-match-p "herdr.el" (car offered)))
     (should (string-match-p "3 panes" (car offered)))
     (should (string-match-p "fleet-infra" (cadr offered)))))
-
-(ert-deftest herdr-select-workspace-picker-does-not-annotate-the-row-twice ()
-  (let (annotator)
-    (herdr-test-with-state (:cache (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w1") (label . "herdr.el")))))))
-      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
-                ((symbol-function 'herdr-select--read)
-                 (lambda (_prompt candidates _category annotate)
-                   (setq annotator annotate) (car candidates))))
-        (herdr-select-workspace)))
-    (should-not (funcall annotator "w1"))))
-
-;;; Marginalia registration must not be able to break loading
-
-(ert-deftest herdr-select-registers-with-current-marginalia-api ()
-  (let ((marginalia-annotators nil))
-    (herdr-select--register-marginalia)
-    (should (assq 'herdr-pane marginalia-annotators))
-    (should (equal '(herdr-pane herdr-select--annotate-pane builtin none)
-                   (assq 'herdr-pane marginalia-annotators)))))
-
-(ert-deftest herdr-select-registers-with-the-pre-rename-marginalia-api ()
-  "Older marginalia called it `marginalia-annotator-registry'."
-  (let ((marginalia-annotator-registry nil))
-    (herdr-select--register-marginalia)
-    (should (assq 'herdr-workspace marginalia-annotator-registry))))
-
-(ert-deftest herdr-select-registration-is-a-noop-when-the-api-is-unknown ()
-  "A third rename must degrade to no annotations, not a void-variable."
-  (should-not (herdr-select--register-marginalia)))
-
-(ert-deftest herdr-select-registration-does-not-duplicate ()
-  (let ((marginalia-annotators nil))
-    (herdr-select--register-marginalia)
-    (herdr-select--register-marginalia)
-    ;; Two, not three: the tab picker went with the tab commands.
-    (should (= 2 (length marginalia-annotators)))))
 
 ;;; Consult source
 
@@ -356,19 +292,6 @@ asks, and a stub that answers calls cannot make it answer nil."
                (lambda (_prompt candidates &rest _) (car candidates))))
       (should (equal "/tmp/my project/" (herdr-select-place))))))
 
-(ert-deftest herdr-select-place-picker-does-not-annotate-the-row-twice ()
-  "The row already carries the annotation, so the table must not add it."
-  (let (annotator)
-    (herdr-test-with-state (:cache (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w1")))))))
-      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
-                ((symbol-function 'project-known-project-roots) (lambda () nil))
-                ((symbol-function 'herdr-select--read)
-                 (lambda (_prompt candidates _category fn)
-                   (setq annotator fn) (car candidates))))
-        (herdr-select-place)
-        (should (null (funcall annotator "w1")))))))
-
 (ert-deftest herdr-select-place-refuses-empty-input ()
   "`completing-read\\=' hands back the empty string on empty input whatever
 REQUIRE-MATCH says, and no row can match it."
@@ -399,7 +322,7 @@ refuse."
 working, done and idle around went unnoticed.  All five are asked for,
 and asserted to be distinct — a mapping that answers the same glyph for
 two statuses says nothing on screen."
-  (let ((glyphs (mapcar #'herdr-select--status-glyph
+  (let ((glyphs (mapcar #'herdr-tree-glyph
                         '("working" "blocked" "done" "idle" "no-such-status"))))
     (should (equal '("▶" "⏸" "✓" "·" " ") glyphs))
     (should (= 5 (length (delete-dups (copy-sequence glyphs)))))))
@@ -451,21 +374,17 @@ its own leading token echoed back by the annotation."
 (ert-deftest herdr-select-read-refuses-an-empty-candidate-list ()
   "An empty completion prompt looks broken rather than empty, so the
 error names herdr instead."
-  (should-error (herdr-select--read "x: " nil 'herdr-pane #'ignore)
+  (should-error (herdr-select--read "x: " nil 'herdr-pane)
                 :type 'user-error))
 
-(ert-deftest herdr-select-read-tags-its-table-with-category-and-annotator ()
-  "The category is what marginalia and embark key off, and the annotator
-is the only reason the picker shows anything but bare ids."
+(ert-deftest herdr-select-read-tags-its-table-with-a-category ()
+  "The category is what embark keys off."
   (let (table)
     (cl-letf (((symbol-function 'completing-read)
                (lambda (_prompt collection &rest _) (setq table collection) "a")))
-      (herdr-select--read "x: " '("a" "b") 'herdr-pane
-                          #'herdr-select--annotate-pane))
+      (herdr-select--read "x: " '("a" "b") 'herdr-pane))
     (let ((metadata (funcall table "" nil 'metadata)))
-      (should (eq 'herdr-pane (alist-get 'category (cdr metadata))))
-      (should (eq #'herdr-select--annotate-pane
-                  (alist-get 'annotation-function (cdr metadata)))))
+      (should (eq 'herdr-pane (alist-get 'category (cdr metadata)))))
     (should (equal '("a" "b") (funcall table "" nil t)))))
 
 

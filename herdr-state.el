@@ -81,7 +81,7 @@ stopping one connection takes another\\='s work with it.")
 (defconst herdr-state-global-subscriptions
   '("workspace.created" "workspace.updated" "workspace.metadata_updated"
     "workspace.renamed" "workspace.moved" "workspace.reordered"
-    "workspace.closed" "workspace.focused"
+    "workspace.closed"
     "worktree.created" "worktree.opened" "worktree.removed"
     "pane.created" "pane.closed" "pane.focused"
     "pane.moved" "pane.exited" "pane.agent_detected"
@@ -118,8 +118,7 @@ result right rather than lucky either way.")
   ;; `session.snapshot', which carries `name' — the one field no
   ;; PaneInfo has.
   (agent-info nil)
-  (focused-pane-id nil)
-  (focused-workspace-id nil))
+  (focused-pane-id nil))
 
 (defun herdr-state-empty ()
   "Return an empty state."
@@ -131,8 +130,7 @@ result right rather than lucky either way.")
    :panes (alist-get 'panes snapshot)
    :workspaces (alist-get 'workspaces snapshot)
    :agent-info (alist-get 'agents snapshot)
-   :focused-pane-id (alist-get 'focused_pane_id snapshot)
-   :focused-workspace-id (alist-get 'focused_workspace_id snapshot)))
+   :focused-pane-id (alist-get 'focused_pane_id snapshot)))
 
 (defun herdr-state-merged (states)
   "Return one state holding the panes and workspaces of every state in STATES.
@@ -248,21 +246,20 @@ entries in their new relative order; they are spliced in ahead of the
 entry whose id is BEFORE, or appended when BEFORE is nil or unknown.
 Entries not in IDS keep their relative order, and ids with no matching
 entry are skipped.  Like `herdr-state--upsert', ITEMS is not mutated."
-  (let ((moved (delq nil
-                     (mapcar (lambda (id)
-                               (seq-find (lambda (item)
-                                           (equal id (alist-get key item)))
-                                         items))
-                             ids)))
-        (rest (seq-remove (lambda (item) (member (alist-get key item) ids))
-                          items))
-        (result nil)
-        (spliced nil))
-    (dolist (item rest)
-      (when (and before (not spliced) (equal before (alist-get key item)))
-        (setq result (append result moved) spliced t))
-      (setq result (append result (list item))))
-    (if spliced result (append result moved))))
+  (let* ((moved (delq nil
+                      (mapcar (lambda (id)
+                                (seq-find (lambda (item)
+                                            (equal id (alist-get key item)))
+                                          items))
+                              ids)))
+         (rest (seq-remove (lambda (item) (member (alist-get key item) ids))
+                           items))
+         (at (and before
+                  (seq-position rest before
+                                (lambda (item id) (equal id (alist-get key item)))))))
+    (if at
+        (append (seq-take rest at) moved (seq-drop rest at))
+      (append rest moved))))
 
 (defun herdr-state--merge-item (items key id changes)
   "Return ITEMS with CHANGES merged into the entry whose KEY is ID.
@@ -432,11 +429,6 @@ events use dots, so both spellings appear here deliberately."
                                   (alist-get 'workspace_id data)))
        next)
 
-      ("workspace_focused"
-       (setf (herdr-state-focused-workspace-id next)
-             (alist-get 'workspace_id data))
-       next)
-
       ("workspace_reordered"
        ;; A worktree-group move (herdr 0.8.0).  `workspace_ids' is the
        ;; moved block in its new order, spliced before
@@ -490,11 +482,6 @@ declines, so a server slower than this interval is polled no faster
 than it answers."
   :type '(choice number (const :tag "Never repair" nil))
   :group 'herdr)
-
-(defun herdr-state-generation (connection)
-  "Return the current session generation.
-See the generation slot."
-  (herdr-connection-generation connection))
 
 (defun herdr-state-current (&optional connection)
   "Return CONNECTION\='s cache, or the current connection\='s.
@@ -884,7 +871,7 @@ displays."
 (defun herdr-state--pane-subscriptions (connection)
   "Return per-pane status subscriptions for the watched panes.
 A vector, because `subscriptions' is a JSON array."
-  (herdr-rpc-array
+  (vconcat
    (mapcar (lambda (id) `((type . "pane.agent_status_changed") (pane_id . ,id)))
            (herdr-state--watched-pane-ids connection))))
 
@@ -1023,7 +1010,7 @@ without changing what B should watch."
   (setf (herdr-connection-global-process connection)
         (herdr-state--subscribe connection
          "herdr-events-global"
-         (herdr-rpc-array
+         (vconcat
           (mapcar (lambda (type) `((type . ,type)))
                   herdr-state-global-subscriptions))))
   (herdr-state--open-pane-stream connection))
