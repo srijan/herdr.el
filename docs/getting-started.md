@@ -151,12 +151,16 @@ herdr.el follows more than one server at once. A second server can be on another
 reached over SSH:
 
 ```
-M-x herdr-connect-remote RET shadow RET shadow RET RET
+M-x herdr-connect-remote RET shadow RET RET RET
 ```
 
-The first answer names the connection, the second is the SSH target, and the third is a herdr
-session on that host — leave it empty for its default session. `M-x herdr-disconnect` stops
-following it again, and takes the SSH forward down with it.
+The first answer is a saved machine or an SSH target, the second names the connection, and the
+third is a herdr session on that host — leave it empty for its default session. If you have
+saved machines with `herdr machine add`, the first prompt offers them and fills in the rest.
+`M-x herdr-disconnect` stops following it again, and takes the SSH forward down with it.
+
+With a second server connected, the dashboard grows a row per server, pickers end each row with
+`@name`, and the modeline counts across both. With one it all looks exactly as it did.
 
 That host needs herdr installed and a server running on it. If nothing is running there the
 connection reports `no_answer`, because the tunnel cannot tell an absent server from a wrong

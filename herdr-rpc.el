@@ -84,6 +84,12 @@ under it; a composite key holds the token instead."
   ;; The herdr binary on that host, resolved there.  Nil means the
   ;; local `herdr-executable'.
   remote-executable
+  ;; The opaque id of the saved machine this came from, when it came
+  ;; from one.  Kept because a profile's label is what a user renames
+  ;; and its id is what herdr keeps: a renamed profile has to be
+  ;; recognised as the connection already being followed, not as a new
+  ;; one under a new name.
+  machine-id
   tunnel
   ;; Session cache and its two event streams, per KTD6.
   (cache nil) (global-process nil) (pane-process nil) (pane-stream-ids nil)

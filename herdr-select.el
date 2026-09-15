@@ -172,7 +172,7 @@ Nil for a row nothing offered, which is what empty input reduces to."
 
 (defun herdr-select--read-row (prompt connections ids candidate category)
   "Read one row over CONNECTIONS with PROMPT and return the id it names.
-IDS, CANDIDATE and CATEGORY are as `herdr-select--offer\=' takes them."
+IDS, CANDIDATE and CATEGORY are as `herdr-select--offer\\=' takes them."
   (cdr (herdr-select--chosen
         (herdr-select--read prompt
                             (herdr-select--offer connections ids candidate)

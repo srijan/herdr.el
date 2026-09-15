@@ -445,5 +445,105 @@ server as `/ssh:host:/srv/project/'."
       (should (equal '("/srv/project/") asked))
       (should-not (file-remote-p (car asked))))))
 
+
+;;; The machine catalog
+
+(defmacro herdr-connection-test--catalog (output status &rest body)
+  "Run BODY with `herdr machine list --json' printing OUTPUT and exiting STATUS."
+  (declare (indent 2) (debug t))
+  `(cl-letf (((symbol-function 'call-process)
+              (lambda (_program _infile _buffer _display &rest args)
+                (should (equal '("machine" "list" "--json") args))
+                (insert ,output)
+                ,status)))
+     ,@body))
+
+(ert-deftest herdr-connection-catalog-offers-the-enabled-machines ()
+  "Disabled is a state herdr keeps for a reason.  A catalog is a source
+of suggestions, and a machine its owner switched off is not one."
+  (herdr-connection-test--catalog
+      (concat "[{\"id\":\"p1\",\"label\":\"shadow\",\"target\":\"shadow\","
+              "\"session\":null,\"enabled\":true},"
+              "{\"id\":\"p2\",\"label\":\"build\",\"target\":\"u@build\","
+              "\"session\":\"work\",\"enabled\":true},"
+              "{\"id\":\"p3\",\"label\":\"old\",\"target\":\"old\","
+              "\"session\":null,\"enabled\":false}]")
+      0
+    (let ((machines (herdr-connection-machines)))
+      (should (equal '("shadow" "build") (mapcar #'herdr-machine-label machines)))
+      (should (equal '("p1" "p2") (mapcar #'herdr-machine-id machines)))
+      (should (equal '("shadow" "u@build") (mapcar #'herdr-machine-target machines)))
+      ;; A machine that names no session means that host's default.
+      (should-not (herdr-machine-session (nth 0 machines)))
+      (should (equal "work" (herdr-machine-session (nth 1 machines)))))))
+
+(ert-deftest herdr-connection-catalog-absent-is-not-a-failure ()
+  "A herdr with no `machine' subcommand, a catalog that will not parse
+and an empty one are the same answer, because every caller falls back to
+being told a target directly."
+  ;; No subcommand: non-zero exit, usage on the buffer.
+  (herdr-connection-test--catalog "usage: herdr machine\n" 2
+    (should-not (herdr-connection-machines)))
+  ;; Unreadable.
+  (herdr-connection-test--catalog "not json at all" 0
+    (should-not (herdr-connection-machines)))
+  ;; Empty.
+  (herdr-connection-test--catalog "[]" 0
+    (should-not (herdr-connection-machines)))
+  ;; And a record with no target is not a machine anything can be done
+  ;; with, whatever else it carries.
+  (herdr-connection-test--catalog "[{\"id\":\"p1\",\"label\":\"x\"}]" 0
+    (should-not (herdr-connection-machines))))
+
+(ert-deftest herdr-connection-catalog-reads-and-never-writes ()
+  "herdr owns the catalog.  This package offers what it holds and adds
+nothing to it, so there is no second place a machine can be described."
+  (herdr-connection-test--catalog "[]" 0
+    (herdr-connection-machines))
+  ;; Nothing else in the package runs `herdr machine' at all.
+  (dolist (file (directory-files default-directory t "\\`herdr.*\\.el\\'"))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (goto-char (point-min))
+      (while (re-search-forward "\"machine\"" nil t)
+        (should (save-excursion
+                  (beginning-of-line)
+                  (looking-at-p ".*\"machine\" \"list\"")))))))
+
+(ert-deftest herdr-connection-a-renamed-machine-keeps-its-connection ()
+  "A profile keeps its id through a rename.  Reconnecting to a renamed
+machine must answer with the connection already being followed, under
+its new name, rather than dig a second tunnel to the same server."
+  (let* ((following (herdr-connection--make
+                     :name "shadow" :ssh-target "shadow" :machine-id "p1"))
+         (herdr-connections (list (cons "shadow" following))))
+    (should (eq following (herdr-connection-for-machine "p1")))
+    (cl-letf (((symbol-function 'herdr-connection--open-remote)
+               (lambda (&rest _) (error "herdr: dug a second tunnel"))))
+      (should (eq following (herdr-connect-remote "build-box" "shadow" nil "p1"))))
+    (should (equal "build-box" (herdr-connection-name following)))
+    ;; Registered under the new name and no longer under the old one.
+    (should (eq following (herdr-connection-named "build-box")))
+    (should-not (herdr-connection-named "shadow"))
+    (should (equal 1 (length herdr-connections)))))
+
+(ert-deftest herdr-connection-an-unsaved-machine-is-no-harder-to-reach ()
+  "The catalog is a shortcut, never a gate.  Anything typed that is not
+one of its labels is read as a target and asked about in full."
+  (let ((prompts nil))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (prompt &rest _) (push prompt prompts) "elsewhere"))
+              ((symbol-function 'read-string)
+               (lambda (prompt &optional initial &rest _)
+                 (push prompt prompts)
+                 (or initial ""))))
+      (herdr-connection-test--catalog
+          "[{\"id\":\"p1\",\"label\":\"shadow\",\"target\":\"shadow\"}]" 0
+        (should (equal '("elsewhere" "elsewhere" nil nil)
+                       (herdr-connection--read-remote)))))
+    ;; The target typed at the machine prompt is not asked for again.
+    (should-not (member "SSH target: " prompts))
+    (should (member "Connection name: " prompts))))
+
 (provide 'herdr-connection-test)
 ;;; herdr-connection-test.el ends here

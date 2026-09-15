@@ -57,7 +57,7 @@ read.  Only the states worth acting on appear, via
 (defun herdr-modeline--state ()
   "Return the state the segment summarises: every connection at once.
 
-Each connection\='s own cache, added up here and nowhere else, per KTD6.
+Each connection\\='s own cache, added up here and nowhere else, per KTD6.
 Nothing in this path does I/O, so a server that has gone quiet costs
 the summary nothing and the others still count — which is the whole
 reason the segment reads caches rather than asking."

@@ -110,7 +110,7 @@ failure has to be able to name.")
 A root is a path on some machine, so it belongs to the connection whose
 host it is on: a purely local root to a local server, a TRAMP root to
 the server on the host it names.  Asking every connection about every
-root is how one server\='s projects reached another, and how two servers
+root is how one server\\='s projects reached another, and how two servers
 holding the same path became indistinguishable."
   (let ((server (herdr-connection--host
                  (herdr-connection-host-directory connection))))
@@ -152,7 +152,7 @@ resolve whatever the user last looked at.  Nothing may read it except
 Outranks the buffer.  A pane chosen by hand on one server means that
 server even when the command was typed in a terminal buffer belonging
 to another: ambient context loses to an explicit answer.  Cleared from
-`post-command-hook\=', so it never survives the command that set it.")
+`post-command-hook\\=', so it never survives the command that set it.")
 
 (defun herdr-connection-choose (connection)
   "Answer CONNECTION for the rest of this command, and return it."
@@ -519,8 +519,9 @@ that merely drops keeps being retried, because nobody said to stop."
     (herdr-connection-forget connection)
     (message "herdr: stopped following %s" name)))
 
-(defun herdr-connection-remote (name target &optional session)
+(defun herdr-connection-remote (name target &optional session machine-id)
   "Return a connection to the herdr SESSION on TARGET, calling it NAME.
+MACHINE-ID is the saved machine it came from, when it came from one.
 
 Resolves the remote socket before building anything, because that is
 the one question the forward itself can never answer: OpenSSH dials the
@@ -535,31 +536,139 @@ identically.  Asking the remote binary separates them, and says which."
      :ssh-target target
      :session session
      :remote-executable (car answer)
+     :machine-id machine-id
      :remote-socket-path remote
      :socket-path (herdr-connection--local-socket-path name))))
 
+
+;;; The machine catalog
+;;
+;; `herdr machine' is a catalog of saved SSH machines, and it is a
+;; client feature: the socket API has no `machine' method, and each
+;; machine keeps its own server and its own socket, so a socket client
+;; that wants several servers still opens several.  What it gives this
+;; package is a catalog worth reading rather than a configuration
+;; format worth inventing.
+;;
+;; Read, never written.  herdr owns it; this offers what it holds.
+
+(defun herdr-machine-id (machine)
+  "Return MACHINE\\='s opaque profile id.
+The id, not the label: a label is what a user renames and the id is
+what herdr keeps."
+  (alist-get 'id machine))
+
+(defun herdr-machine-label (machine)
+  "Return the label MACHINE is shown by, falling back to its target."
+  (or (alist-get 'label machine) (herdr-machine-target machine)))
+
+(defun herdr-machine-target (machine)
+  "Return MACHINE\\='s SSH target."
+  (alist-get 'target machine))
+
+(defun herdr-machine-session (machine)
+  "Return the herdr session MACHINE names, or nil for that host\\='s default."
+  (alist-get 'session machine))
+
+(defun herdr-machine-enabled-p (machine)
+  "Return non-nil unless MACHINE is disabled.
+Absent reads as enabled: a catalog that does not say is not saying no."
+  (not (and (assq 'enabled machine)
+            (null (alist-get 'enabled machine)))))
+
+(defun herdr-connection-machines ()
+  "Return the enabled machines saved with `herdr machine\\=', newest last.
+
+A herdr with no `machine\\=' subcommand, a catalog that will not parse and
+an empty one are all the same answer — none — because every caller of
+this falls back to being told a target directly.  This is a source of
+suggestions, not a source of truth."
+  (with-temp-buffer
+    (when (equal 0 (ignore-errors
+                     (call-process herdr-executable nil t nil
+                                   "machine" "list" "--json")))
+      (seq-filter #'herdr-machine-enabled-p
+                  (seq-filter
+                   #'herdr-machine-target
+                   (ignore-errors
+                     (herdr-rpc-decode (buffer-string))))))))
+
+(defun herdr-connection-for-machine (id)
+  "Return the connection already following the saved machine ID, or nil."
+  (when id
+    (seq-find (lambda (connection)
+                (equal id (herdr-connection-machine-id connection)))
+              (herdr-connection-list))))
+
+(defun herdr-connection--read-remote-fields (&optional target)
+  "Read (NAME TARGET SESSION nil) for a remote nobody has saved.
+TARGET, when given, is what was typed instead of picking a machine."
+  (let ((target (or target (read-string "SSH target: "))))
+    (list (read-string "Connection name: " target)
+          target
+          (let ((session (read-string
+                          (format-prompt "herdr session" "default") nil nil "")))
+            (unless (string-empty-p session) session))
+          nil)))
+
+(defun herdr-connection--read-remote ()
+  "Read (NAME TARGET SESSION MACHINE-ID) for `herdr-connect-remote\\='.
+
+A saved machine already holds a label, a target and a session, which is
+exactly what this would otherwise ask for three times.  Anything typed
+that is not one of them is read as a target and asked about in full, so
+a machine nobody saved is no harder to reach than it was."
+  (let ((machines (herdr-connection-machines)))
+    (if (null machines)
+        (herdr-connection--read-remote-fields)
+      (let* ((labels (mapcar #'herdr-machine-label machines))
+             (answer (completing-read "Machine, or an SSH target: "
+                                      labels nil nil))
+             (machine (seq-find (lambda (machine)
+                                  (equal answer (herdr-machine-label machine)))
+                                machines)))
+        (if (not machine)
+            (herdr-connection--read-remote-fields answer)
+          (list (herdr-machine-label machine)
+                (herdr-machine-target machine)
+                (herdr-machine-session machine)
+                (herdr-machine-id machine)))))))
+
 ;;;###autoload
-(defun herdr-connect-remote (name target &optional session)
+(defun herdr-connect-remote (name target &optional session machine-id)
   "Follow the herdr server on SSH TARGET, calling the connection NAME.
 
 SESSION names one of that host\\='s herdr sessions; nil means its
-default.  The connection is not reported up until a ping answers
+default.  MACHINE-ID is the saved machine this came from, when it came
+from one.  The connection is not reported up until a ping answers
 through the forward: the local socket appearing proves only that
 OpenSSH bound it, which it does before speaking to the far host at all.
+
+A machine already being followed is answered with the connection it
+already has, renamed when its label has changed.  A profile keeps its
+id through a rename, so a renamed machine is the same machine and must
+not become a second tunnel to the same server.
 
 Nothing is left in the registry when any of it fails.  A half-open
 connection is worse than none: it would be retried forever against a
 server nobody established was there."
-  (interactive
-   (list (read-string "Connection name: ")
-         (read-string "SSH target: ")
-         (let ((session (read-string
-                         (format-prompt "herdr session" "default") nil nil "")))
-           (unless (string-empty-p session) session))))
+  (interactive (herdr-connection--read-remote))
   (when (string-empty-p name)
     (user-error "herdr: a connection needs a name"))
   (require 'herdr-state)
-  (let ((connection (herdr-connection-remote name target session))
+  (if-let* ((following (herdr-connection-for-machine machine-id)))
+      (progn
+        (unless (equal name (herdr-connection-name following))
+          (herdr-connection-forget following)
+          (setf (herdr-connection-name following) name)
+          (herdr-connection-register following))
+        (message "herdr: already following %s on %s" name target)
+        following)
+    (herdr-connection--open-remote name target session machine-id)))
+
+(defun herdr-connection--open-remote (name target session machine-id)
+  "Open, await and register the connection `herdr-connect-remote\\=' asked for."
+  (let ((connection (herdr-connection-remote name target session machine-id))
         (established nil))
     (unwind-protect
         (progn

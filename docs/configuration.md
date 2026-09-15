@@ -27,8 +27,13 @@ what herdr.el sends.
 ## Remote servers
 
 A remote server is a herdr server on another machine, reached over SSH. Connect to one with
-`M-x herdr-connect-remote`, which asks for a name, an SSH target, and optionally the name of
-a herdr session on that host. Stop following it with `M-x herdr-disconnect`.
+`M-x herdr-connect-remote` and stop following it with `M-x herdr-disconnect`.
+
+If you have saved machines with `herdr machine add`, the command offers them by label and
+takes the target and the session from the catalog. Anything you type that is not one of those
+labels is read as an SSH target and asked about in full, so a machine nobody saved is no
+harder to reach than it was. With no saved machines the command asks for a target, a name and
+optionally a herdr session on that host.
 
 | Option | Default | Function |
 |---|---|---|
@@ -89,6 +94,28 @@ chcon -t user_tmp_t ~/.config/herdr/herdr.sock
 ```
 
 That does not survive the socket being recreated, so it is a workaround rather than a fix.
+
+### Saved machines
+
+`herdr machine` is herdr's own catalog of SSH machines, holding a label, a target, an optional
+session and an enabled flag:
+
+```sh
+herdr machine add shadow --label shadow --remote-session work
+herdr machine list --json
+```
+
+herdr.el reads it and never writes it. A disabled machine is not offered. A herdr with no
+`machine` subcommand, a catalog that will not parse and an empty one are all the same answer,
+and you name a target directly as before.
+
+The catalog is client-side and per-machine: the socket API has no `machine` method, and each
+machine keeps its own server and its own socket, so following several servers still means
+several connections. Your laptop's machine list is not the list on the machines it reaches.
+
+A profile keeps its id when you rename it. Reconnecting to a renamed machine answers with the
+connection already being followed, under its new name, rather than opening a second tunnel to
+the same server.
 
 ### What changes once there are two
 

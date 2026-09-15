@@ -31,7 +31,7 @@ The dashboard shows the target on the row you act from. The target is therefore 
 | Command | Function |
 |---|---|
 | `herdr-connect` | Follow a second server on this machine, by its socket path. |
-| `herdr-connect-remote` | Follow a server on another machine, over SSH. |
+| `herdr-connect-remote` | Follow a server on another machine, over SSH. Offers the machines saved with `herdr machine`. |
 | `herdr-disconnect` | Stop following a connection, and take its SSH forward down. |
 
 Nothing connects when Emacs starts. `herdr-start` makes the local connection when you first
