@@ -20,6 +20,8 @@
 (require 'herdr-state)
 (require 'herdr-term)
 (require 'herdr-dispatch)
+(require 'herdr-select)
+(require 'herdr-modeline)
 (require 'herdr-test-helper)
 
 (defun herdr-two-servers-test--responder (label requests)
@@ -236,6 +238,83 @@ that server however the registry is ordered."
             (should (member "ping" (two-requests)))
             (should-not (member "ping" (one-requests))))
         (when (buffer-live-p buffer) (kill-buffer buffer))))))
+
+
+;;; The pickers and the modeline
+
+(ert-deftest herdr-two-servers-a-picker-qualifies-its-rows ()
+  "Both servers answer for `w1:p1\='.  Unqualified the picker offers one
+row twice, and whichever the user means, the id it hands back is the
+same string."
+  (herdr-two-servers-test--with
+    (herdr-state-start one)
+    (herdr-state-start two)
+    (let (offered)
+      (cl-letf (((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates &rest _)
+                   (setq offered candidates) (car candidates))))
+        (herdr-select-pane))
+      (should (= 2 (length offered)))
+      (should (string-match-p "@one" (nth 0 offered)))
+      (should (string-match-p "@two" (nth 1 offered)))
+      ;; Each row is the record of its own server, not one server twice.
+      (should (string-match-p "/tmp/one" (nth 0 offered)))
+      (should (string-match-p "/tmp/two" (nth 1 offered))))))
+
+(ert-deftest herdr-two-servers-picking-says-which-server-a-command-means ()
+  "The row chosen outranks the buffer the command was typed in.  With
+both servers holding `w1:p1\=', resolving from the buffer would send
+every command to whichever terminal happened to be on screen."
+  (herdr-two-servers-test--with
+    (herdr-state-start one)
+    (herdr-state-start two)
+    (let ((buffer (generate-new-buffer " *on-one*")))
+      (unwind-protect
+          (with-current-buffer buffer
+            (setq herdr-buffer-connection one)
+            (should (eq one (herdr-current-connection)))
+            (cl-letf (((symbol-function 'herdr-select--read)
+                       ;; The second row: the pane on `two\='.
+                       (lambda (_prompt candidates &rest _)
+                         (nth 1 candidates))))
+              (should (equal "w1:p1" (herdr-select-pane))))
+            (should (eq two (herdr-current-connection))))
+        (kill-buffer buffer)))))
+
+(ert-deftest herdr-two-servers-a-quiet-one-does-not-empty-the-picker ()
+  "R6.  A server that stops answering costs the picker its own freshness
+and nothing else: its rows go stale, the other server\='s do not, and the
+list is still offered."
+  (herdr-two-servers-test--with
+    (herdr-state-start one)
+    (herdr-state-start two)
+    (let ((refresh (symbol-function 'herdr-state-refresh))
+          offered)
+      (cl-letf (((symbol-function 'herdr-state-refresh)
+                 (lambda (connection)
+                   (if (eq connection two)
+                       (error "herdr: no answer")
+                     (funcall refresh connection))))
+                ((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates &rest _)
+                   (setq offered candidates) (car candidates))))
+        (herdr-select-pane))
+      (should (= 2 (length offered)))
+      (should (string-match-p "/tmp/one" (nth 0 offered)))
+      (should (string-match-p "/tmp/two" (nth 1 offered))))))
+
+(ert-deftest herdr-two-servers-the-modeline-counts-both ()
+  "The segment used to read whichever connection resolved, so a second
+server\='s blocked agent was invisible until you went looking."
+  (herdr-two-servers-test--with
+    (herdr-state-start one)
+    (herdr-state-start two)
+    (should (equal "herdr:2▶"
+                   (herdr-modeline--segment (herdr-modeline--state))))
+    ;; And a server that stops takes only its own count with it.
+    (herdr-state-stop two)
+    (should (equal "herdr:1▶"
+                   (herdr-modeline--segment (herdr-modeline--state))))))
 
 (provide 'herdr-two-servers-test)
 ;;; herdr-two-servers-test.el ends here

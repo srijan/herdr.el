@@ -100,12 +100,17 @@ and the dispatcher header so the two surfaces cannot disagree."
     counts))
 
 (defun herdr-tree-status-summary (state)
-  "Return a compact status summary for STATE, such as \"2⏸1✓\", or \"\".
+  "Return a compact status summary for STATE, such as \"2⏸1✓\", or \"\"."
+  (herdr-tree-summarize-counts (herdr-tree-status-counts state)))
+
+(defun herdr-tree-summarize-counts (counts)
+  "Return a compact summary of COUNTS, such as \"2⏸1✓\", or \"\".
 Only `herdr-tree-noteworthy-statuses\\=' are shown, in that order; idle is
 omitted for the same reason the modeline omits it: a marker that is
-always on screen stops being read.  Empty when nothing is noteworthy."
-  (let* ((counts (herdr-tree-status-counts state))
-         (parts (delq nil
+always on screen stops being read.  Empty when nothing is noteworthy.
+Takes counts rather than a state so a surface summing several servers
+can add them up first."
+  (let* ((parts (delq nil
                       (mapcar
                        (lambda (status)
                          (when-let* ((n (alist-get status counts

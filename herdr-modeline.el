@@ -54,6 +54,16 @@ read.  Only the states worth acting on appear, via
   (let ((summary (herdr-tree-status-summary state)))
     (if (string-empty-p summary) "" (concat "herdr:" summary))))
 
+(defun herdr-modeline--state ()
+  "Return the state the segment summarises: every connection at once.
+
+Each connection\='s own cache, added up here and nowhere else, per KTD6.
+Nothing in this path does I/O, so a server that has gone quiet costs
+the summary nothing and the others still count — which is the whole
+reason the segment reads caches rather than asking."
+  (herdr-state-merged
+   (mapcar #'herdr-state-current (herdr-connection-list))))
+
 (defvar herdr-modeline-string ""
   "Cached modeline segment, refreshed from the state change hook.")
 (put 'herdr-modeline-string 'risky-local-variable t)
@@ -81,9 +91,7 @@ redisplay of every mode line in Emacs several times a second for text
 that almost never differed: the flicker.  The subscription is gone, but
 the guard stays: bursts still happen (settles, reconciles, status
 refreshes), and only a changed count is worth a redisplay."
-  ;; Reads whichever connection resolves, which is the sole one until
-  ;; the segment learns to show several servers at once.
-  (let ((text (herdr-modeline--segment (herdr-state-current))))
+  (let ((text (herdr-modeline--segment (herdr-modeline--state))))
     (unless (equal text herdr-modeline--text)
       (setq herdr-modeline--text text)
       (setq herdr-modeline-string

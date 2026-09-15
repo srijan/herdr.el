@@ -31,6 +31,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'seq)
 (require 'herdr-rpc)
 
 (declare-function herdr-state-stop "herdr-state" (connection))
@@ -103,6 +104,20 @@ failure has to be able to name.")
   "Return the connection called NAME, or nil."
   (cdr (assoc name herdr-connections)))
 
+(defun herdr-connection-roots-for (connection roots)
+  "Return the ROOTS that belong to CONNECTION.
+
+A root is a path on some machine, so it belongs to the connection whose
+host it is on: a purely local root to a local server, a TRAMP root to
+the server on the host it names.  Asking every connection about every
+root is how one server\='s projects reached another, and how two servers
+holding the same path became indistinguishable."
+  (let ((server (herdr-connection--host
+                 (herdr-connection-host-directory connection))))
+    (seq-filter (lambda (root)
+                  (equal (herdr-connection--host root) server))
+                roots)))
+
 (defun herdr-connection-register (connection)
   "Add CONNECTION to the registry and return it.
 Replaces any connection of the same name in place, so that reconnecting
@@ -130,6 +145,25 @@ The one place this package rebinds a connection dynamically, following
 extent, so a listener it reaches — a redraw, a reap — would otherwise
 resolve whatever the user last looked at.  Nothing may read it except
 `herdr-current-connection\\='.")
+
+(defvar herdr-connection-chosen nil
+  "The connection a picker just answered with, for this command only.
+
+Outranks the buffer.  A pane chosen by hand on one server means that
+server even when the command was typed in a terminal buffer belonging
+to another: ambient context loses to an explicit answer.  Cleared from
+`post-command-hook\=', so it never survives the command that set it.")
+
+(defun herdr-connection-choose (connection)
+  "Answer CONNECTION for the rest of this command, and return it."
+  (setq herdr-connection-chosen connection)
+  (add-hook 'post-command-hook #'herdr-connection--unchoose)
+  connection)
+
+(defun herdr-connection--unchoose ()
+  "Forget the chosen connection once its command is over."
+  (setq herdr-connection-chosen nil)
+  (remove-hook 'post-command-hook #'herdr-connection--unchoose))
 
 (defvar-local herdr-buffer-connection nil
   "The connection this buffer belongs to, when it belongs to one.
@@ -183,10 +217,12 @@ and carries it to the moment it fires; resolving late is how work
 scheduled against one server lands on another.
 
 Asked most specific first: an asynchronous dispatch says which
-connection it is running under, a buffer says which server it belongs
-to, a registered resolver reads point, and failing all three the sole
+connection it is running under, a picker says which server the thing
+just chosen is on, a buffer says which server it belongs to, a
+registered resolver reads point, and failing all four the sole
 connection answers."
   (or herdr-connection--dispatching
+      herdr-connection-chosen
       herdr-buffer-connection
       (run-hook-with-args-until-success 'herdr-connection-resolvers)
       (herdr-connection--only)))

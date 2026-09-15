@@ -468,5 +468,45 @@ is the only reason the picker shows anything but bare ids."
                   (alist-get 'annotation-function (cdr metadata)))))
     (should (equal '("a" "b") (funcall table "" nil t)))))
 
+
+;;; Which server a row is on
+
+(ert-deftest herdr-select-one-server-rows-carry-no-server-name ()
+  "Nobody following one server should see a column that says nothing.
+R10: the single-connection picker is exactly what it was."
+  (let (offered)
+    (herdr-select-test-with-state '(((pane_id . "w1:p1") (agent . "claude")))
+      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates &rest _)
+                   (setq offered candidates) (car candidates))))
+        (herdr-select-pane)))
+    (should (= 1 (length offered)))
+    (should-not (string-match-p "@" (car offered)))))
+
+(ert-deftest herdr-select-a-place-root-is-offered-by-its-own-host-only ()
+  "A root is a path on a machine.  Asking every connection about every
+root is how one server\='s projects reached another, and how two servers
+holding the same path became indistinguishable."
+  (let* ((here (herdr-test-connection (herdr-state-empty)))
+         (there (herdr-test-connection (herdr-state-empty)))
+         offered)
+    (setf (herdr-connection-name here) "here")
+    (setf (herdr-connection-name there) "there")
+    (setf (herdr-connection-ssh-target there) "shadow")
+    (let ((herdr-connections (list (cons "here" here) (cons "there" there))))
+      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'project-known-project-roots)
+                 (lambda () '("/tmp/local/" "/ssh:shadow:/tmp/far/")))
+                ((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates &rest _)
+                   (setq offered candidates) (car candidates))))
+        (herdr-select-place)))
+    (should (= 2 (length offered)))
+    (should (string-prefix-p "/tmp/local/" (nth 0 offered)))
+    (should (string-match-p "@here" (nth 0 offered)))
+    (should (string-prefix-p "/ssh:shadow:/tmp/far/" (nth 1 offered)))
+    (should (string-match-p "@there" (nth 1 offered)))))
+
 (provide 'herdr-select-test)
 ;;; herdr-select-test.el ends here

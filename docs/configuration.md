@@ -90,6 +90,30 @@ chcon -t user_tmp_t ~/.config/herdr/herdr.sock
 
 That does not survive the socket being recreated, so it is a workaround rather than a fix.
 
+### What changes once there are two
+
+Following one server looks exactly as it did. A second one changes three surfaces, and only
+while it is connected:
+
+- The dashboard grows an outer level, one row per server, named and foldable. A server that is
+  down keeps its row, dimmed, rather than disappearing.
+- Pickers offer every server's panes, workspaces and projects at once, each row ending in
+  `@name`. That name is part of the candidate, so it can be typed: `claude shadow` narrows to
+  the agents on `shadow`.
+- The modeline counts across every connection.
+
+Choosing a row says which server the command means, even when you typed it in a terminal
+buffer belonging to another one. Where nothing was chosen and nothing on screen says, a
+command means the local server.
+
+Known projects belong to the machine their path is on. A plain path is asked of local servers
+only, and a TRAMP path of the server on the host it names, so one machine's project list never
+reaches another and two machines holding the same path stay distinguishable.
+
+A server that has gone quiet costs a picker its own rows' freshness and nothing else: its
+last-known rows are still offered, the other servers are still asked, and nothing waits on it
+longer than `herdr-rpc-background-timeout`.
+
 ## Terminals
 
 | Option | Default | Function |

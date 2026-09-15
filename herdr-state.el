@@ -49,6 +49,7 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'seq)
 (require 'herdr-rpc)
 (require 'herdr-connection)
 (require 'herdr-pane)
@@ -132,6 +133,18 @@ result right rather than lucky either way.")
    :agent-info (alist-get 'agents snapshot)
    :focused-pane-id (alist-get 'focused_pane_id snapshot)
    :focused-workspace-id (alist-get 'focused_workspace_id snapshot)))
+
+(defun herdr-state-merged (states)
+  "Return one state holding the panes and workspaces of every state in STATES.
+
+For a surface that counts across connections.  Merged here and read
+nowhere else, per KTD6: each cache is built from its own server alone,
+and only a surface showing them together may add them up.  Focus is
+dropped rather than picked: several servers each have one, and no
+answer is better than an arbitrary one."
+  (herdr-state-from-snapshot
+   `((workspaces . ,(seq-mapcat #'herdr-state-workspaces states))
+     (panes . ,(seq-mapcat #'herdr-state-panes states)))))
 
 (defun herdr-state-pane (state id)
   "Return the pane in STATE whose id is ID, or nil."

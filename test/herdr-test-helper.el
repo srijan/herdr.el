@@ -18,6 +18,7 @@
 (require 'herdr-rpc)
 (require 'herdr-state)
 (require 'herdr-connection)
+(require 'herdr-select)
 
 ;; macOS caps unix socket paths near 104 bytes and the standard temp
 ;; directory is already long, so build paths under /tmp directly.
@@ -164,6 +165,17 @@ rather than silently reaching for the real one."
           (herdr-connection-socket-path (herdr-current-connection)))
     (setf (herdr-connection-cache connection) (or cache (herdr-state-empty)))
     connection))
+
+(define-advice ert-run-test (:around (run test) herdr-forget-the-last-pick)
+  "Run TEST through RUN with nothing left behind by the test before it.
+
+What a picker leaves — the rows it offered and the connection it chose —
+belongs to the command that picked.  `herdr-connection-choose' clears
+the choice from `post-command-hook', which batch Emacs never runs, so
+without this one test\='s pick answers the next test\='s question."
+  (let ((herdr-connection-chosen nil)
+        (herdr-select--rows nil))
+    (funcall run test)))
 
 (provide 'herdr-test-helper)
 ;;; herdr-test-helper.el ends here

@@ -140,9 +140,12 @@ result greppable."
 (defun herdr-pane-rename (label &optional pane-id)
   "Rename PANE-ID, or the focused pane, to LABEL."
   (interactive (list (read-string "Pane label: ")))
-  (herdr-rpc-call (herdr-current-connection) "pane.rename"
-                  `((pane_id . ,(or pane-id (herdr-select-target-pane)))
-                    (label . ,label))))
+  ;; The pane is chosen before the connection is asked for, here and in
+  ;; every command that prompts: picking says which server, and an
+  ;; argument evaluated first would have resolved one already.
+  (let ((pane (or pane-id (herdr-select-target-pane))))
+    (herdr-rpc-call (herdr-current-connection) "pane.rename"
+                    `((pane_id . ,pane) (label . ,label)))))
 
 (defun herdr-pane-focus (&optional pane-id)
   "Focus PANE-ID, prompting when not given, and select its buffer.
@@ -275,18 +278,17 @@ this without a race, which a preflight cannot."
 (defun herdr-workspace-focus (&optional workspace-id)
   "Focus WORKSPACE-ID, prompting when not given, and follow it in Emacs."
   (interactive)
-  (herdr-rpc-call (herdr-current-connection) "workspace.focus"
-                  `((workspace_id . ,(or workspace-id
-                                         (herdr-select-workspace "Focus: ")))))
+  (let ((workspace (or workspace-id (herdr-select-workspace "Focus: "))))
+    (herdr-rpc-call (herdr-current-connection) "workspace.focus"
+                    `((workspace_id . ,workspace))))
   (herdr-cmd--follow-focus))
 
 (defun herdr-workspace-rename (label &optional workspace-id)
   "Rename WORKSPACE-ID to LABEL."
   (interactive (list (read-string "New workspace label: ")))
-  (herdr-rpc-call (herdr-current-connection) "workspace.rename"
-                  `((workspace_id . ,(or workspace-id
-                                         (herdr-select-workspace "Rename: ")))
-                    (label . ,label))))
+  (let ((workspace (or workspace-id (herdr-select-workspace "Rename: "))))
+    (herdr-rpc-call (herdr-current-connection) "workspace.rename"
+                    `((workspace_id . ,workspace) (label . ,label)))))
 
 ;;; Worktrees
 
@@ -323,9 +325,9 @@ name to a worktree with its own herdr workspace."
 (defun herdr-agent-prompt (text &optional target)
   "Send TEXT as a prompt to the agent in TARGET."
   (interactive (list (read-string "Prompt: ")))
-  (herdr-rpc-call (herdr-current-connection) "agent.prompt"
-                  `((target . ,(or target (herdr-select-agent "Prompt agent: ")))
-                    (text . ,text))))
+  (let ((target (or target (herdr-select-agent "Prompt agent: "))))
+    (herdr-rpc-call (herdr-current-connection) "agent.prompt"
+                    `((target . ,target) (text . ,text)))))
 
 ;;; Opening a place to run something
 

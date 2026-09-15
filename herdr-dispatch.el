@@ -1201,10 +1201,8 @@ already keeps idle out of the modeline segment.
 
 Counts across every connection, and says how many there are only when
 there are several: one server needs no telling that it is the only one."
-  (let* ((states (mapcar #'herdr-state-current connections))
-         (merged (herdr-state-from-snapshot
-                  `((workspaces . ,(seq-mapcat #'herdr-state-workspaces states))
-                    (panes . ,(seq-mapcat #'herdr-state-panes states)))))
+  (let* ((merged (herdr-state-merged
+                  (mapcar #'herdr-state-current connections)))
          (summary (herdr-tree-status-summary merged)))
     (format "herdr   %s%s  %s%s"
             (if (cdr connections)
@@ -1389,18 +1387,9 @@ agent is working."
            connection (herdr-dispatch--roots-for connection)))))))
 
 (defun herdr-dispatch--roots-for (connection)
-  "Return the known-project roots that belong to CONNECTION.
-
-A root is a path on some machine, so it belongs to the connection whose
-host it is on: a purely local root to a local server, a TRAMP root to
-the server on the host it names.  Asking every connection about every
-root is how one server\\='s projects reached another, and how two servers
-holding the same path became indistinguishable."
-  (let ((server (herdr-connection--host
-                 (herdr-connection-host-directory connection))))
-    (seq-filter (lambda (root)
-                  (equal (herdr-connection--host root) server))
-                (herdr-dispatch--known-project-roots))))
+  "Return the known-project roots that belong to CONNECTION."
+  (herdr-connection-roots-for connection
+                              (herdr-dispatch--known-project-roots)))
 
 (defun herdr-dispatch--tree (connections)
   "Return the dashboard tree for CONNECTIONS.
