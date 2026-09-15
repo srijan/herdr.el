@@ -80,7 +80,7 @@ herdr.el therefore compares its cache against the server. Two functions do this:
 | Function | Method | Corrects |
 |---|---|---|
 | `herdr-state-reconcile-panes` | `pane.list` | The pane set. |
-| `herdr-state-reconcile-workspaces` | `workspace.list` | The workspace set. |
+| `herdr-state--reconcile-workspaces-async` | `workspace.list` | The workspace set. |
 
 Both methods need no parameters. Each returns the full live set. Each is therefore a symmetric
 target: herdr.el adds what is missing and removes what is extra.

@@ -712,7 +712,6 @@ sole one."
         (herdr-state-refresh mine)
         (herdr-state-resync mine)
         (herdr-state-reconcile-panes mine)
-        (herdr-state-reconcile-workspaces mine)
         (herdr-state--refresh-statuses mine)
         (herdr-state-start mine)
         (should asked)
@@ -765,19 +764,22 @@ the dead session's agents until the mode is toggled."
       (should-not (herdr-state-pane-ids (herdr-connection-cache (herdr-current-connection)))))))
 
 (ert-deftest herdr-state-reconcile-workspaces-drops-a-reply-from-a-stopped-session ()
-  "The workspace half of the same window."
+  "The workspace half of the same window, which its own guard covers: the
+stop can land between the pane reply and the workspace one."
   (herdr-state-test--with-quiet-session
-    (setf (herdr-connection-running (herdr-current-connection)) t
-          (herdr-connection-cache (herdr-current-connection))
-          (herdr-state-from-snapshot '((workspaces . nil))))
-    (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (&rest _)
-                 (setf (herdr-connection-running (herdr-current-connection)) nil
-                       (herdr-connection-generation (herdr-current-connection)) (1+ (herdr-connection-generation (herdr-current-connection)))
-                       (herdr-connection-cache (herdr-current-connection)) (herdr-state-empty))
-                 '((workspaces . (((workspace_id . "w1") (label . "web"))))))))
-      (should-not (herdr-state-reconcile-workspaces (herdr-current-connection)))
-      (should-not (herdr-state-workspaces (herdr-connection-cache (herdr-current-connection)))))))
+    (let ((connection (herdr-current-connection))
+          (replies nil))
+      (setf (herdr-connection-cache connection)
+            (herdr-state-from-snapshot '((workspaces . nil))))
+      (cl-letf (((symbol-function 'herdr-rpc-call-async)
+                 (lambda (_connection _method _params callback &optional _timeout)
+                   (push callback replies) nil)))
+        (herdr-state--reconcile-workspaces-async connection #'ignore)
+        (setf (herdr-connection-generation connection)
+              (1+ (herdr-connection-generation connection)))
+        (funcall (car replies)
+                 '((workspaces . (((workspace_id . "w1") (label . "web"))))) nil)
+        (should-not (herdr-state-workspaces (herdr-state-current connection)))))))
 
 (ert-deftest herdr-state-repair-skips-workspaces-when-panes-just-failed ()
   "A `pane.list\\=' that failed has scheduled a reconnect.  Asking

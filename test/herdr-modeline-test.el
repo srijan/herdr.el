@@ -42,7 +42,7 @@
                   (herdr-modeline-test--state '("w1:p1" "claude" "working"))))))
 
 (ert-deftest herdr-modeline-counts-ignore-non-agent-panes ()
-  (let ((counts (herdr-modeline--counts
+  (let ((counts (herdr-tree-status-counts
                  (herdr-modeline-test--state '("w1:p1" "claude" "blocked")
                                            '("w1:p2" nil "unknown")))))
     (should (equal 1 (alist-get "blocked" counts nil nil #'equal)))

@@ -40,12 +40,6 @@ Nil means never.  A sensible opt-in is (\"blocked\" \"done\")."
 
 ;;; Modeline segment
 
-(defun herdr-modeline--counts (state)
-  "Return an alist of (STATUS . COUNT) for the agents in STATE.
-Delegates to `herdr-tree-status-counts\\=', which the dispatcher header
-reads from too, so the modeline and the dispatcher cannot disagree."
-  (herdr-tree-status-counts state))
-
 (defun herdr-modeline--segment (state)
   "Return the modeline string for STATE, or an empty string.
 Idle agents are omitted: a count that is always on screen stops being

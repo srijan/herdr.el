@@ -574,7 +574,12 @@ emptied."
   "Ask CONNECTION for the workspace set and fold the reply when it lands.
 DONE is called exactly once, with the RPC error or nil.  Unlike the pane
 half this is not a watchdog: `herdr-state--reconcile-panes-async\=' has
-already spoken for the socket by the time this runs."
+already spoken for the socket by the time this runs.
+
+Workspaces need this as much as panes do and have nowhere else to get
+it: a missed `workspace.closed\=' leaves a ghost in the cache until the
+next full resync, which only fires on reconnect, so a session that never
+disconnects keeps it forever."
   (let ((generation (herdr-connection-generation connection)))
     (condition-case err
         (herdr-rpc-call-async
@@ -1106,34 +1111,9 @@ how the list is obtained."
       (run-hook-with-args 'herdr-state-change-functions connection "reconcile" nil))
     changed))
 
-(defun herdr-state-reconcile-workspaces (connection)
-  "Make the cached workspace set match the server.
-
-Panes get this from `herdr-state-reconcile-panes' every poll; workspaces
-never did, because nothing periodic called `workspace.list' the way the
-pane poll calls `pane.list'.  A missed
-`workspace.closed' — the same disconnect and startup-window gaps
-`herdr-state-reconcile-panes' defends panes against — then leaves a
-ghost workspace in the cache indefinitely: not just until the next
-poll, since there is no next poll for it, but until the next full
-resync, which only fires on reconnect.  A session that never
-disconnects never reconnects, so the ghost is permanent — it shows up
-in the dispatcher, the modeline, and every picker for the rest of the
-`workspace.list', like `pane.list', takes no required parameters and
-answers with every live workspace, so one call resolves both closures
-and updates in a single pass.  Returns non-nil when anything changed."
-  (when-let* ((generation (herdr-connection-generation connection))
-              (workspaces (ignore-errors
-                            (alist-get 'workspaces
-                                       (herdr-rpc-call connection "workspace.list"))))
-              ;; See `herdr-state-reconcile-panes\=': same stop-mid-wait.
-              ((equal generation (herdr-connection-generation connection))))
-    (herdr-state--fold-workspaces connection workspaces)))
-
 (defun herdr-state--fold-workspaces (connection workspaces)
   "Fold the authoritative WORKSPACES into CONNECTION\='s cache.
-Returns non-nil when anything changed.  Shared by the synchronous
-reconcile and the asynchronous one."
+Returns non-nil when anything changed."
   (let* ((live-ids (mapcar #'herdr-workspace-id workspaces))
          (stale (seq-remove
                  (lambda (w) (member (herdr-workspace-id w) live-ids))

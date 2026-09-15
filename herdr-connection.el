@@ -405,9 +405,7 @@ streams use, so there is one retry mechanism rather than two."
 Wanted means the session is running: `herdr-disconnect\\=' stops it first,
 so a deliberate teardown reaches here with nothing left to retry."
   (setf (herdr-connection-tunnel connection) nil)
-  (when (and (fboundp 'herdr-state-running-p)
-             (herdr-state-running-p connection)
-             (fboundp 'herdr-state--schedule-reconnect))
+  (when (herdr-state-running-p connection)
     (herdr-state--schedule-reconnect connection)))
 
 (defun herdr-connection--stop-tunnel (connection)
@@ -587,11 +585,10 @@ suggestions, not a source of truth."
     (when (equal 0 (ignore-errors
                      (call-process herdr-executable nil t nil
                                    "machine" "list" "--json")))
-      (seq-filter #'herdr-machine-enabled-p
-                  (seq-filter
-                   #'herdr-machine-target
-                   (ignore-errors
-                     (herdr-rpc-decode (buffer-string))))))))
+      (seq-filter (lambda (machine)
+                    (and (herdr-machine-target machine)
+                         (herdr-machine-enabled-p machine)))
+                  (ignore-errors (herdr-rpc-decode (buffer-string)))))))
 
 (defun herdr-connection-for-machine (id)
   "Return the connection already following the saved machine ID, or nil."

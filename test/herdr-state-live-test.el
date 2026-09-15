@@ -560,68 +560,13 @@ event."
 ;;; Reconciling workspaces and tabs against the server
 
 ;; Ghost workspaces are the same disconnect and startup-window class as
-;; ghost panes, but with no periodic repair at all before
-;; `herdr-state-reconcile-workspaces' existed: a missed `workspace.closed'
-;; had nothing short of a full reconnect to clear it, and a
-;; long-lived session that never disconnects never reconnects.
-;; Observed live: four workspaces and six tabs, closed server-side,
-;; still rendering in the dispatcher after running for days.
-
-(defun herdr-state-live-test--workspace-list-server (workspaces)
-  "Return a responder answering `workspace.list' with WORKSPACES."
-  (lambda (req)
-    (cons (herdr-test-ok req `((type . "workspace_list")
-                               (workspaces . ,workspaces)))
-          nil)))
-
-(ert-deftest herdr-state-reconcile-workspaces-drops-ghosts ()
-  (herdr-test-with-server
-      (herdr-state-live-test--workspace-list-server
-       [((workspace_id . "w1") (label . "kept"))])
-    (herdr-test-with-state (:cache (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w1") (label . "kept"))
-                             ((workspace_id . "w9") (label . "ghost")))))))
-      (should (herdr-state-reconcile-workspaces (herdr-current-connection)))
-      (should (equal '("w1")
-                     (mapcar (lambda (w) (herdr-workspace-id w))
-                             (herdr-state-workspaces (herdr-connection-cache (herdr-current-connection)))))))))
-
-(ert-deftest herdr-state-reconcile-workspaces-adds-and-updates ()
-  (herdr-test-with-server
-      (herdr-state-live-test--workspace-list-server
-       [((workspace_id . "w1") (label . "renamed"))
-        ((workspace_id . "w2") (label . "new"))])
-    (herdr-test-with-state (:cache (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w1") (label . "old")))))))
-      (should (herdr-state-reconcile-workspaces (herdr-current-connection)))
-      (should (equal "renamed"
-                     (alist-get 'label
-                                (seq-find (lambda (w) (equal "w1" (alist-get
-                                                                    'workspace_id w)))
-                                          (herdr-state-workspaces
-                                           (herdr-connection-cache (herdr-current-connection)))))))
-      (should (seq-find (lambda (w) (equal "w2" (herdr-workspace-id w)))
-                        (herdr-state-workspaces (herdr-connection-cache (herdr-current-connection))))))))
-
-(ert-deftest herdr-state-reconcile-workspaces-reports-no-change-when-in-sync ()
-  "The poll runs on every tick; it must not redraw the dispatcher for
-nothing when nothing has changed."
-  (herdr-test-with-server
-      (herdr-state-live-test--workspace-list-server
-       [((workspace_id . "w1") (label . "kept"))])
-    (herdr-test-with-state (:cache (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w1") (label . "kept")))))))
-      (should-not (herdr-state-reconcile-workspaces (herdr-current-connection))))))
-
-(ert-deftest herdr-state-reconcile-workspaces-leaves-the-cache-alone-when-unreachable ()
-  (herdr-test-with-state (:cache (herdr-state-from-snapshot
-          '((workspaces . (((workspace_id . "w1")))))))(progn
-    (setf (herdr-connection-socket-path (herdr-current-connection))
-          "/tmp/herdr-test-definitely-absent.sock")
-    (should-not (herdr-state-reconcile-workspaces (herdr-current-connection)))
-    (should (equal '("w1")
-                   (mapcar (lambda (w) (herdr-workspace-id w))
-                           (herdr-state-workspaces (herdr-connection-cache (herdr-current-connection)))))))))
+;; ghost panes, and they used to have no periodic repair at all: a
+;; missed `workspace.closed' had nothing short of a full reconnect to
+;; clear it, and a long-lived session that never disconnects never
+;; reconnects.  Observed live: four workspaces and six tabs, closed
+;; server-side, still rendering in the dispatcher after running for
+;; days.  The repair reconciles both sets now; the tests for the fold
+;; itself are hermetic, and these cover it reaching a real server.
 
 (ert-deftest herdr-state-settle-reconciles-workspaces-too ()
   "The startup window loses events and no replay covers it any more.
@@ -630,8 +575,7 @@ herdr 0.9.0 starts a subscription at the sequence its request arrived
 on, so anything the server announced between `session.snapshot\=' and
 the subscribe is gone.  `pane.list\=' repairs panes; without a
 `workspace.list\=' beside it a workspace renamed in that window stays
-wrong until something else happens to reconcile, and
-`herdr-state-reconcile-workspaces\=' has one other caller."
+wrong until something else happens to reconcile."
   (let (methods)
     (herdr-test-with-server
         (lambda (req)
@@ -692,9 +636,8 @@ settled first.  Recorded in reverse, so the list reads newest first."
 (ert-deftest herdr-state-settle-keeps-the-cache-when-workspace-list-fails ()
   "An unanswerable `workspace.list\=' must not read as an empty server.
 
-`herdr-state-reconcile-workspaces\=' already refuses to treat nil as an
-answer; the settle must not defeat that by calling it somewhere the
-refusal cannot take effect."
+The reconcile already refuses to treat nil as an answer; the settle must
+not defeat that by calling it somewhere the refusal cannot take effect."
   (herdr-test-with-server
       (lambda (req)
         (pcase (alist-get 'method req)

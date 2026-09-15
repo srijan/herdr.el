@@ -133,10 +133,8 @@ one — a server that has gone quiet must cost the list nothing more than
 its own rows being stale, so the failure is swallowed and, when there
 is more than one server to wait on, the wait is the background bound
 rather than the full one."
-  (let ((herdr-rpc-timeout (if (cdr connections)
-                               (min herdr-rpc-timeout
-                                    herdr-rpc-background-timeout)
-                             herdr-rpc-timeout)))
+  (let ((herdr-rpc-timeout (min herdr-rpc-timeout
+                                herdr-rpc-background-timeout)))
     (dolist (connection connections)
       (when (herdr-state-running-p connection)
         (ignore-errors (herdr-state-refresh connection))))))
@@ -163,22 +161,19 @@ comes last so the id stays the first token every row reduces through."
          connections))
   (mapcar #'car herdr-select--rows))
 
-(defun herdr-select--chosen (row)
-  "Return (CONNECTION . ID) for ROW, and make that connection the answer.
-Nil for a row nothing offered, which is what empty input reduces to."
-  (when-let* ((pick (alist-get row herdr-select--rows nil nil #'equal)))
-    (herdr-connection-choose (car pick))
-    pick))
-
 (defun herdr-select--read-row (prompt connections ids candidate category)
   "Read one row over CONNECTIONS with PROMPT and return the id it names.
-IDS, CANDIDATE and CATEGORY are as `herdr-select--offer\\=' takes them."
-  (cdr (herdr-select--chosen
-        (herdr-select--read prompt
-                            (herdr-select--offer connections ids candidate)
-                            ;; No annotator: the row is the candidate now,
-                            ;; and annotating it again would print it twice.
-                            category #'ignore))))
+IDS, CANDIDATE and CATEGORY are as `herdr-select--offer\\=' takes them.
+Choosing a row also makes its connection the answer for this command.
+Nil for a row nothing offered, which is what empty input reduces to."
+  (when-let* ((row (herdr-select--read
+                    prompt (herdr-select--offer connections ids candidate)
+                    ;; No annotator: the row is the candidate now, and
+                    ;; annotating it again would print it twice.
+                    category #'ignore))
+              (pick (alist-get row herdr-select--rows nil nil #'equal)))
+    (herdr-connection-choose (car pick))
+    (cdr pick)))
 
 (defun herdr-select-pane (&optional prompt)
   "Read a pane id, defaulting the prompt to PROMPT."
