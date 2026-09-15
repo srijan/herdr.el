@@ -426,7 +426,7 @@ than read when it fires: a timer callback runs in an empty extent."
                (or (null connection)
                    (equal (car cell) (herdr-connection-token connection))))
       (cancel-timer (cdr cell))
-      (setcdr cell nil)))
+      (when connection (setcdr cell nil))))
   (unless connection (setq herdr-term--directory-debounce-timers nil)))
 
 (defun herdr-term--set-directory (connection buffer pane)

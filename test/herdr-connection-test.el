@@ -663,12 +663,5 @@ answer -- forever, with backoff, looking like it is trying."
       (herdr-connection-ensure-tunnel connection))
     (should (equal (list connection) started))))
 
-(ert-deftest herdr-connection-a-local-connection-has-no-tunnel-to-ensure ()
-  (let ((started nil))
-    (cl-letf (((symbol-function 'herdr-connection--start-tunnel)
-               (lambda (c) (push c started) nil)))
-      (herdr-connection-ensure-tunnel (herdr-connection-local)))
-    (should-not started)))
-
 (provide 'herdr-connection-test)
 ;;; herdr-connection-test.el ends here

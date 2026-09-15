@@ -62,12 +62,8 @@ they have different home directories and different herdr sockets."
   "Return non-nil when A and B, as `herdr-connection--host\\=' returns them,
 name the same account.  Local matches local.  A host matches the same
 host, and the users must match too when both sides name one."
-  (cond
-   ((and (null a) (null b)))
-   ((or (null a) (null b)) nil)
-   ((not (equal (cdr a) (cdr b))) nil)
-   ((and (car a) (car b)) (equal (car a) (car b)))
-   (t t)))
+  (and (equal (cdr a) (cdr b))
+       (or (null (car a)) (null (car b)) (equal (car a) (car b)))))
 
 (defun herdr-connection-file-name (connection path)
   "Return PATH, which CONNECTION\\='s server named, as a file name Emacs can use.
@@ -161,8 +157,7 @@ and is reachable by nothing, `herdr-disconnect\\=' included."
   "Stop CONNECTION and take its tunnel down, forgivingly.
 Called for a connection being displaced, where failing to tear down
 must not stop the one taking its place from registering."
-  (ignore-errors
-    (when (fboundp 'herdr-state-stop) (herdr-state-stop connection)))
+  (ignore-errors (herdr-state-stop connection))
   (ignore-errors (herdr-connection--stop-tunnel connection)))
 
 (defun herdr-connection-forget (connection)
@@ -366,7 +361,12 @@ Signals `herdr-error\=' with a code saying which part failed."
         (signal 'herdr-error
                 (list "ssh_failed"
                       (format "%s: %s" target
-                              (herdr-connection--file-text stderr)))))
+                              (or (ignore-errors
+                                    (with-temp-buffer
+                                      (insert-file-contents stderr)
+                                      (let ((text (string-trim (buffer-string))))
+                                        (unless (string-empty-p text) text))))
+                                  "no output")))))
       (let* ((text (string-trim (buffer-string)))
              (newline (string-search "\n" text))
              (executable (and newline (string-trim (substring text 0 newline))))
@@ -383,13 +383,6 @@ Signals `herdr-error\=' with a code saying which part failed."
         (cons executable
               (alist-get 'sessions (herdr-connection--decode target json))))))
     (ignore-errors (delete-file stderr)))))
-
-(defun herdr-connection--file-text (path)
-  "Return the trimmed contents of PATH, or a note that it said nothing."
-  (let ((text (ignore-errors
-                (with-temp-buffer (insert-file-contents path)
-                                  (string-trim (buffer-string))))))
-    (if (and text (not (string-empty-p text))) text "no output")))
 
 (defun herdr-connection--decode (target json)
   "Decode JSON from TARGET, reporting a parse failure as one.
