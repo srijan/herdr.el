@@ -11,6 +11,10 @@
 ;; skip every test here and report success.
 (require 'herdr-dispatch)
 
+(defun herdr-dispatch-test--listing (key)
+  "Return the worktrees cached under KEY on the current connection."
+  (cdr (assoc key (herdr-connection-worktrees (herdr-current-connection)))))
+
 (defmacro herdr-dispatch-test-with-buffer (nodes &rest body)
   "Render NODES into a temporary dispatcher buffer and run BODY there."
   (declare (indent 1) (debug t))
@@ -1203,7 +1207,7 @@ the case that tells the two apart."
       (herdr-dispatch-refresh t)
       (herdr-dispatch-test--reply 0 '((worktrees . nil)))
       (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
-      (should-not (cdr (assoc "w1" (herdr-connection-worktrees (herdr-current-connection)))))
+      (should-not (herdr-dispatch-test--listing "w1"))
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested))))))
@@ -1339,7 +1343,7 @@ be true — this test is what confirms it rather than assumes it."
        1 '((worktrees . (((path . "/tmp/api-spike")
                           (is_linked_worktree . t) (branch . "spike"))))))
       (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
-      (should-not (cdr (assoc "w1" (herdr-connection-worktrees (herdr-current-connection)))))
+      (should-not (herdr-dispatch-test--listing "w1"))
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested)))
@@ -1363,7 +1367,7 @@ cache entry that stops it."
             (herdr-dispatch-refresh t)
             (dotimes (_ 19) (herdr-dispatch-refresh))
             (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w3"))
-            (should-not (cdr (assoc "w3" (herdr-connection-worktrees (herdr-current-connection)))))
+            (should-not (herdr-dispatch-test--listing "w3"))
             (should (equal '("w1" "w2" "w3") (nreverse attempts)))
             (should (equal '("/tmp/web/" "/tmp/api/")
                            (herdr-dispatch-test--requested))))
@@ -1430,7 +1434,7 @@ request for the same workspace."
       (herdr-dispatch-refresh)
       (should (equal 4 (length herdr-dispatch-test--async)))
       (herdr-dispatch-test--reply 2 '((worktrees . (fresh))))
-      (should (equal '(fresh) (cdr (assoc "w1" (herdr-connection-worktrees (herdr-current-connection)))))))))
+      (should (equal '(fresh) (herdr-dispatch-test--listing "w1"))))))
 
 (ert-deftest herdr-dispatch-a-reply-after-the-buffer-is-killed-is-harmless ()
   "The dashboard can be killed between the request and the reply.
@@ -1487,7 +1491,7 @@ request for the same workspace here."
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal 4 (length herdr-dispatch-test--async)))
       (herdr-dispatch-test--reply 2 '((worktrees . (fresh))))
-      (should (equal '(fresh) (cdr (assoc "w1" (herdr-connection-worktrees (herdr-current-connection)))))))))
+      (should (equal '(fresh) (herdr-dispatch-test--listing "w1"))))))
 
 (ert-deftest herdr-dispatch-a-dead-server-caches-rather-than-signalling ()
   "Opening the dashboard while herdr is not running is the common failure.
@@ -1510,7 +1514,7 @@ rest of the session after the first failure."
       (herdr-dispatch-refresh t)
       (dolist (id '("w1" "w2"))
         (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) id))
-        (should-not (cdr (assoc id (herdr-connection-worktrees (herdr-current-connection)))))
+        (should-not (herdr-dispatch-test--listing id))
         (should (eq 'error (herdr-dispatch--worktrees-unanswered-reason (herdr-current-connection) id)))
         (should-not (herdr-dispatch--worktrees-in-flight-p (herdr-current-connection) id))))
     ;; And the dashboard still draws, which is the point of not signalling.
@@ -1569,7 +1573,7 @@ refetch of the session."
           (save-window-excursion (herdr-agents))
           (should (equal "/tmp/web-feat"
                          (alist-get 'path
-                                    (car (cdr (assoc "w1" (herdr-connection-worktrees (herdr-current-connection))))))))
+                                    (car (herdr-dispatch-test--listing "w1")))))
           (should (equal '("/tmp/web/" "/tmp/api/")
                          (herdr-dispatch-test--requested))))
       (herdr-dispatch--cancel-refresh)
@@ -1687,7 +1691,7 @@ or every visit pays for a full re-fetch."
                 (let ((kept (herdr-connection-worktrees-generation (herdr-current-connection))))
                   (herdr-agents)
                   (should (equal '(fresh)
-                                 (cdr (assoc "w1" (herdr-connection-worktrees (herdr-current-connection))))))
+                                 (herdr-dispatch-test--listing "w1")))
                   (should (equal kept (herdr-connection-worktrees-generation (herdr-current-connection)))))))
           (let ((buffer (get-buffer herdr-dispatch-buffer-name)))
             (when buffer (kill-buffer buffer)))))))))
@@ -2489,7 +2493,6 @@ checkout, which is a different problem with a different fix."
       (search-forward "open as w2")
       (let ((message (cadr (should-error
                             (herdr-dispatch--checked-worktree
-                             (herdr-current-connection)
                              (herdr-dispatch-target-at-point))
                             :type 'user-error))))
         (should (string-match-p "no worktree listing" message))
@@ -2649,7 +2652,6 @@ where the verb it replaced said which row you needed."
     (should (equal "herdr: point is not on a worktree"
                    (condition-case err
                        (herdr-dispatch--checked-worktree
-                        (herdr-current-connection)
                         (herdr-dispatch-target-at-point))
                      (user-error (error-message-string err)))))))
 
@@ -2671,9 +2673,7 @@ somewhere else entirely while the verb runs."
                          (herdr-dispatch-open-worktree target))))))))
 
 (ert-deftest herdr-dispatch-create-worktree-omits-an-empty-base ()
-  "A blank base must not reach the server as an empty string.  This verb
-calls `herdr-rpc-call\\=' directly, so the contract is reasserted rather
-than inherited from `herdr-worktree-create\\='."
+  "A blank base must not reach the server as an empty string."
   (let ((params nil)
         (prompts nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
@@ -2695,6 +2695,18 @@ than inherited from `herdr-worktree-create\\='."
         (should (= 2 (length prompts)))
         (should (string-match-p "branch" (nth 1 prompts)))
         (should (string-match-p "Base ref" (nth 0 prompts)))))))
+
+(ert-deftest herdr-dispatch-create-worktree-refuses-a-workspace-with-no-directory ()
+  "A workspace with no pane yet has no directory; the worktree must not
+be created off the dashboard buffer's own directory instead."
+  (cl-letf (((symbol-function 'herdr-rpc-call)
+             (lambda (&rest _) (error "must not be called")))
+            ((symbol-function 'herdr-state-workspace-directory)
+             (lambda (_state _id) nil))
+            ((symbol-function 'read-string) (lambda (&rest _) "feature")))
+    (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+      (search-forward "herdr.el")
+      (should-error (herdr-dispatch-create-worktree) :type 'user-error))))
 
 (ert-deftest herdr-dispatch-create-worktree-passes-a-base-that-was-given ()
   "The capability the prompt replaced: a worktree off something other
@@ -2941,7 +2953,7 @@ own TUI never asks for."
 and must not be asked again, which is why every guard uses `assoc'."
   (herdr-dispatch-test--with-worktrees '(("w1" . nil))
     (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
-    (should-not (cdr (assoc "w1" (herdr-connection-worktrees (herdr-current-connection)))))
+    (should-not (herdr-dispatch-test--listing "w1"))
     (should-not (herdr-dispatch--worktrees-wanted-p (herdr-current-connection) "w1"))))
 
 (ert-deftest herdr-dispatch-a-key-never-asked-is-wanted ()

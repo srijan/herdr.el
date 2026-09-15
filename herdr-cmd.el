@@ -329,7 +329,8 @@ directory."
   (file-name-nondirectory (directory-file-name directory)))
 
 (defun herdr-cmd--create-workspace-pane (directory &optional label)
-  "Create a focused workspace at DIRECTORY called LABEL; return its root pane\\='s id.
+  "Create a focused workspace at DIRECTORY called LABEL.
+Return its root pane\\='s id.
 `focus\\=' rides on the create: without it the workspace is made but not
 focused, and anything that then asks the server \"where am I?\" answers
 with the pane the user was on before.  The reply names the new

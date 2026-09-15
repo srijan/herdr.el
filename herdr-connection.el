@@ -294,12 +294,20 @@ remote when something connects to it, so a forward to a socket that does
 not exist starts exactly like one that does.  What it does catch is the
 local bind failing.
 
+`ServerAliveInterval\\=' because a forward that is only listening sends
+nothing on its own: a laptop that sleeps, or moves networks, leaves an
+`ssh\\=' that looks alive for as long as the TCP stack takes to notice,
+and every RPC through it waits out its timeout.  Four missed probes at
+fifteen seconds is a minute, and then ssh exits and the reconnect runs.
+
 TARGET is passed through untouched, so a bare host, a `user@host\\=' and
 an alias from the user\\='s SSH config all work and none of them is
 parsed here."
   (list "ssh" "-N"
         "-o" "ExitOnForwardFailure=yes"
         "-o" "BatchMode=yes"
+        "-o" "ServerAliveInterval=15"
+        "-o" "ServerAliveCountMax=4"
         "-L" (format "%s:%s" local remote)
         target))
 

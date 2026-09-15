@@ -60,7 +60,7 @@ as two stray spaces, because the completion frame appends it verbatim."
 
 Asserting the returned string proves nothing — that is whatever the stub
 said.  What matters is the collection handed to `completing-read': every
-method the schema knows, a category so marginalia and friends can hook
+method the schema knows, a category so embark can hook
 it, the annotator wired in, and a require-match, since a method the
 server does not have is a guaranteed error rather than a typo to
 tolerate."

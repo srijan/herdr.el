@@ -610,6 +610,17 @@ different request, and nil is dropped from the payload entirely."
       (should (equal "feature" (alist-get 'branch params)))
       (should (equal (cdr case) (alist-get 'base params))))))
 
+(ert-deftest herdr-worktree-create-sends-the-cwd-it-is-given ()
+  "The dispatcher names the workspace directory as the server knows it."
+  (herdr-cmd-test--capturing-params params
+    (herdr-worktree-create "feature" nil "/srv/example-api")
+    (should (equal "/srv/example-api" (alist-get 'cwd params)))))
+
+(ert-deftest herdr-workspace-create-sends-the-label-it-is-given ()
+  (herdr-cmd-test--capturing-params params
+    (herdr-workspace-create "/tmp/example-api" "named")
+    (should (equal "named" (alist-get 'label params)))))
+
 (ert-deftest herdr-workspace-create-defaults-the-label-to-the-directory ()
   "An unnamed workspace should still read as something, so it borrows the
 directory's own name."

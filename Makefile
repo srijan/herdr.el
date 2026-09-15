@@ -1,12 +1,15 @@
 EMACS ?= emacs
 EXTRA_LOAD_PATH ?=
 
-## `emacs -Q' initialises no package system, so magit-section is put on
-## the load path here: package.el's copy through `package-initialize',
-## elpaca's and straight.el's build directories wholesale.
-## EXTRA_LOAD_PATH goes first and wins.
-DEP_DIRS := $(wildcard ../../builds/* $(HOME)/.emacs.d/var/elpaca/builds/* \
-                       $(HOME)/.emacs.d/straight/build/*)
+## `emacs -Q' initialises no package system.  `package-initialize' runs
+## before any -L, so the -L entries outrank package.el's copies; the
+## elpaca and straight.el builds of magit-section and what it needs are
+## added by name.  `../../builds' serves a checkout under elpaca's own
+## repos/ directory.  EXTRA_LOAD_PATH goes first and wins.
+DEP_LIBS := magit-section transient compat dash llama cond-let
+DEP_DIRS := $(foreach root,../../builds $(HOME)/.emacs.d/var/elpaca/builds \
+                           $(HOME)/.emacs.d/straight/build, \
+              $(wildcard $(addprefix $(root)/,$(DEP_LIBS))))
 
 ## `load-prefer-newer' before anything is loaded, because it defaults to
 ## nil: `require' takes the .elc whenever one exists, however old.  That
@@ -14,16 +17,16 @@ DEP_DIRS := $(wildcard ../../builds/* $(HOME)/.emacs.d/var/elpaca/builds/* \
 ## rather than the working tree — a source edit could pass, or fail, on
 ## code that is no longer there.  Measured while checking that a test
 ## caught a deliberate break: it did not, and the break was invisible.
-BATCH := $(EMACS) -Q --batch -L . -L test $(addprefix -L ,$(EXTRA_LOAD_PATH) $(DEP_DIRS)) \
+BATCH := $(EMACS) -Q --batch \
            --eval '(setq load-prefer-newer t)' \
            --eval '(package-initialize)' \
+           -L . -L test $(addprefix -L ,$(EXTRA_LOAD_PATH) $(DEP_DIRS)) \
            --eval '(unless (locate-library "magit-section") \
                      (error "herdr: magit-section not found; make <target> EXTRA_LOAD_PATH=/path/to/magit-section"))'
 
 TESTS := $(wildcard test/*-test.el)
 SRC   := $(filter-out %-autoloads.el,$(wildcard *.el))
 
-COMPILE_SRC := $(SRC)
 
 ## A hang is not a pass, and without a deadline it is not a failure
 ## either — it is a CI job killed with no output, which reads as
@@ -58,7 +61,7 @@ test-live:
 ## Byte-compile everything, treating warnings as failures.
 compile:
 	$(BATCH) --eval '(setq byte-compile-error-on-warn t)' \
-	  -f batch-byte-compile $(COMPILE_SRC)
+	  -f batch-byte-compile $(SRC)
 
 clean:
 	rm -f *.elc test/*.elc

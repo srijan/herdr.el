@@ -147,7 +147,10 @@ already has."
                       command))
       ;; Non-interactive, or a forward that needs a password hangs a
       ;; command nobody is watching.
-      (should (member "BatchMode=yes" command)))))
+      (should (member "BatchMode=yes" command))
+      ;; A listening forward sends nothing itself, so without probes a
+      ;; sleeping laptop keeps a dead ssh that every RPC waits out.
+      (should (member "ServerAliveInterval=15" command)))))
 
 (ert-deftest herdr-connection-socket-path-stays-inside-the-platform-limit ()
   "macOS caps `sun_path' at 104 bytes, which is the tighter of the two

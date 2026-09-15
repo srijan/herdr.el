@@ -110,7 +110,7 @@ which is true and useless."
           "\n"))
 
 (defun herdr-schema-load-file (connection path)
-  "Cache the schema stored at PATH as CONNECTION\\='s, with no herdr on `exec-path\\='."
+  "Cache the schema stored at PATH as CONNECTION\\='s, needing no herdr binary."
   (setf (herdr-connection-schema connection)
         (with-temp-buffer
           (insert-file-contents path)

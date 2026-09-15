@@ -256,6 +256,15 @@ guarantee a timeout already gets."
         (setq proc (herdr-rpc-call-async (herdr-current-connection) "ping" nil #'ignore))
         (should-not (memq proc (process-list)))))))
 
+(ert-deftest herdr-rpc-encode-serializes-a-vector-as-a-json-array ()
+  (let ((json (herdr-rpc-encode
+               "1" "events.subscribe"
+               `((subscriptions . ,(vconcat '(((type . "pane.created"))
+                                              ((type . "pane.closed")))))))))
+    (should (string-match-p
+             "\"subscriptions\":\\[{\"type\":\"pane.created\"},{\"type\":\"pane.closed\"}\\]"
+             json))))
+
 (ert-deftest herdr-rpc-encode-rejects-raw-list-of-alists ()
   "Guard the mistake this replaced: a bare list of alists must not encode."
   (should-error

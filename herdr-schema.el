@@ -120,8 +120,10 @@ would warn on every one of those."
     (or (null server) (null schema) (equal server schema))))
 
 (defun herdr-schema--warn-on-mismatch (connection pong)
-  "Say once when the schema and CONNECTION\='s server, answering PONG, disagree."
+  "Say once when the schema and CONNECTION\='s ping answer PONG disagree.
+A nil PONG is an unreachable server, which is not a disagreement."
   (unless (or (herdr-connection-schema-mismatch-warned connection)
+              (null pong)
               (herdr-schema-matches-server-p connection pong))
     (setf (herdr-connection-schema-mismatch-warned connection) t)
     (message
@@ -242,8 +244,8 @@ One of `enum', `string', `boolean', `integer', `number', `object',
 
 (defun herdr-schema--type-symbol (type)
   "Map JSON Schema TYPE to a symbol this package uses."
-  (car (memq (and (stringp type) (intern-soft type))
-             '(string boolean integer number object array))))
+  (and (member type '("string" "boolean" "integer" "number" "object" "array"))
+       (intern type)))
 
 ;;; Prompting
 

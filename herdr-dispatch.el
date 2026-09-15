@@ -717,7 +717,7 @@ not the same repository."
             (apply #'append
                    (mapcar #'cdr (herdr-connection-worktrees connection)))))
 
-(defun herdr-dispatch--checked-worktree (_connection target)
+(defun herdr-dispatch--checked-worktree (target)
   "Return TARGET\\='s WorktreeInfo, or refuse the row.
 
 The one place every worktree verb settles whether a row may be acted on,
@@ -729,7 +729,7 @@ record first, or the others read fields off nil and announce that a row
 whose record was merely missing is the repository\\='s own checkout.  Then
 `herdr-worktree-linked-p\\=', and `herdr-tree-own-workspace-p\\=' against
 the workspace the row sits inside.  The record and the row come from
-CONNECTION\\='s own listings, so bare ids compare soundly.
+one connection\\='s listings, so bare ids compare soundly.
 
 The last is the guard that matters: `k\\=' on such a row otherwise
 resolves to the workspace the row is nested inside."
@@ -755,7 +755,7 @@ resolves to the workspace the row is nested inside."
          name))
       worktree)))
 
-(defun herdr-dispatch--worktree-workspace (connection target)
+(defun herdr-dispatch--worktree-workspace (target)
   "Return the id of the workspace TARGET\\='s worktree is open as.
 
 `worktree.remove\\=' and `workspace.focus\\=' both address a workspace, and a
@@ -768,7 +768,7 @@ this refuses rather than guesses.
 Whether the row may be acted on at all is settled first, by
 `herdr-dispatch--checked-worktree\\='.  Only the question this function\\='s
 own name asks is left here."
-  (let ((worktree (herdr-dispatch--checked-worktree connection target)))
+  (let ((worktree (herdr-dispatch--checked-worktree target)))
     (or (herdr-worktree-open-workspace-id worktree)
         (user-error "herdr: worktree %s is not open as a workspace (RET opens it)"
                     (or (herdr-worktree-branch worktree)
@@ -807,7 +807,7 @@ reading the record directly is what let this command act on rows the
 others refuse."
   (let* ((target (or target (herdr-dispatch-target-at-point)))
          (connection (herdr-dispatch-target-connection target))
-         (worktree (herdr-dispatch--checked-worktree connection target))
+         (worktree (herdr-dispatch--checked-worktree target))
          (workspace (or (herdr-dispatch-target-workspace target)
                         (user-error "herdr: point is not on a workspace"))))
     (if-let* ((open (herdr-worktree-open-workspace-id worktree)))
@@ -944,8 +944,7 @@ the same reason and with more at stake; see
        (herdr-workspace-close (herdr-dispatch-target-value target)))
       ('herdr-worktree
        (herdr-worktree-remove
-        (herdr-dispatch--worktree-workspace
-         (herdr-dispatch-target-connection target) target)))
+        (herdr-dispatch--worktree-workspace target)))
       ('herdr-known-project
        (user-error
         "herdr: a known project with no workspace open has nothing to close"))
@@ -1037,7 +1036,8 @@ An empty base ref means the current HEAD and is omitted from the call."
          (branch (read-string "New worktree branch: "))
          (base (read-string
                 (format-prompt "Base ref" "the current HEAD") nil nil ""))
-         (dir (herdr-state-workspace-directory (herdr-state-current) workspace))
+         (dir (or (herdr-state-workspace-directory (herdr-state-current) workspace)
+                  (user-error "herdr: workspace %s has no directory yet" workspace)))
          (connection (herdr-current-connection)))
     (herdr-worktree-create branch base dir)
     (herdr-dispatch--forget-worktrees connection)
@@ -1108,7 +1108,7 @@ instead; the header, on the first line, is the root legitimately."
     (goto-char position)
     (when (and (eq (magit-current-section) magit-root-section)
                (> (line-number-at-pos) 1))
-      (forward-line 1))
+      (forward-line (if (eobp) -1 1)))
     (when-let* ((section (magit-current-section)))
       (cons section (magit-section-get-relative-position section)))))
 
@@ -1117,8 +1117,7 @@ instead; the header, on the first line, is the root legitimately."
 The same section, else a sibling or ancestor that survived the redraw;
 `magit-section-goto-successor\\=' decides."
   (save-excursion
-    (unless (apply #'magit-section-goto-successor position)
-      (goto-char (point-min)))
+    (apply #'magit-section-goto-successor position)
     (point)))
 
 (defun herdr-dispatch-refresh (&optional force)

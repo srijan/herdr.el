@@ -18,7 +18,7 @@ Each file has one duty.
 | `herdr-schema.el` | The reader for the JSON Schema of the server. |
 | `herdr-pane.el` | The pane record: its fields, and the two names built from them. |
 | `herdr-workspace.el` | The workspace record: its fields, and the two names built from them. |
-| `herdr-worktree.el` | The worktree record: its fields, and the ids that need a server. |
+| `herdr-worktree.el` | The worktree record: its fields, and the name built from them. |
 | `herdr-select.el` | The `completing-read` pickers. |
 | `herdr-tree.el` | The dashboard tree, as data only. |
 | `herdr-dispatch.el` | The dashboard renderer, and its verbs. |
