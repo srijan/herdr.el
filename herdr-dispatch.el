@@ -96,6 +96,22 @@ tells itself apart from a redraw of an empty session.")
 Lowercase letters are the read-only verbs; each acts on whatever the
 line under point names, so no key needs a target of its own.")
 
+(defcustom herdr-dispatch-show-known-projects nil
+  "Whether the dashboard lists projects with no herdr workspace open.
+
+The `Inactive\\=' section, built from `project-known-project-roots\\='.  It
+is a way to start a workspace somewhere you have worked before, which is
+useful the first time and noise every time after: the list grows with
+every project you visit and never shrinks on its own, so it is soon
+longer than the session it sits under.
+
+Off by default for a second reason.  Each root costs an asynchronous
+`worktree.list\\=' every time the dashboard forgets its cache, and the
+roots outnumber the workspaces — on the machine this was measured on,
+thirty-odd roots against five workspaces."
+  :type 'boolean
+  :group 'herdr)
+
 (defcustom herdr-dispatch-fold-indicators nil
   "Value `magit-section-visibility-indicators\\=' takes in the dispatcher.
 Nil, the default, picks a pair per frame; see
@@ -1152,13 +1168,17 @@ and is not something a redraw should do."
 
 (defun herdr-dispatch--known-project-roots ()
   "Return the still-existing `project-known-project-roots\\=', or nil.
-Nil without project.el, which is guarded rather than required.
+
+Nil when `herdr-dispatch-show-known-projects\\=' is off, which is the
+default, and nil without project.el, which is guarded rather than
+required.
 
 Deleted roots are dropped here, not in `herdr-tree.el\\=', which is pure
 and stays that way.  This is the boundary where project.el's answer
 enters, and the only place that touches the filesystem.  It also spares
 each dropped root a `worktree.list\\=' round trip."
-  (when (fboundp 'project-known-project-roots)
+  (when (and herdr-dispatch-show-known-projects
+             (fboundp 'project-known-project-roots))
     (seq-filter #'herdr-dispatch--live-project-root-p
                 (project-known-project-roots))))
 

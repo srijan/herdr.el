@@ -2136,7 +2136,8 @@ attempted here -- `file-remote-p' answers from the name alone."
   "The filter runs where project.el's answer enters the dashboard, so
 everything downstream -- the `Inactive' rows and the `worktree.list'
 round trip each one would otherwise cost -- sees only live roots."
-  (let ((directory (make-temp-file "herdr-dispatch-test-" t)))
+  (let ((directory (make-temp-file "herdr-dispatch-test-" t))
+        (herdr-dispatch-show-known-projects t))
     (unwind-protect
         (cl-letf (((symbol-function 'project-known-project-roots)
                    (lambda () (list directory
@@ -2144,6 +2145,17 @@ round trip each one would otherwise cost -- sees only live roots."
           (should (equal (list directory)
                          (herdr-dispatch--known-project-roots))))
       (delete-directory directory t))))
+
+(ert-deftest herdr-dispatch-known-projects-are-off-until-asked-for ()
+  "The list grows with every project visited and never shrinks, so it is
+soon longer than the session it sits under — and each root costs an
+asynchronous `worktree.list' every time the cache is forgotten."
+  (cl-letf (((symbol-function 'project-known-project-roots)
+             (lambda () (list "/tmp"))))
+    (let ((herdr-dispatch-show-known-projects nil))
+      (should-not (herdr-dispatch--known-project-roots)))
+    (let ((herdr-dispatch-show-known-projects t))
+      (should (equal '("/tmp") (herdr-dispatch--known-project-roots))))))
 
 (defconst herdr-dispatch-test--known-project-nodes
   '((herdr-known-project "/tmp/other-project/" "other-project (0)  /tmp/other-project/" nil))

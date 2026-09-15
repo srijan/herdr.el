@@ -85,10 +85,6 @@ herdr.el (2)                          ~/src/herdr.el/
 
 example-api (1)                       ~/src/example-api/
   · shell       idle      wA:p1       npm run watch
-
-Inactive (14)
-  other-api (1)                       ~/src/other-api/
-    main                              ~/src/other-api
 ```
 
 Read the counts this way. A repository row counts its checkouts: its own, plus one for each
@@ -101,8 +97,19 @@ checkout and no worktrees, so it has no `main` group and its pane sits directly 
 A closed section shows the worst status inside it. A closed section therefore never hides a
 blocked agent.
 
-The `Inactive` section lists the `project.el` projects that have no open workspace. Press `RET`
-on one row to create the workspace, or `n` on any checkout under it to open a terminal there.
+Set `herdr-dispatch-show-known-projects` to `t` and the dashboard also ends with an `Inactive`
+section, listing the `project.el` projects that have no open workspace:
+
+```
+Inactive (14)
+  other-api (1)                       ~/src/other-api/
+    main                              ~/src/other-api
+```
+
+Press `RET` on one of those rows to create the workspace, or `n` on any checkout under it to
+open a terminal there. It is off by default because the list grows with every project you visit
+and never shrinks, so it is soon longer than the session above it — and each root costs a
+`worktree.list` round trip whenever the dashboard refetches.
 
 ## Step 5: Do the first tasks
 
