@@ -6,10 +6,11 @@ EXTRA_LOAD_PATH ?=
 ## elpaca and straight.el builds of magit-section and what it needs are
 ## added by name.  `../../builds' serves a checkout under elpaca's own
 ## repos/ directory.  EXTRA_LOAD_PATH goes first and wins.
-DEP_LIBS := magit-section transient compat dash llama cond-let
-DEP_DIRS := $(foreach root,../../builds $(HOME)/.emacs.d/var/elpaca/builds \
-                           $(HOME)/.emacs.d/straight/build, \
-              $(wildcard $(addprefix $(root)/,$(DEP_LIBS))))
+EMACS_DIR := $(shell $(EMACS) -Q --batch --eval '(princ user-emacs-directory)')
+DEP_LIBS  := magit-section transient compat dash llama cond-let
+DEP_DIRS  := $(foreach root,../../builds $(EMACS_DIR)var/elpaca/builds \
+                            $(EMACS_DIR)straight/build, \
+               $(wildcard $(addprefix $(root)/,$(DEP_LIBS))))
 
 ## `load-prefer-newer' before anything is loaded, because it defaults to
 ## nil: `require' takes the .elc whenever one exists, however old.  That
