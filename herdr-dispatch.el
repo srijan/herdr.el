@@ -281,8 +281,8 @@ than inside, so folding a workspace does not swallow the gap that sets
 it apart from the next.
 
 `magit-insert-section\\=' takes its type as an unevaluated symbol, so the
-six types are spelled out rather than passed through.  A runtime `eval\\='
-would collapse these into one branch; six explicit branches byte-compile
+types are spelled out rather than passed through.  A runtime `eval\\='
+would collapse these into one branch; explicit branches byte-compile
 and do not need defending."
   (let ((depth (or depth 0))
         (separate nil))
@@ -293,6 +293,11 @@ and do not need defending."
         (when (and separate (= depth 0)) (insert ?\n))
         (setq separate t)
         (pcase (nth 0 node)
+          ('herdr-server
+           (herdr-dispatch--apply-fold
+            (magit-insert-section (herdr-server value)
+              (herdr-dispatch--insert-container line depth)
+              (herdr-dispatch--insert-nodes children (1+ depth)))))
           ('herdr-workspace
            (herdr-dispatch--apply-fold
             (magit-insert-section (herdr-workspace value)
@@ -335,8 +340,8 @@ and do not need defending."
 ;;; The object at point
 
 (defconst herdr-dispatch-target-types
-  '(herdr-workspace herdr-panes herdr-pane herdr-worktree
-                    herdr-known-project herdr-known-projects)
+  '(herdr-server herdr-workspace herdr-panes herdr-pane herdr-worktree
+                 herdr-known-project herdr-known-projects)
   "The section types a verb can be aimed at.
 Every type `herdr-tree-build\\=' draws.  A section of any other type - the
 buffer\\='s root, the header - is not a target, and the verbs say so.")
@@ -424,14 +429,19 @@ carrying nothing, so the resolver falls through."
 
 (add-hook 'herdr-connection-resolvers #'herdr-dispatch--resolve-connection)
 
-(defun herdr-dispatch--row-connection (_section)
+(defun herdr-dispatch--row-connection (section)
   "Return the connection SECTION\\='s row came from.
 
-One dashboard, one server, for now: the rows carry no server of their
-own, so this answers the connection the buffer was drawn from.  Giving
-each row its own is the same change as drawing several servers at once,
-and this is the one place that has to learn it."
-  (herdr-connection--only))
+The enclosing `herdr-server\\=' row names it.  With one connection there
+is no such row — nothing draws a level that says nothing — and the sole
+connection is the answer.
+
+A name rather than the connection itself, because a section outlives the
+redraws around it and a reconnect replaces the struct: the name is what
+both sides still agree on."
+  (or (when-let* ((name (herdr-dispatch--enclosing-value section 'herdr-server)))
+        (herdr-connection-named name))
+      (herdr-connection--only)))
 
 (defun herdr-dispatch--target-type (target)
   "Return TARGET\\='s type, or nil when point is on no row at all.
@@ -1182,16 +1192,33 @@ each dropped root a `worktree.list\\=' round trip."
     (seq-filter #'herdr-dispatch--live-project-root-p
                 (project-known-project-roots))))
 
-(defun herdr-dispatch--header (state)
-  "Return the header line summarising STATE.
+(defun herdr-dispatch--header (connections)
+  "Return the header line summarising CONNECTIONS.
+
 Ends with `herdr-tree-status-summary\\=' rather than an agent count: a
 count that is always true stops being read, the same reasoning that
-already keeps idle out of the modeline segment."
-  (let ((summary (herdr-tree-status-summary state)))
-    (format "herdr   %d workspaces  %d panes%s"
-            (length (herdr-state-workspaces state))
-            (length (herdr-state-panes state))
+already keeps idle out of the modeline segment.
+
+Counts across every connection, and says how many there are only when
+there are several: one server needs no telling that it is the only one."
+  (let* ((states (mapcar #'herdr-state-current connections))
+         (merged (herdr-state-from-snapshot
+                  `((workspaces . ,(seq-mapcat #'herdr-state-workspaces states))
+                    (panes . ,(seq-mapcat #'herdr-state-panes states)))))
+         (summary (herdr-tree-status-summary merged)))
+    (format "herdr   %s%s  %s%s"
+            (if (cdr connections)
+                (format "%s  " (herdr-dispatch--count
+                                (length connections) "server"))
+              "")
+            (herdr-dispatch--count (length (herdr-state-workspaces merged))
+                                   "workspace")
+            (herdr-dispatch--count (length (herdr-state-panes merged)) "pane")
             (if (string-empty-p summary) "" (concat "  " summary)))))
+
+(defun herdr-dispatch--count (n noun)
+  "Return N and NOUN, pluralised.  Every noun the header counts adds `s\\='."
+  (format "%d %s%s" n noun (if (= n 1) "" "s")))
 
 (defun herdr-dispatch--position-at (position)
   "Return (IDENT COLUMN . POSITION) describing POSITION, or nil.
@@ -1293,16 +1320,13 @@ retries the workspaces whose last fetch went unanswered.
 agent is working."
   (interactive (list t))
   (when-let* ((buffer (get-buffer herdr-dispatch-buffer-name))
-              (connection (herdr-current-connection)))
+              (connections (herdr-connection-list)))
     (with-current-buffer buffer
-      (when force (herdr-dispatch--retry-unanswered-worktrees connection))
-      (let* ((state (herdr-state-current connection))
-             (known-roots (herdr-dispatch--known-project-roots))
-             (header (herdr-dispatch--header state))
-             (tree (herdr-tree-build state
-                                     (herdr-dispatch--worktrees-listings
-                                      connection)
-                                     known-roots)))
+      (when force
+        (dolist (connection connections)
+          (herdr-dispatch--retry-unanswered-worktrees connection)))
+      (let* ((header (herdr-dispatch--header connections))
+             (tree (herdr-dispatch--tree connections)))
         (when (or force
                   (not (equal header herdr-dispatch--rendered-header))
                   (not (equal tree herdr-dispatch--rendered-tree)))
@@ -1358,9 +1382,51 @@ agent is working."
         ;; screen through the scheduled redraw, so that a callback which
         ;; caches without asking for one is a visible failure rather than
         ;; something this call papers over.
-        (herdr-dispatch--request-worktrees connection state)
-        (herdr-dispatch--request-known-project-worktrees
-         connection known-roots)))))
+        (dolist (connection connections)
+          (herdr-dispatch--request-worktrees
+           connection (herdr-state-current connection))
+          (herdr-dispatch--request-known-project-worktrees
+           connection (herdr-dispatch--roots-for connection)))))))
+
+(defun herdr-dispatch--roots-for (connection)
+  "Return the known-project roots that belong to CONNECTION.
+
+A root is a path on some machine, so it belongs to the connection whose
+host it is on: a purely local root to a local server, a TRAMP root to
+the server on the host it names.  Asking every connection about every
+root is how one server\\='s projects reached another, and how two servers
+holding the same path became indistinguishable."
+  (let ((server (herdr-connection--host
+                 (herdr-connection-host-directory connection))))
+    (seq-filter (lambda (root)
+                  (equal (herdr-connection--host root) server))
+                (herdr-dispatch--known-project-roots))))
+
+(defun herdr-dispatch--tree (connections)
+  "Return the dashboard tree for CONNECTIONS.
+
+One subtree per connection, under a row naming the server — except with
+one connection, which renders exactly as it did before there could be
+two.  Nobody following a single server should see a level that says
+nothing.
+
+Merged here and nowhere else, per KTD6: each connection\\='s cache is
+built from its own server alone, and this is the one place that knows
+they are being shown together."
+  (if (cdr connections)
+      (mapcar (lambda (connection)
+                (herdr-tree-server-node
+                 (herdr-connection-name connection)
+                 (herdr-state-running-p connection)
+                 (herdr-dispatch--tree-for connection)))
+              connections)
+    (herdr-dispatch--tree-for (car connections))))
+
+(defun herdr-dispatch--tree-for (connection)
+  "Return CONNECTION\\='s own subtree."
+  (herdr-tree-build (herdr-state-current connection)
+                    (herdr-dispatch--worktrees-listings connection)
+                    (herdr-dispatch--roots-for connection)))
 
 (defun herdr-dispatch--cancel-refresh ()
   "Cancel the pending debounced redraw, if there is one."

@@ -473,7 +473,7 @@ dashboard never renders; STATUS is one it does."
     (herdr-dispatch-refresh)
     (should (string-match-p
              (regexp-quote
-              (format "1 workspaces  2 panes  1%s1%s"
+              (format "1 workspace  2 panes  1%s1%s"
                       (herdr-tree-glyph "blocked")
                       (herdr-tree-glyph "working")))
              (buffer-string)))
@@ -3141,6 +3141,125 @@ hook is for.  Outside the dashboard it says nothing and falls through."
     (search-forward "w1")
     (should (eq (herdr-current-connection)
                 (herdr-dispatch--resolve-connection)))))
+
+;;; One dashboard, several servers
+
+(defmacro herdr-dispatch-test--with-two-servers (&rest body)
+  "Run BODY with two connections whose servers issued the same ids.
+Binds ONE and TWO, and draws the dashboard from both."
+  (declare (indent 0) (debug t))
+  `(let* ((one (herdr-test-connection
+                (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w1") (label . "on-one"))))
+                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (agent . "claude"))))))))
+          (two (herdr-test-connection
+                (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w1") (label . "on-two"))))
+                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (agent . "codex"))))))))
+          (herdr-connections (list (cons "one" one) (cons "two" two)))
+          (herdr-dispatch--refresh-timer nil)
+          (herdr-dispatch-show-known-projects nil)
+          (buffer (get-buffer-create herdr-dispatch-buffer-name)))
+     (setf (herdr-connection-name one) "one"
+           (herdr-connection-name two) "two"
+           (herdr-connection-running one) t
+           (herdr-connection-running two) t)
+     (unwind-protect
+         (cl-letf (((symbol-function 'herdr-dispatch--request-worktrees) #'ignore)
+                   ((symbol-function
+                     'herdr-dispatch--request-known-project-worktrees)
+                    #'ignore))
+           (with-current-buffer buffer
+             (herdr-dispatch-mode)
+             (herdr-dispatch-refresh t)
+             ,@body))
+       (herdr-dispatch--cancel-refresh)
+       (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest herdr-dispatch-two-servers-render-as-two-subtrees ()
+  "Both servers issued `w1' and `w1:p1'.  One flat tree would draw them
+as one workspace, and whichever verb ran would reach whichever server
+answered last."
+  (herdr-dispatch-test--with-two-servers
+    (let ((text (buffer-string)))
+      (should (string-match-p "^one" text))
+      (should (string-match-p "^two" text))
+      (should (string-match-p "on-one" text))
+      (should (string-match-p "on-two" text)))
+    ;; The header counts across both.
+    (should (string-match-p "2 servers" herdr-dispatch--rendered-header))
+    (should (string-match-p "2 workspaces" herdr-dispatch--rendered-header))))
+
+(ert-deftest herdr-dispatch-a-row-resolves-to-the-server-it-came-from ()
+  "The guard this unit owes: a colliding id has to reach the connection
+whose subtree the row sits in, not whichever the resolver would answer."
+  (herdr-dispatch-test--with-two-servers
+    (goto-char (point-min))
+    (search-forward "on-one")
+    (let ((target (herdr-dispatch-target-at-point)))
+      (should (eq one (herdr-dispatch-target-connection target)))
+      (should (equal "on-one" (herdr-workspace-label
+                               (herdr-dispatch-target-record target)))))
+    (goto-char (point-min))
+    (search-forward "on-two")
+    (let ((target (herdr-dispatch-target-at-point)))
+      (should (eq two (herdr-dispatch-target-connection target)))
+      (should (equal "on-two" (herdr-workspace-label
+                               (herdr-dispatch-target-record target)))))
+    ;; And a verb invoked by name reaches the same one.
+    (goto-char (point-min))
+    (search-forward "on-two")
+    (should (eq two (herdr-current-connection)))))
+
+(ert-deftest herdr-dispatch-one-connection-draws-no-server-level ()
+  "Nobody following one server should see a row that says nothing."
+  (let* ((connection (herdr-test-connection
+                      (herdr-state-from-snapshot
+                       '((workspaces . (((workspace_id . "w1")
+                                         (label . "solo")))))))))
+    (setf (herdr-connection-name connection) "local")
+    (let ((herdr-connections (herdr-test-connections connection))
+          (herdr-dispatch-show-known-projects nil))
+      (let ((tree (herdr-dispatch--tree (herdr-connection-list))))
+        (should-not (seq-find (lambda (node) (eq 'herdr-server (car node)))
+                              tree))
+        (should (eq 'herdr-workspace (car (car tree)))))
+      (should-not (string-match-p
+                   "servers" (herdr-dispatch--header
+                              (herdr-connection-list)))))))
+
+(ert-deftest herdr-dispatch-a-server-that-is-down-is-drawn-as-itself ()
+  "An empty dashboard and an unreachable server are different facts, and
+a row that vanishes when a laptop sleeps tells you the wrong one."
+  (herdr-dispatch-test--with-two-servers
+    (setf (herdr-connection-running two) nil
+          (herdr-connection-cache two) (herdr-state-empty))
+    (herdr-dispatch-refresh t)
+    (let ((text (buffer-string)))
+      (should (string-match-p "^two  not connected" text))
+      ;; The other is still fully there.
+      (should (string-match-p "on-one" text)))
+    ;; And still navigable.
+    (goto-char (point-min))
+    (search-forward "on-one")
+    (should (eq one (herdr-dispatch-target-connection
+                     (herdr-dispatch-target-at-point))))))
+
+(ert-deftest herdr-dispatch-a-known-root-belongs-to-one-connection ()
+  "A root is a path on some machine.  Asking every connection about every
+root is how one server's projects reached another, and how two servers
+holding the same path became indistinguishable."
+  (let* ((local (herdr-connection--make :name "local"))
+         (remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
+         (herdr-dispatch-show-known-projects t))
+    (cl-letf (((symbol-function 'herdr-dispatch--known-project-roots)
+               (lambda () '("/srv/here/" "/ssh:shadow:/srv/there/"
+                            "/ssh:elsewhere:/srv/other/"))))
+      (should (equal '("/srv/here/") (herdr-dispatch--roots-for local)))
+      (should (equal '("/ssh:shadow:/srv/there/")
+                     (herdr-dispatch--roots-for remote))))))
 
 (provide 'herdr-dispatch-test)
 ;;; herdr-dispatch-test.el ends here

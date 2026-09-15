@@ -622,5 +622,33 @@ sections different widths."
                                    worktree-width)))
               (list inactive)))))
 
+(defface herdr-tree-server
+  '((t :inherit magit-section-heading))
+  "Face for the row naming a server, drawn only when there are several."
+  :group 'herdr)
+
+(defface herdr-tree-server-down
+  '((t :inherit shadow))
+  "Face for the row naming a server that is not being followed."
+  :group 'herdr)
+
+(defun herdr-tree-server-node (name reachable children)
+  "Return the node holding CHILDREN, the tree of the server called NAME.
+
+Drawn only when more than one server is connected, so that nobody
+following one sees a level that says nothing.
+
+A server that is not reachable is drawn as itself, dimmed and labelled,
+rather than left out.  An empty dashboard and an unreachable server are
+different facts, and a row that disappears when a laptop sleeps tells
+you the wrong one."
+  (list 'herdr-server name
+        (herdr-tree--faced
+         (if reachable
+             (format "%s (%d)" name (length children))
+           (format "%s  not connected" name))
+         (if reachable 'herdr-tree-server 'herdr-tree-server-down))
+        children))
+
 (provide 'herdr-tree)
 ;;; herdr-tree.el ends here
