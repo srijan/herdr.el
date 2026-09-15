@@ -143,6 +143,226 @@ connection answers."
       (run-hook-with-args-until-success 'herdr-connection-resolvers)
       (herdr-connection--only)))
 
+;;; The tunnel
+;;
+;; `make-network-process' has no file-handler support, so a remote
+;; control socket cannot be reached the way a remote terminal can.  The
+;; socket is forwarded to a local one instead and the transport is
+;; unchanged: it connects to a unix socket either way.
+
+(defcustom herdr-connection-socket-directory (format "/tmp/herdr-%s" (user-uid))
+  "Directory holding the local end of each forwarded remote socket.
+
+Under `/tmp\\=' rather than `temporary-file-directory\\=': macOS caps a
+unix socket path at 104 bytes and its temporary directory spends about
+half of that before the file name starts.  Per-uid, because /tmp is
+shared."
+  :type 'directory
+  :group 'herdr)
+
+(defcustom herdr-connection-tunnel-timeout 10.0
+  "Seconds to wait for a forwarded socket to answer before giving up."
+  :type 'number
+  :group 'herdr)
+
+(defcustom herdr-connection-tunnel-poll 0.5
+  "Seconds between attempts to reach a forwarded socket while it comes up."
+  :type 'number
+  :group 'herdr)
+
+(defun herdr-connection--socket-name (name)
+  "Return the file name of the local socket for the connection called NAME.
+
+Spelled out when it is short and plain, hashed when it is not.  The
+whole path has to stay well inside 104 bytes, and a name is whatever a
+user typed."
+  (if (string-match-p "\\`[A-Za-z0-9._-]\\{1,24\\}\\'" name)
+      (format "%s.sock" name)
+    (format "%s.sock" (substring (secure-hash 'sha1 name) 0 16))))
+
+(defun herdr-connection--local-socket-path (name)
+  "Return the local socket path for the remote connection called NAME."
+  (expand-file-name (herdr-connection--socket-name name)
+                    herdr-connection-socket-directory))
+
+(defun herdr-connection--tunnel-command (target local remote)
+  "Return the argv forwarding TARGET\\='s REMOTE socket to LOCAL.
+
+`-N\\=' because nothing is being run: the forward is the whole point.
+`ExitOnForwardFailure\\=' is asked for anyway, though it catches nothing
+here — OpenSSH binds a local unix socket at setup and only dials the
+remote when something connects to it, so a forward to a socket that does
+not exist starts exactly like one that does.  What it does catch is the
+local bind failing.
+
+TARGET is passed through untouched, so a bare host, a `user@host\\=' and
+an alias from the user\\='s SSH config all work and none of them is
+parsed here."
+  (list "ssh" "-N"
+        "-o" "ExitOnForwardFailure=yes"
+        "-o" "BatchMode=yes"
+        "-L" (format "%s:%s" local remote)
+        target))
+
+(defun herdr-connection--remote-socket-path (target session)
+  "Ask TARGET which socket its herdr SESSION listens on.
+
+Resolved on the remote host, never by expanding `herdr-socket-path\\='
+here: the default contains a `~\\=', and a macOS client expanding it
+locally would forward to a `/Users/...\\=' path on a Linux server.
+
+`herdr session list --json\\=' is the authority, and asking it doubles as
+the explicit check that herdr is installed there at all — the one
+diagnosis the forward itself can never make, because OpenSSH dials the
+path it was given without inspecting what is behind it.
+
+Signals `herdr-error\\=' with a code saying which of the two failed."
+  (with-temp-buffer
+    (let ((status (call-process "ssh" nil t nil "-o" "BatchMode=yes" target
+                                "herdr" "session" "list" "--json")))
+      (unless (equal 0 status)
+        (signal 'herdr-error
+                (list "ssh_failed"
+                      (format "%s: %s" target
+                              (string-trim (buffer-string))))))
+      (let* ((sessions (alist-get 'sessions
+                                  (ignore-errors
+                                    (herdr-rpc-decode (buffer-string)))))
+             (wanted (or session "default"))
+             (found (seq-find (lambda (entry)
+                                (equal wanted (alist-get 'name entry)))
+                              sessions)))
+        (unless found
+          (signal 'herdr-error
+                  (list "no_such_session"
+                        (format "%s has no herdr session called %s"
+                                target wanted))))
+        (or (alist-get 'socket_path found)
+            (signal 'herdr-error
+                    (list "no_socket"
+                          (format "%s's session %s reports no socket"
+                                  target wanted))))))))
+
+(defun herdr-connection--remove-stale-socket (path)
+  "Delete PATH when it is a socket nothing is listening on.
+
+An `ssh\\=' killed rather than stopped leaves its end of the forward
+behind, and OpenSSH refuses to bind over it.  Deleting a socket that is
+still live would break a working tunnel, so this connects first: a
+refused connection is a dead file, an accepted one is left alone."
+  (when (file-exists-p path)
+    (let ((live (ignore-errors
+                  (let ((proc (make-network-process
+                               :name "herdr-stale-check" :family 'local
+                               :service path :noquery t :nowait nil)))
+                    (delete-process proc)
+                    t))))
+      (unless live (ignore-errors (delete-file path))))))
+
+(defun herdr-connection--start-tunnel (connection)
+  "Start CONNECTION\\='s SSH forward and return the process.
+
+The sentinel routes a tunnel that dies into the same reconnect the event
+streams use, so there is one retry mechanism rather than two."
+  (let* ((local (herdr-connection-socket-path connection))
+         (target (herdr-connection-ssh-target connection)))
+    (make-directory herdr-connection-socket-directory t)
+    (set-file-modes herdr-connection-socket-directory #o700)
+    (herdr-connection--remove-stale-socket local)
+    (let ((process
+           (make-process
+            :name (format "herdr-tunnel-%s" (herdr-connection-name connection))
+            :command (herdr-connection--tunnel-command
+                      target local
+                      (herdr-connection-remote-socket-path connection))
+            :connection-type 'pipe :noquery t
+            :buffer (generate-new-buffer
+                     (format " *herdr-tunnel-%s*"
+                             (herdr-connection-name connection)))
+            :sentinel
+            ;; Captured, not resolved: this fires whenever ssh exits,
+            ;; which is long after anything is looking at it.
+            (lambda (process _event)
+              (unless (process-live-p process)
+                (herdr-connection--tunnel-died connection))))))
+      (setf (herdr-connection-tunnel connection) process)
+      process)))
+
+(defun herdr-connection--tunnel-died (connection)
+  "Note that CONNECTION\\='s tunnel exited, and retry if it is still wanted.
+Wanted means the session is running: `herdr-disconnect\\=' stops it first,
+so a deliberate teardown reaches here with nothing left to retry."
+  (setf (herdr-connection-tunnel connection) nil)
+  (when (and (fboundp 'herdr-state-running-p)
+             (herdr-state-running-p connection)
+             (fboundp 'herdr-state--schedule-reconnect))
+    (herdr-state--schedule-reconnect connection)))
+
+(defun herdr-connection--stop-tunnel (connection)
+  "Kill CONNECTION\\='s tunnel and remove the local socket it bound."
+  (when-let* ((process (herdr-connection-tunnel connection)))
+    (setf (herdr-connection-tunnel connection) nil)
+    (when (buffer-live-p (process-buffer process))
+      (kill-buffer (process-buffer process)))
+    (when (process-live-p process) (delete-process process)))
+  (when (herdr-connection-remote-p connection)
+    (ignore-errors (delete-file (herdr-connection-socket-path connection)))))
+
+(defun herdr-connection--await-tunnel (connection)
+  "Wait until CONNECTION answers a ping through its tunnel.
+
+The socket appearing is necessary and not sufficient: OpenSSH binds the
+local end at setup and only dials the remote when something connects, so
+a forward to a path with no listener produces a socket that exists and
+refuses every connection.  The handshake is the only evidence the whole
+path works.
+
+Three reportable states, and no more.  `ssh\\=' exiting is SSH\\='s own
+failure and it has said why on stderr.  A socket that never answers is
+a socket that never answered: through the forward, a missing herdr and a
+wrong socket path are the same silence, which is why the path is
+resolved on the remote host before any of this.  An answer that is not a
+pong is a server that is not herdr."
+  (let ((deadline (+ (float-time) herdr-connection-tunnel-timeout))
+        (process (herdr-connection-tunnel connection)))
+    (catch 'ready
+      (while (< (float-time) deadline)
+        (unless (process-live-p process)
+          (signal 'herdr-error
+                  (list "ssh_exited"
+                        (format "ssh for %s exited: %s"
+                                (herdr-connection-name connection)
+                                (herdr-connection--tunnel-output connection)))))
+        (when (file-exists-p (herdr-connection-socket-path connection))
+          (let ((pong (ignore-errors
+                        (let ((herdr-rpc-timeout 2.0))
+                          (herdr-rpc-call connection "ping")))))
+            (when pong
+              (unless (alist-get 'protocol pong)
+                (signal 'herdr-error
+                        (list "not_herdr"
+                              (format "%s answered, but not with a herdr pong"
+                                      (herdr-connection-name connection)))))
+              (throw 'ready pong))))
+        ;; A refused channel comes back at once, so the wait is what
+        ;; paces this: without it the loop asks ten times a second and
+        ;; ssh answers each with a line of its own about the failure.
+        (accept-process-output nil herdr-connection-tunnel-poll))
+      (signal 'herdr-error
+              (list "no_answer"
+                    (format "%s: the forwarded socket did not answer in %ss"
+                            (herdr-connection-name connection)
+                            herdr-connection-tunnel-timeout))))))
+
+(defun herdr-connection--tunnel-output (connection)
+  "Return what CONNECTION\\='s ssh said, trimmed, or a note that it said nothing."
+  (let ((buffer (and (herdr-connection-tunnel connection)
+                     (process-buffer (herdr-connection-tunnel connection)))))
+    (if (buffer-live-p buffer)
+        (let ((text (string-trim (with-current-buffer buffer (buffer-string)))))
+          (if (string-empty-p text) "no output on stderr" text))
+      "no output on stderr")))
+
 ;;; Lifecycle
 
 ;;;###autoload
@@ -180,8 +400,64 @@ that merely drops keeps being retried, because nobody said to stop."
   (let ((connection (or (herdr-connection-named name)
                         (user-error "herdr: no connection called %s" name))))
     (herdr-state-stop connection)
+    ;; After the stop, which clears the running flag: the tunnel's own
+    ;; sentinel reads it to decide whether a dead tunnel is worth
+    ;; retrying, and a deliberate teardown is not.
+    (herdr-connection--stop-tunnel connection)
     (herdr-connection-forget connection)
     (message "herdr: stopped following %s" name)))
+
+(defun herdr-connection-remote (name target &optional session)
+  "Return a connection to the herdr SESSION on TARGET, calling it NAME.
+
+Resolves the remote socket before building anything, because that is
+the one question the forward itself can never answer: OpenSSH dials the
+path it is given without inspecting what is behind it, so a herdr that
+is not installed and a socket path that is wrong fail the forward
+identically.  Asking the remote binary separates them, and says which."
+  (let ((remote (herdr-connection--remote-socket-path target session)))
+    (herdr-connection--make
+     :name name
+     :ssh-target target
+     :session session
+     :remote-socket-path remote
+     :socket-path (herdr-connection--local-socket-path name))))
+
+;;;###autoload
+(defun herdr-connect-remote (name target &optional session)
+  "Follow the herdr server on SSH TARGET, calling the connection NAME.
+
+SESSION names one of that host\\='s herdr sessions; nil means its
+default.  The connection is not reported up until a ping answers
+through the forward: the local socket appearing proves only that
+OpenSSH bound it, which it does before speaking to the far host at all.
+
+Nothing is left in the registry when any of it fails.  A half-open
+connection is worse than none: it would be retried forever against a
+server nobody established was there."
+  (interactive
+   (list (read-string "Connection name: ")
+         (read-string "SSH target: ")
+         (let ((session (read-string
+                         (format-prompt "herdr session" "default") nil nil "")))
+           (unless (string-empty-p session) session))))
+  (when (string-empty-p name)
+    (user-error "herdr: a connection needs a name"))
+  (require 'herdr-state)
+  (let ((connection (herdr-connection-remote name target session))
+        (established nil))
+    (unwind-protect
+        (progn
+          (herdr-connection--start-tunnel connection)
+          (herdr-connection--await-tunnel connection)
+          (herdr-connection-register connection)
+          (herdr-state-start connection)
+          (setq established t)
+          (message "herdr: following %s on %s" name target)
+          connection)
+      (unless established
+        (herdr-connection--stop-tunnel connection)
+        (herdr-connection-forget connection)))))
 
 (provide 'herdr-connection)
 ;;; herdr-connection.el ends here

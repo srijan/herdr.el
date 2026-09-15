@@ -76,6 +76,11 @@ under it; a composite key holds the token instead."
   name
   socket-path
   ssh-target
+  ;; The path on the far host that SOCKET-PATH forwards to, and the
+  ;; named session it belongs to.  Resolved on that host, never by
+  ;; expanding a local default.
+  remote-socket-path
+  session
   tunnel
   ;; Session cache and its two event streams, per KTD6.
   (cache nil) (global-process nil) (pane-process nil) (pane-stream-ids nil)

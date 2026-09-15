@@ -154,5 +154,185 @@ the session stays running, because nothing said to stop."
       (when (herdr-connection-reconnect-timer connection)
         (cancel-timer (herdr-connection-reconnect-timer connection))))))
 
+;;; The tunnel
+
+(ert-deftest herdr-connection-tunnel-command-passes-the-target-through ()
+  "A bare host, a `user@host' and an SSH config alias are all just the
+target: parsing one here would be this package inventing a grammar SSH
+already has."
+  (dolist (target '("shadow" "srijan@192.0.2.10" "work-box"))
+    (let ((command (herdr-connection--tunnel-command
+                    target "/tmp/local.sock" "/home/u/.config/herdr/herdr.sock")))
+      (should (equal "ssh" (car command)))
+      (should (equal target (car (last command))))
+      (should (member "-N" command))
+      (should (member "/tmp/local.sock:/home/u/.config/herdr/herdr.sock"
+                      command))
+      ;; Non-interactive, or a forward that needs a password hangs a
+      ;; command nobody is watching.
+      (should (member "BatchMode=yes" command)))))
+
+(ert-deftest herdr-connection-socket-path-stays-inside-the-platform-limit ()
+  "macOS caps `sun_path' at 104 bytes, which is the tighter of the two
+platforms.  A name is whatever a user typed, so a long one is hashed
+rather than spelled out."
+  (let ((herdr-connection-socket-directory "/tmp/herdr-501"))
+    (should (equal "/tmp/herdr-501/shadow.sock"
+                   (herdr-connection--local-socket-path "shadow")))
+    (let* ((long (make-string 200 ?x))
+           (path (herdr-connection--local-socket-path long)))
+      (should (< (string-bytes path) 104))
+      (should-not (string-match-p "xxxx" path))
+      ;; Still one socket per connection: two long names do not collide.
+      (should-not (equal path (herdr-connection--local-socket-path
+                               (concat long "y")))))
+    ;; A name with a slash in it cannot become a directory separator.
+    (should-not (string-match-p "a/b"
+                                (herdr-connection--local-socket-path "a/b")))))
+
+(ert-deftest herdr-connection-remote-reads-the-socket-off-the-far-host ()
+  "The default socket path contains a `~', so expanding it here would
+forward a macOS client to a `/Users/...' path on a Linux server.  The
+remote binary is asked instead, which doubles as the one check that
+herdr is installed there at all."
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'call-process)
+               ;; BUFFER is `t' here, meaning the current one, which is
+               ;; how `call-process' is called in the code under test.
+               (lambda (_program _infile _buffer _display &rest args)
+                 (setq asked args)
+                 (progn
+                   (insert "{\"sessions\":[{\"name\":\"default\",\"socket_path\":\"/home/u/.config/herdr/herdr.sock\"},{\"name\":\"work\",\"socket_path\":\"/home/u/.local/share/herdr/work/herdr.sock\"}]}"))
+                 0)))
+      (should (equal "/home/u/.config/herdr/herdr.sock"
+                     (herdr-connection--remote-socket-path "shadow" nil)))
+      (should (member "shadow" asked))
+      (should (member "--json" asked))
+      ;; A named session selects its own socket, not the default one.
+      (should (equal "/home/u/.local/share/herdr/work/herdr.sock"
+                     (herdr-connection--remote-socket-path "shadow" "work")))
+      (should-error (herdr-connection--remote-socket-path "shadow" "nope")
+                    :type 'herdr-error))))
+
+(ert-deftest herdr-connection-remote-reports-ssh-failing-as-ssh-failing ()
+  "SSH exiting non-zero has already said why on stderr.  Repeating it is
+the whole report; guessing past it is not."
+  (cl-letf (((symbol-function 'call-process)
+             (lambda (_program _infile _buffer _display &rest _args)
+               (insert "ssh: Could not resolve hostname shadow\n")
+               255)))
+    (let ((err (should-error (herdr-connection--remote-socket-path "shadow" nil)
+                             :type 'herdr-error)))
+      (should (equal "ssh_failed" (herdr-error-code err)))
+      (should (string-match-p "Could not resolve" (herdr-error-message err))))))
+
+(ert-deftest herdr-connection-a-forward-with-nothing-behind-it-says-so ()
+  "OpenSSH binds the local socket at setup and only dials the remote when
+something connects, so a forward to a path with no listener produces a
+socket that exists and refuses every connection.  The socket appearing
+is necessary and not sufficient, and the handshake is the only evidence
+the whole path works.
+
+Through the forward alone, a missing herdr and a wrong socket path are
+the same silence.  That is why the path is resolved on the far host
+first, and why nothing here tries to tell them apart."
+  (let* ((path (herdr-test-socket-path))
+         (connection (herdr-connection--make
+                      :name "silent" :ssh-target "shadow"
+                      :socket-path path))
+         (herdr-connection-tunnel-timeout 0.4))
+    (unwind-protect
+        (progn
+          ;; Stands in for ssh: alive, and the socket exists because
+          ;; something bound it.  Nothing answers.
+          (setf (herdr-connection-tunnel connection)
+                (make-process :name "herdr-test-fake-ssh"
+                              :command (list "sleep" "30") :noquery t))
+          (let ((server (herdr-test-start-server path (lambda (_req) (cons nil t)))))
+            (unwind-protect
+                (let ((err (should-error (herdr-connection--await-tunnel connection)
+                                         :type 'herdr-error)))
+                  (should (equal "no_answer" (herdr-error-code err))))
+              (ignore-errors (delete-process server)))))
+      (herdr-connection--stop-tunnel connection)
+      (ignore-errors (delete-file path)))))
+
+(ert-deftest herdr-connection-an-ssh-that-exits-is-not-a-silent-socket ()
+  "The other reportable state.  Reported as SSH's own failure, with what
+it said, rather than waiting out a timeout for a socket that will never
+exist."
+  (let* ((connection (herdr-connection--make
+                      :name "gone" :ssh-target "shadow"
+                      :socket-path "/tmp/herdr-test-never-bound.sock"))
+         (herdr-connection-tunnel-timeout 5.0))
+    (setf (herdr-connection-tunnel connection)
+          (make-process :name "herdr-test-fake-ssh"
+                        :command (list "false") :noquery t
+                        :buffer (generate-new-buffer " *fake-ssh*")))
+    (unwind-protect
+        (progn
+          (herdr-test-wait-for
+           (lambda () (not (process-live-p (herdr-connection-tunnel connection)))))
+          (let ((err (should-error (herdr-connection--await-tunnel connection)
+                                   :type 'herdr-error)))
+            (should (equal "ssh_exited" (herdr-error-code err)))))
+      (herdr-connection--stop-tunnel connection))))
+
+(ert-deftest herdr-connection-a-live-socket-is-not-treated-as-stale ()
+  "An `ssh' killed rather than stopped leaves its end of the forward
+behind and OpenSSH refuses to bind over it, so a stale file has to go.
+Deleting one that is still live would break a working tunnel, so the
+check connects rather than trusting the file's existence."
+  (let* ((path (herdr-test-socket-path))
+         (server (herdr-test-start-server path (lambda (_req) (cons nil t)))))
+    (unwind-protect
+        (progn
+          (herdr-connection--remove-stale-socket path)
+          (should (file-exists-p path)))
+      (ignore-errors (delete-process server)))
+    ;; With the listener gone the same file is stale, and goes.
+    (should (file-exists-p path))
+    (herdr-connection--remove-stale-socket path)
+    (should-not (file-exists-p path))))
+
+(ert-deftest herdr-connection-a-dead-tunnel-retries-while-it-is-wanted ()
+  "One retry mechanism, not two: the tunnel's sentinel routes into the
+same reconnect a dropped event stream takes."
+  (let ((connection (herdr-test-connection)))
+    (setf (herdr-connection-running connection) t
+          (herdr-connection-ssh-target connection) "shadow")
+    (unwind-protect
+        (progn
+          (herdr-connection--tunnel-died connection)
+          (should (herdr-connection-reconnect-timer connection))
+          (should-not (herdr-connection-tunnel connection)))
+      (when (herdr-connection-reconnect-timer connection)
+        (cancel-timer (herdr-connection-reconnect-timer connection))))))
+
+(ert-deftest herdr-connection-a-deliberate-teardown-retries-nothing ()
+  "`herdr-disconnect' stops the session before it kills the tunnel, so the
+sentinel finds nothing left to want."
+  (let ((connection (herdr-test-connection)))
+    (setf (herdr-connection-running connection) nil
+          (herdr-connection-ssh-target connection) "shadow")
+    (herdr-connection--tunnel-died connection)
+    (should-not (herdr-connection-reconnect-timer connection))))
+
+(ert-deftest herdr-disconnect-kills-the-tunnel-and-its-socket ()
+  (let* ((path (herdr-test-socket-path))
+         (connection (herdr-connection--make
+                      :name "shadow" :ssh-target "shadow" :socket-path path))
+         (herdr-connections (herdr-test-connections connection))
+         (herdr-state-change-functions nil)
+         (process (make-process :name "herdr-test-fake-ssh"
+                                :command (list "sleep" "30") :noquery t)))
+    (setf (herdr-connection-tunnel connection) process)
+    (with-temp-file path (insert ""))
+    (herdr-disconnect "shadow")
+    (should-not (process-live-p process))
+    (should-not (file-exists-p path))
+    (should-not (herdr-connection-tunnel connection))
+    (should-not (herdr-connection-list))))
+
 (provide 'herdr-connection-test)
 ;;; herdr-connection-test.el ends here
