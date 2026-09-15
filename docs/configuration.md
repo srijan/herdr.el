@@ -59,6 +59,12 @@ Terminals do not use the tunnel. A remote pane's terminal buffer gets a TRAMP
 `default-directory`, and the terminal client runs on the remote host, which is how it reaches
 a pane that is running there.
 
+The path to herdr on the remote host is resolved at the same time, with `command -v herdr`,
+and the terminal client is run by that absolute path. `herdr-executable` is not used for a
+remote connection: TRAMP runs remote commands under `tramp-remote-path` rather than your
+login PATH, so a herdr installed in `~/.local/bin` is found by `ssh host herdr` and not by
+the terminal client. An absolute path needs no PATH at all.
+
 ### When it does not work
 
 A connection is reported up only once a ping answers through the forward. The local socket

@@ -67,10 +67,11 @@ bounded wait every socket RPC already uses."
   (with-temp-buffer
     (let* ((default-directory (or (herdr-connection-host-directory connection)
                                   default-directory))
+           (executable (herdr-connection-executable connection))
            (proc (condition-case err
                      (make-process
                       :name "herdr-schema" :buffer (current-buffer)
-                      :command (list herdr-executable "api" "schema" "--json")
+                      :command (list executable "api" "schema" "--json")
                       :connection-type 'pipe :noquery t
                       :file-handler t
                       :sentinel #'ignore)
@@ -87,14 +88,14 @@ bounded wait every socket RPC already uses."
               (signal 'herdr-error
                       (list "schema_unavailable"
                             (format "%s api schema --json gave no answer in %ss"
-                                    herdr-executable herdr-rpc-timeout))))
+                                    executable herdr-rpc-timeout))))
             ;; The exit can beat its last output; drain what came with it.
             (while (accept-process-output proc 0.01))
             (unless (zerop (process-exit-status proc))
               (signal 'herdr-error
                       (list "schema_unavailable"
                             (format "%s api schema --json exited %s"
-                                    herdr-executable
+                                    executable
                                     (process-exit-status proc)))))
             (setf (herdr-connection-schema connection)
                   (herdr-rpc-decode (buffer-string))))
@@ -138,7 +139,8 @@ would warn on every one of those."
     (message
      "herdr.el: %s's %s speaks protocol %s but its server speaks %s; \
 schema-driven prompts and drift checks describe the binary, not the server"
-     (herdr-connection-name connection) herdr-executable
+     (herdr-connection-name connection)
+     (herdr-connection-executable connection)
      (herdr-schema-protocol connection)
      (herdr-schema--server-protocol connection))))
 

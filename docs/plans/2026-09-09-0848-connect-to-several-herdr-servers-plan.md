@@ -246,6 +246,19 @@ U1 measures the tunnel before anything depends on it, because KTD3 is the one de
 
 **Done when:** a remote server's workspaces appear and one of its panes opens as a terminal.
 
+**Met, measured against a real remote 0.9.0 server** from an isolated Emacs (its own
+`user-emacs-directory`, under a pty, so the working session was untouched): connect, hydrate,
+attach, and the buffer showing that host's own shell. Two failures only that probe could find,
+both now fixed and pinned:
+
+- **TRAMP does not use the login PATH.** `herdr-executable` is a bare name, which resolves for
+  `ssh host herdr` and not for the terminal client; the attach failed with
+  `/bin/sh: exec: herdr: not found`. The remote binary is resolved with `command -v herdr` at
+  connect time and used by absolute path.
+- **ssh re-parses its command.** It joins its arguments into one string that the remote login
+  shell parses again, so an unquoted `sh -c 'a && b'` loses the `&&` and runs only `a`. The
+  script is quoted before it goes over.
+
 ### U6 - Show several servers
 
 **Goal:** One dashboard, every connection, each attributable.

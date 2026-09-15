@@ -317,7 +317,10 @@ terminal."
           ;; ghostel where to run, and setting it afterwards told it
           ;; nothing and ran the client here.
           (herdr-term--set-directory connection buffer pane)
-          (ghostel-exec buffer herdr-executable args)
+          ;; The connection's own binary: TRAMP runs remote commands
+          ;; under its own PATH, not the login one, so a bare name that
+          ;; resolves for `ssh host herdr' does not resolve here.
+          (ghostel-exec buffer (herdr-connection-executable connection) args)
           (push (cons (herdr-term--key connection pane-id) buffer)
                 herdr-term--buffers))
       (error

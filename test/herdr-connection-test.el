@@ -190,29 +190,66 @@ rather than spelled out."
     (should-not (string-match-p "a/b"
                                 (herdr-connection--local-socket-path "a/b")))))
 
+(defmacro herdr-connection-test--answering (&rest body)
+  "Run BODY with a stubbed remote answering where herdr is and its sessions."
+  (declare (indent 0) (debug t))
+  `(cl-letf (((symbol-function 'call-process)
+              ;; BUFFER is `t' here, meaning the current one, which is
+              ;; how `call-process' is called in the code under test.
+              (lambda (_program _infile _buffer _display &rest args)
+                (setq asked args)
+                (insert "/home/u/.local/bin/herdr\n"
+                        "{\"sessions\":[{\"name\":\"default\",\"socket_path\":\"/home/u/.config/herdr/herdr.sock\"},{\"name\":\"work\",\"socket_path\":\"/home/u/.local/share/herdr/work/herdr.sock\"}]}")
+                0)))
+     ,@body))
+
 (ert-deftest herdr-connection-remote-reads-the-socket-off-the-far-host ()
   "The default socket path contains a `~', so expanding it here would
 forward a macOS client to a `/Users/...' path on a Linux server.  The
 remote binary is asked instead, which doubles as the one check that
 herdr is installed there at all."
   (let ((asked nil))
-    (cl-letf (((symbol-function 'call-process)
-               ;; BUFFER is `t' here, meaning the current one, which is
-               ;; how `call-process' is called in the code under test.
-               (lambda (_program _infile _buffer _display &rest args)
-                 (setq asked args)
-                 (progn
-                   (insert "{\"sessions\":[{\"name\":\"default\",\"socket_path\":\"/home/u/.config/herdr/herdr.sock\"},{\"name\":\"work\",\"socket_path\":\"/home/u/.local/share/herdr/work/herdr.sock\"}]}"))
-                 0)))
-      (should (equal "/home/u/.config/herdr/herdr.sock"
-                     (herdr-connection--remote-socket-path "shadow" nil)))
+    (herdr-connection-test--answering
+      (let ((answer (herdr-connection--ask-remote "shadow")))
+        (should (equal "/home/u/.local/bin/herdr" (car answer)))
+        (should (equal "/home/u/.config/herdr/herdr.sock"
+                       (herdr-connection--session-socket
+                        "shadow" (cdr answer) nil)))
+        ;; A named session selects its own socket, not the default one.
+        (should (equal "/home/u/.local/share/herdr/work/herdr.sock"
+                       (herdr-connection--session-socket
+                        "shadow" (cdr answer) "work")))
+        (should-error (herdr-connection--session-socket
+                       "shadow" (cdr answer) "nope")
+                      :type 'herdr-error))
       (should (member "shadow" asked))
-      (should (member "--json" asked))
-      ;; A named session selects its own socket, not the default one.
-      (should (equal "/home/u/.local/share/herdr/work/herdr.sock"
-                     (herdr-connection--remote-socket-path "shadow" "work")))
-      (should-error (herdr-connection--remote-socket-path "shadow" "nope")
-                    :type 'herdr-error))))
+      ;; The script goes over as one quoted argument.  ssh joins its
+      ;; arguments into a single string that the remote login shell
+      ;; re-parses, so an unquoted script loses its own `&&' to that
+      ;; shell and `sh -c' is handed only the first word.  Measured: the
+      ;; path line never came back.
+      (let* ((script (car (last asked)))
+             (plain (replace-regexp-in-string "\\\\" "" script)))
+        (should (equal "command -v herdr && herdr session list --json" plain))
+        ;; Quoted, whichever way this platform spells it.
+        (should-not (equal script plain))))))
+
+(ert-deftest herdr-connection-remote-resolves-the-binary-not-just-the-socket ()
+  "TRAMP runs remote commands under its own `tramp-remote-path', not the
+login PATH, so a herdr in `~/.local/bin' is on the PATH for
+`ssh host herdr' and not on the one the terminal client gets.  Measured:
+the attach failed with `/bin/sh: exec: herdr: not found\='.  An absolute
+path needs no PATH at all."
+  (let ((asked nil))
+    (herdr-connection-test--answering
+      (let ((connection (herdr-connection-remote "shadow" "shadow")))
+        (should (equal "/home/u/.local/bin/herdr"
+                       (herdr-connection-executable connection)))))
+    (ignore asked))
+  ;; A local connection keeps using the option.
+  (let ((herdr-executable "herdr"))
+    (should (equal "herdr" (herdr-connection-executable
+                            (herdr-connection-local))))))
 
 (ert-deftest herdr-connection-remote-reports-ssh-failing-as-ssh-failing ()
   "SSH exiting non-zero has already said why on stderr.  Repeating it is
@@ -221,7 +258,7 @@ the whole report; guessing past it is not."
              (lambda (_program _infile _buffer _display &rest _args)
                (insert "ssh: Could not resolve hostname shadow\n")
                255)))
-    (let ((err (should-error (herdr-connection--remote-socket-path "shadow" nil)
+    (let ((err (should-error (herdr-connection--ask-remote "shadow")
                              :type 'herdr-error)))
       (should (equal "ssh_failed" (herdr-error-code err)))
       (should (string-match-p "Could not resolve" (herdr-error-message err))))))

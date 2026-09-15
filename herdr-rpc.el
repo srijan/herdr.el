@@ -81,6 +81,9 @@ under it; a composite key holds the token instead."
   ;; expanding a local default.
   remote-socket-path
   session
+  ;; The herdr binary on that host, resolved there.  Nil means the
+  ;; local `herdr-executable'.
+  remote-executable
   tunnel
   ;; Session cache and its two event streams, per KTD6.
   (cache nil) (global-process nil) (pane-process nil) (pane-stream-ids nil)

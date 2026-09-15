@@ -252,44 +252,72 @@ parsed here."
         "-L" (format "%s:%s" local remote)
         target))
 
-(defun herdr-connection--remote-socket-path (target session)
-  "Ask TARGET which socket its herdr SESSION listens on.
+(defun herdr-connection--ask-remote (target)
+  "Ask TARGET where its herdr is and which sockets its sessions listen on.
 
-Resolved on the remote host, never by expanding `herdr-socket-path\\='
-here: the default contains a `~\\=', and a macOS client expanding it
-locally would forward to a `/Users/...\\=' path on a Linux server.
+Returns (EXECUTABLE . SESSIONS).  One round trip, because each one is an
+SSH handshake and this runs before a user has anything to look at.
 
-`herdr session list --json\\=' is the authority, and asking it doubles as
-the explicit check that herdr is installed there at all — the one
-diagnosis the forward itself can never make, because OpenSSH dials the
-path it was given without inspecting what is behind it.
+Both answers have to come from the remote host.  The socket path must,
+because the default contains a `~\=' and a macOS client expanding it
+locally would forward to a `/Users/...\=' path on a Linux server.  The
+executable must for a different reason: TRAMP runs remote commands under
+its own `tramp-remote-path\=', not the login PATH, so a herdr installed
+in `~/.local/bin\=' is on the PATH for `ssh host herdr\=' and not on the
+one the terminal client would get.  An absolute path needs neither.
 
-Signals `herdr-error\\=' with a code saying which of the two failed."
+Asking at all doubles as the explicit check that herdr is installed
+there — the one diagnosis the forward can never make, because OpenSSH
+dials the path it is given without inspecting what is behind it.
+
+Signals `herdr-error\=' with a code saying which part failed."
   (with-temp-buffer
-    (let ((status (call-process "ssh" nil t nil "-o" "BatchMode=yes" target
-                                "herdr" "session" "list" "--json")))
+    (let ((status (call-process
+                   "ssh" nil t nil "-o" "BatchMode=yes" target
+                   ;; Quoted here, because ssh joins its arguments into
+                   ;; one string and the remote login shell re-parses
+                   ;; it: an unquoted script loses its own `&&' to that
+                   ;; shell and `sh -c' is handed only the first word.
+                   "sh" "-c"
+                   (shell-quote-argument
+                    "command -v herdr && herdr session list --json"))))
       (unless (equal 0 status)
         (signal 'herdr-error
                 (list "ssh_failed"
                       (format "%s: %s" target
                               (string-trim (buffer-string))))))
-      (let* ((sessions (alist-get 'sessions
-                                  (ignore-errors
-                                    (herdr-rpc-decode (buffer-string)))))
-             (wanted (or session "default"))
-             (found (seq-find (lambda (entry)
-                                (equal wanted (alist-get 'name entry)))
-                              sessions)))
-        (unless found
+      (let* ((text (string-trim (buffer-string)))
+             (newline (string-search "\n" text))
+             (executable (and newline (string-trim (substring text 0 newline))))
+             (json (and newline (substring text (1+ newline)))))
+        (unless (and executable json)
           (signal 'herdr-error
-                  (list "no_such_session"
-                        (format "%s has no herdr session called %s"
-                                target wanted))))
-        (or (alist-get 'socket_path found)
-            (signal 'herdr-error
-                    (list "no_socket"
-                          (format "%s's session %s reports no socket"
-                                  target wanted))))))))
+                  (list "no_herdr"
+                        (format "%s did not say where its herdr is" target))))
+        (cons executable
+              (alist-get 'sessions
+                         (ignore-errors (herdr-rpc-decode json))))))))
+
+(defun herdr-connection--session-socket (target sessions session)
+  "Return the socket path SESSION listens on, from TARGET\='s SESSIONS."
+  (let* ((wanted (or session "default"))
+         (found (seq-find (lambda (entry) (equal wanted (alist-get 'name entry)))
+                          sessions)))
+    (unless found
+      (signal 'herdr-error
+              (list "no_such_session"
+                    (format "%s has no herdr session called %s" target wanted))))
+    (or (alist-get 'socket_path found)
+        (signal 'herdr-error
+                (list "no_socket"
+                      (format "%s's session %s reports no socket"
+                              target wanted))))))
+
+(defun herdr-connection-executable (connection)
+  "Return the herdr binary CONNECTION\='s commands should run.
+The absolute path resolved on a remote host, and `herdr-executable\=' for
+a local one."
+  (or (herdr-connection-remote-executable connection) herdr-executable))
 
 (defun herdr-connection--remove-stale-socket (path)
   "Delete PATH when it is a socket nothing is listening on.
@@ -463,11 +491,14 @@ the one question the forward itself can never answer: OpenSSH dials the
 path it is given without inspecting what is behind it, so a herdr that
 is not installed and a socket path that is wrong fail the forward
 identically.  Asking the remote binary separates them, and says which."
-  (let ((remote (herdr-connection--remote-socket-path target session)))
+  (let* ((answer (herdr-connection--ask-remote target))
+         (remote (herdr-connection--session-socket
+                  target (cdr answer) session)))
     (herdr-connection--make
      :name name
      :ssh-target target
      :session session
+     :remote-executable (car answer)
      :remote-socket-path remote
      :socket-path (herdr-connection--local-socket-path name))))
 
