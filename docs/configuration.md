@@ -12,7 +12,7 @@ herdr.el binds no key. `herdr-command-map` is a prefix keymap that you bind your
 |---|---|---|
 | `herdr-socket-path` | `"~/.config/herdr/herdr.sock"` | The path to the unix socket of the server. |
 | `herdr-executable` | `"herdr"` | The name of the herdr program, or the path to it. |
-| `herdr-protocol-version` | `20` | The protocol version that this package targets. |
+| `herdr-protocol-version` | `22` | The protocol version that this package targets. |
 | `herdr-rpc-timeout` | `10.0` | The number of seconds to wait for a synchronous response. |
 | `herdr-rpc-background-timeout` | `2.0` | The number of seconds that a background call can block Emacs. |
 | `herdr-server-start-timeout` | `15.0` | The number of seconds to wait for a new server to answer. |
@@ -23,6 +23,64 @@ waits for 2 seconds only.
 
 Change `herdr-protocol-version` only to stop the mismatch warning. The value does not change
 what herdr.el sends.
+
+## Remote servers
+
+A remote server is a herdr server on another machine, reached over SSH. Connect to one with
+`M-x herdr-connect-remote`, which asks for a name, an SSH target, and optionally the name of
+a herdr session on that host. Stop following it with `M-x herdr-disconnect`.
+
+| Option | Default | Function |
+|---|---|---|
+| `herdr-connection-socket-directory` | `"/tmp/herdr-<uid>"` | Where the local end of each forwarded socket is bound. |
+| `herdr-connection-tunnel-timeout` | `10.0` | The number of seconds to wait for a forwarded socket to answer. |
+| `herdr-connection-tunnel-poll` | `0.5` | The number of seconds between attempts while the forward comes up. |
+
+Nothing connects when Emacs starts. A connection is made when you ask for one and then kept,
+retried while you still want it, and stopped when you disconnect.
+
+The SSH target is passed to `ssh` untouched, so a bare host, a `user@host` and an alias from
+your SSH config all work.
+
+### How it reaches the server
+
+herdr's control socket is a unix socket, and Emacs cannot open one on another machine. So the
+remote socket is forwarded to a local one with `ssh -N -L`, and the rest of herdr.el is
+unchanged: it opens a unix socket either way.
+
+The remote path is read off the remote host, by running `herdr session list --json` there. It
+is not guessed from `herdr-socket-path`: that default contains a `~`, and expanding it here
+would send a macOS client looking for a `/Users/...` path on a Linux server. Running that
+command is also the only check that herdr is installed on the far host at all — the forward
+itself cannot tell, because `ssh` dials the path it is given without looking at what is
+behind it.
+
+Terminals do not use the tunnel. A remote pane's terminal buffer gets a TRAMP
+`default-directory`, and the terminal client runs on the remote host, which is how it reaches
+a pane that is running there.
+
+### When it does not work
+
+A connection is reported up only once a ping answers through the forward. The local socket
+appearing proves only that `ssh` bound it, which it does before speaking to the far host at
+all. There are three things herdr.el can tell you, and it does not guess past them:
+
+| What you see | What it means |
+|---|---|
+| `ssh_failed`, with what `ssh` printed | SSH did not connect. Its own message is the diagnosis. |
+| `no_answer` | The forward is up and the socket did not answer. Usually no herdr server is running on that host. |
+| `not_herdr` | Something answered on that socket and it was not a herdr server. |
+
+On a host with SELinux enforcing — Fedora and RHEL by default — `sshd` is refused access to a
+socket in `~/.config`, which is where herdr puts it. The connection then reports `no_answer`
+and `ssh` logs `channel N: open failed: connect failed`. Relabelling the socket lets it
+through:
+
+```sh
+chcon -t user_tmp_t ~/.config/herdr/herdr.sock
+```
+
+That does not survive the socket being recreated, so it is a workaround rather than a fix.
 
 ## Terminals
 

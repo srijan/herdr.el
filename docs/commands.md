@@ -26,6 +26,22 @@ The dashboard shows the target on the row you act from. The target is therefore 
 | `herdr-call` | Call any server method. |
 | `herdr-modeline-mode` | Show the agent counts in the modeline. |
 
+## Connections
+
+| Command | Function |
+|---|---|
+| `herdr-connect` | Follow a second server on this machine, by its socket path. |
+| `herdr-connect-remote` | Follow a server on another machine, over SSH. |
+| `herdr-disconnect` | Stop following a connection, and take its SSH forward down. |
+
+Nothing connects when Emacs starts. `herdr-start` makes the local connection when you first
+ask for anything; the others are made only when you name them.
+
+Disconnecting is deliberate and therefore final: the retries stop with it. A connection whose
+stream merely drops keeps being retried, because nothing said to stop.
+
+See [Remote servers](configuration.md#remote-servers).
+
 `herdr-stop` does not stop your agents. The herdr server is a daemon, and the agents belong to
 the server.
 

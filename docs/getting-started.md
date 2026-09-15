@@ -138,6 +138,24 @@ the file is `~/.claude/hooks/herdr-agent-state.sh`.
 
 The integration makes the modeline and the dashboard accurate.
 
+## Step 7: Connect a second machine, if you have one
+
+herdr.el follows more than one server at once. A second server can be on another machine,
+reached over SSH:
+
+```
+M-x herdr-connect-remote RET shadow RET shadow RET RET
+```
+
+The first answer names the connection, the second is the SSH target, and the third is a herdr
+session on that host — leave it empty for its default session. `M-x herdr-disconnect` stops
+following it again, and takes the SSH forward down with it.
+
+That host needs herdr installed and a server running on it. If nothing is running there the
+connection reports `no_answer`, because the tunnel cannot tell an absent server from a wrong
+path. See [Remote servers](configuration.md#remote-servers) for what each failure means, and
+for the SELinux relabelling that Fedora and RHEL need.
+
 ## Next steps
 
 - The same letters work outside the dashboard, under the prefix `C-c H`. There the target comes
