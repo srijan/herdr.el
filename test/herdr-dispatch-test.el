@@ -2519,6 +2519,7 @@ checkout, which is a different problem with a different fix."
       (search-forward "open as w2")
       (let ((message (cadr (should-error
                             (herdr-dispatch--checked-worktree
+                             (herdr-current-connection)
                              (herdr-dispatch-target-at-point))
                             :type 'user-error))))
         (should (string-match-p "no worktree listing" message))
@@ -2678,6 +2679,7 @@ where the verb it replaced said which row you needed."
     (should (equal "herdr: point is not on a worktree"
                    (condition-case err
                        (herdr-dispatch--checked-worktree
+                        (herdr-current-connection)
                         (herdr-dispatch-target-at-point))
                      (user-error (error-message-string err)))))))
 
@@ -3043,8 +3045,8 @@ one waits for the keystroke.  Collapsing the two loses that."
 so the search flattens every listing together."
   (herdr-dispatch-test--with-worktrees
       '(("w1" . (((path . "/tmp/a/")))) ("w2" . (((path . "/tmp/b/")))))
-    (should (equal '((path . "/tmp/b/")) (herdr-dispatch--worktree-record "/tmp/b/")))
-    (should-not (herdr-dispatch--worktree-record "/tmp/missing/"))))
+    (should (equal '((path . "/tmp/b/")) (herdr-dispatch--worktree-record (herdr-current-connection) "/tmp/b/")))
+    (should-not (herdr-dispatch--worktree-record (herdr-current-connection) "/tmp/missing/"))))
 
 (ert-deftest herdr-dispatch-an-event-that-changes-worktrees-is-stale-making ()
   "`workspace_closed' belongs on the list even though it announces no
@@ -3081,6 +3083,52 @@ invalidation would throw away another's answer as though it were stale."
     (herdr-dispatch--forget-worktrees two)
     (should (equal kept (herdr-dispatch--worktrees-epoch one)))
     (should-not (equal kept (herdr-dispatch--worktrees-epoch two)))))
+
+(ert-deftest herdr-dispatch-a-path-resolves-only-within-its-own-server ()
+  "A path is a path on some machine.  Two servers can each hold a
+`~/workspace/repo', and they are not the same directory or the same
+repository — so a row's path must be looked up in the listings of the
+connection the row came from and nowhere else."
+  (let ((one (herdr-test-connection))
+        (two (herdr-test-connection)))
+    (setf (herdr-connection-worktrees one)
+          '(("w1" . (((path . "/tmp/repo/") (branch . "on-one")))))
+          (herdr-connection-worktrees two)
+          '(("w1" . (((path . "/tmp/repo/") (branch . "on-two"))))))
+    (should (equal "on-one"
+                   (herdr-worktree-branch
+                    (herdr-dispatch--worktree-record one "/tmp/repo/"))))
+    (should (equal "on-two"
+                   (herdr-worktree-branch
+                    (herdr-dispatch--worktree-record two "/tmp/repo/"))))
+    ;; A path only the other server has is not found here.
+    (setf (herdr-connection-worktrees two)
+          '(("w1" . (((path . "/tmp/only-on-two/"))))))
+    (should-not (herdr-dispatch--worktree-record one "/tmp/only-on-two/"))))
+
+(ert-deftest herdr-dispatch-a-target-carries-the-server-its-row-came-from ()
+  "A verb acts on the server the row came from.  Carrying the value on
+and letting something else decide where to send it is how a command ends
+up acting on whichever server the user looked at next."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "w1")
+    (let ((target (herdr-dispatch-target-at-point)))
+      (should (herdr-connection-p (herdr-dispatch-target-connection target)))
+      (should (eq (herdr-current-connection)
+                  (herdr-dispatch-target-connection target))))))
+
+(ert-deftest herdr-dispatch-answers-the-resolver-from-the-dashboard ()
+  "A verb invoked by name rather than through the target resolver still
+has to reach the server the row came from, which is what the resolver
+hook is for.  Outside the dashboard it says nothing and falls through."
+  (should (memq #'herdr-dispatch--resolve-connection
+                herdr-connection-resolvers))
+  (with-temp-buffer
+    (should-not (herdr-dispatch--resolve-connection)))
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "w1")
+    (should (eq (herdr-current-connection)
+                (herdr-dispatch--resolve-connection)))))
 
 (provide 'herdr-dispatch-test)
 ;;; herdr-dispatch-test.el ends here

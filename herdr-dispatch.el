@@ -25,6 +25,7 @@
 (require 'seq)
 (require 'magit-section)
 (require 'herdr-tree)
+(require 'herdr-worktree)
 (require 'herdr-state)
 (require 'herdr-rpc)
 (require 'herdr-connection)
@@ -347,8 +348,13 @@ came to remove the workspace point was standing in.  Nesting only - a
 pane\\='s own `workspace_id\\=' is a different question, asked by
 `herdr-dispatch--terminal-workspace\\=' and by nothing else, because the
 verbs that create things must refuse a row that names no workspace on
-screen rather than reach through a record for one."
-  type value record workspace)
+screen rather than reach through a record for one.
+
+CONNECTION is the server the row came from, resolved with the rest of
+it.  Every id here is that server\\='s: a verb that carried the value on
+and let something else decide which connection to send it to would act
+on whichever server the user looked at next."
+  type value record workspace connection)
 
 (defun herdr-dispatch--section-at-point ()
   "Return the innermost section at point carrying a herdr type, or nil."
@@ -364,25 +370,52 @@ screen rather than reach through a record for one."
     (setq section (oref section parent)))
   (and section (oref section value)))
 
-(defun herdr-dispatch--target-record (type value)
-  "Return what the cache knows TYPE\\='s VALUE by, or nil."
+(defun herdr-dispatch--target-record (connection type value)
+  "Return what CONNECTION\\='s cache knows TYPE\\='s VALUE by, or nil."
   (pcase type
-    ('herdr-pane (herdr-state-pane (herdr-state-current) value))
-    ('herdr-workspace (herdr-state-workspace (herdr-state-current) value))
-    ('herdr-worktree (herdr-dispatch--worktree-record value))
+    ('herdr-pane (herdr-state-pane (herdr-state-current connection) value))
+    ('herdr-workspace
+     (herdr-state-workspace (herdr-state-current connection) value))
+    ('herdr-worktree (herdr-dispatch--worktree-record connection value))
     (_ nil)))
 
 (defun herdr-dispatch-target-at-point ()
-  "Return what point is on as a `herdr-dispatch-target\\=', or nil."
+  "Return what point is on as a `herdr-dispatch-target\\=', or nil.
+The connection is resolved here with everything else the row means, so
+that a verb acts on the server the row came from rather than on whatever
+the resolver would answer by the time the verb runs."
   (when-let* ((section (herdr-dispatch--section-at-point)))
-    (let* ((type (oref section type))
+    (let* ((connection (herdr-dispatch--row-connection section))
+           (type (oref section type))
            (value (oref section value))
-           (record (herdr-dispatch--target-record type value)))
+           (record (herdr-dispatch--target-record connection type value)))
       (herdr-dispatch--target-make
        :type type
        :value value
        :record record
-       :workspace (herdr-dispatch--enclosing-value section 'herdr-workspace)))))
+       :workspace (herdr-dispatch--enclosing-value section 'herdr-workspace)
+       :connection connection))))
+
+(defun herdr-dispatch--resolve-connection ()
+  "Answer `herdr-current-connection\\=' from the row at point.
+On `herdr-connection-resolvers\\=', so that a verb invoked by name rather
+than through `herdr-dispatch-target-at-point\\=' still reaches the server
+the row came from.  Nil anywhere but the dashboard, and nil on a row
+carrying nothing, so the resolver falls through."
+  (when (derived-mode-p 'herdr-dispatch-mode)
+    (when-let* ((section (herdr-dispatch--section-at-point)))
+      (herdr-dispatch--row-connection section))))
+
+(add-hook 'herdr-connection-resolvers #'herdr-dispatch--resolve-connection)
+
+(defun herdr-dispatch--row-connection (_section)
+  "Return the connection SECTION\\='s row came from.
+
+One dashboard, one server, for now: the rows carry no server of their
+own, so this answers the connection the buffer was drawn from.  Giving
+each row its own is the same change as drawing several servers at once,
+and this is the one place that has to learn it."
+  (herdr-connection--only))
 
 (defun herdr-dispatch--target-type (target)
   "Return TARGET\\='s type, or nil when point is on no row at all.
@@ -739,7 +772,7 @@ on an event that fires when a workspace closes and at no other time."
   (unless (get-buffer herdr-dispatch-buffer-name)
     (remove-hook 'herdr-state-change-functions #'herdr-dispatch--invalidate-worktrees)))
 
-(defun herdr-dispatch--worktree-record (path)
+(defun herdr-dispatch--worktree-record (connection path)
   "Return the cached WorktreeInfo for PATH, or nil.
 
 A worktree section carries only its path as its value; the branch, and
@@ -747,15 +780,18 @@ whether herdr has already opened it as a workspace, live in the cached
 record.  Resolved once, into the RECORD of `herdr-dispatch-target\=', so
 two verbs on the same row cannot disagree about which worktree it names.
 
-Searches every listing flattened together, because a row
-knows its path and not which listing answered for it."
+Searches CONNECTION\='s listings flattened together, because a row knows
+its path and not which listing answered for it.  One connection\='s, not
+every connection\='s: a path is a path on some machine, and two servers
+can each hold a `~/workspace/repo\=' that is not the same directory and
+not the same repository."
   (seq-find (lambda (candidate)
-              (equal path (alist-get 'path candidate)))
+              (equal path (herdr-worktree-path candidate)))
             (apply #'append
                    (mapcar #'cdr (herdr-dispatch--worktrees-listings
-                                  (herdr-current-connection))))))
+                                  connection)))))
 
-(defun herdr-dispatch--checked-worktree (target)
+(defun herdr-dispatch--checked-worktree (connection target)
   "Return TARGET\\='s WorktreeInfo, or refuse the row.
 
 The one place every worktree verb settles whether a row may be acted on,
@@ -765,8 +801,8 @@ renderer declines to draw, so a stale row cannot be acted on.
 Three refusals, in the order the answers arrive.  A row with no cached
 record first, or the others read fields off nil and announce that a row
 whose record was merely missing is the repository\\='s own checkout.  Then
-`herdr-tree-linked-worktree-p\\=', and `herdr-tree-own-workspace-p\\='
-against the workspace the row sits inside.
+`herdr-worktree-linked-p\\=', and `herdr-worktree-open-as-p\\=' against
+the workspace the row sits inside, both qualified by CONNECTION.
 
 The last is the guard that matters: `k\\=' on such a row otherwise
 resolves to the workspace the row is nested inside."
@@ -778,21 +814,23 @@ resolves to the workspace the row is nested inside."
     (unless worktree
       (user-error
        "herdr: no worktree listing is cached for the row at point (g refetches)"))
-    (let ((name (or (alist-get 'branch worktree)
-                    (alist-get 'path worktree)
+    (let ((name (or (herdr-worktree-branch worktree)
+                    (herdr-worktree-path worktree)
                     "the row at point")))
-      (unless (herdr-tree-linked-worktree-p worktree)
+      (unless (herdr-worktree-linked-p worktree)
         (user-error
          "herdr: %s is the repository's own checkout, not one of its worktrees"
          name))
-      (when (herdr-tree-own-workspace-p
-             worktree (herdr-dispatch-target-workspace target))
+      (when (herdr-worktree-open-as-p
+             connection worktree
+             (herdr-workspace-qualified
+              connection (herdr-dispatch-target-workspace target)))
         (user-error
          "herdr: %s is the workspace this list belongs to, not one of its worktrees"
          name))
       worktree)))
 
-(defun herdr-dispatch--worktree-workspace (target)
+(defun herdr-dispatch--worktree-workspace (connection target)
   "Return the id of the workspace TARGET\\='s worktree is open as.
 
 `worktree.remove\\=' and `workspace.focus\\=' both address a workspace, and a
@@ -805,11 +843,11 @@ this refuses rather than guesses.
 Whether the row may be acted on at all is settled first, by
 `herdr-dispatch--checked-worktree\\='.  Only the question this function\\='s
 own name asks is left here."
-  (let ((worktree (herdr-dispatch--checked-worktree target)))
-    (or (alist-get 'open_workspace_id worktree)
+  (let ((worktree (herdr-dispatch--checked-worktree connection target)))
+    (or (herdr-worktree-open-workspace-id worktree)
         (user-error "herdr: worktree %s is not open as a workspace (RET opens it)"
-                    (or (alist-get 'branch worktree)
-                        (alist-get 'path worktree)
+                    (or (herdr-worktree-branch worktree)
+                        (herdr-worktree-path worktree)
                         "at point")))))
 
 (defun herdr-dispatch--refuse-heading (complaint)
@@ -849,15 +887,16 @@ say whether the row may be acted on at all are the same ones, and
 reading the record directly is what let this command act on rows the
 others refuse."
   (let* ((target (or target (herdr-dispatch-target-at-point)))
-         (worktree (herdr-dispatch--checked-worktree target))
+         (connection (herdr-dispatch-target-connection target))
+         (worktree (herdr-dispatch--checked-worktree connection target))
          (workspace (or (herdr-dispatch-target-workspace target)
                         (user-error "herdr: point is not on a workspace"))))
-    (if-let* ((open (alist-get 'open_workspace_id worktree)))
+    (if-let* ((open (herdr-worktree-open-workspace-id worktree)))
         (herdr-workspace-focus open)
-      (let ((dir (herdr-state-workspace-directory (herdr-state-current)
-                                                   workspace)))
-        (herdr-rpc-call (herdr-current-connection) "worktree.open"
-                        `((branch . ,(alist-get 'branch worktree))
+      (let ((dir (herdr-state-workspace-directory
+                  (herdr-state-current connection) workspace)))
+        (herdr-rpc-call connection "worktree.open"
+                        `((branch . ,(herdr-worktree-branch worktree))
                           (cwd . ,dir)
                           (focus . t)))))))
 
@@ -894,7 +933,7 @@ business reaching it.
 Nil when no record is cached, so such a row still gets the refetch error
 rather than being opened on a guess."
   (when-let* ((record (herdr-dispatch-target-record target)))
-    (not (herdr-tree-linked-worktree-p record))))
+    (not (herdr-worktree-linked-p record))))
 
 (herdr-dispatch-defverb herdr-dispatch-visit ()
   "Go to the thing at point.
@@ -985,7 +1024,9 @@ the same reason and with more at stake; see
       ('herdr-workspace
        (herdr-workspace-close (herdr-dispatch-target-value target)))
       ('herdr-worktree
-       (herdr-worktree-remove (herdr-dispatch--worktree-workspace target)))
+       (herdr-worktree-remove
+        (herdr-dispatch--worktree-workspace
+         (herdr-dispatch-target-connection target) target)))
       ('herdr-known-project
        (user-error
         "herdr: a known project with no workspace open has nothing to close"))

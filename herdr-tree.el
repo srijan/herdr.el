@@ -32,6 +32,7 @@
 (require 'herdr-state)
 (require 'herdr-pane)
 (require 'herdr-workspace)
+(require 'herdr-worktree)
 
 (defconst herdr-tree-status-glyphs
   '(("working" . "▶") ("blocked" . "⏸") ("done" . "✓") ("idle" . "·"))
@@ -175,31 +176,26 @@ so grouping rows by tab would explain nothing and cost a level."
                         (equal workspace-id (herdr-pane-workspace-id pane)))
                       (herdr-state-panes state))))
 
-(defun herdr-tree-linked-worktree-p (worktree)
-  "Return non-nil when WORKTREE is a linked worktree, not the main checkout.
-`is_linked_worktree\\=' is the only field that can tell them apart.  For a
-main checkout `open_workspace_id\\=' names the very workspace whose
-listing this is, which is how `k\\=' came to remove the workspace point
-was standing in.
-
-Absent reads as not linked, which drops the row.  The field is required,
-so absence means a reply the schema does not describe: dropping costs a
-row the heading above already shows, keeping costs the workspace."
-  (and (alist-get 'is_linked_worktree worktree) t))
-
 (defun herdr-tree-own-workspace-p (worktree workspace-id)
   "Return non-nil when WORKTREE is WORKSPACE-ID rather than one of its worktrees.
-An entry whose `open_workspace_id\\=' is WORKSPACE-ID is the section\\='s own
+An entry whose open workspace is WORKSPACE-ID is the section\='s own
 workspace: already on screen as the heading above, and the object a verb
 on the row would destroy.  A linked worktree opened as a workspace comes
 back in its own listing exactly this way.
 
-Apply this AND `herdr-tree-linked-worktree-p\\='.  Neither subsumes the
-other.  This asks \"is this row the workspace it is nested under?\"; that
-asks \"is this a worktree at all?\", which still matters because a pane
-`cd\\='d into another repository yields a listing whose main checkout
-names some other workspace, or none."
-  (let ((open (alist-get 'open_workspace_id worktree)))
+Bare ids on both sides, which is sound here and only here: a tree is
+built from one connection\='s cache and one connection\='s listings, so
+everything this compares was issued by the same server.  Anything
+comparing a worktree\='s open workspace across connections — the
+dispatcher resolving a row back to a record, for one — has to qualify
+both sides with `herdr-worktree-open-as-p\=' instead.
+
+Apply this AND `herdr-worktree-linked-p\='.  Neither subsumes the other.
+This asks \"is this row the workspace it is nested under?\"; that asks
+\"is this a worktree at all?\", which still matters because a pane `cd\='d
+into another repository yields a listing whose main checkout names some
+other workspace, or none."
+  (let ((open (herdr-worktree-open-workspace-id worktree)))
     (and open (equal open workspace-id))))
 
 (defun herdr-tree--as-directory (path)
@@ -220,7 +216,7 @@ argument, spelled once here so every comparison in this file agrees."
   "Return the path of the main checkout of ROOT's repository, or nil.
 
 Read out of ROOT's own cached `worktree.list\\=' reply: the one entry
-`herdr-tree-linked-worktree-p\\=' says is not a linked worktree is the
+`herdr-worktree-linked-p\\=' says is not a linked worktree is the
 repository's main checkout, whatever ROOT itself happens to be.  For an
 ordinary project that is ROOT; for a directory that is itself a linked
 worktree it is the checkout the worktree hangs off, which is the fact
@@ -233,8 +229,8 @@ to be a worktree of anything\\=', which keeps the row rather than
 hiding it."
   (when-let* ((entry (assoc root worktrees)))
     (seq-some (lambda (worktree)
-                (and (not (herdr-tree-linked-worktree-p worktree))
-                     (alist-get 'path worktree)))
+                (and (not (herdr-worktree-linked-p worktree))
+                     (herdr-worktree-path worktree)))
               (cdr entry))))
 
 (defun herdr-tree--secondary-worktree-p (state root known-project-roots worktrees)
@@ -328,9 +324,7 @@ costs nothing, and computing this from the pre-filter list once here is
 simpler than re-deriving the same filtered set a second time."
   (apply #'max herdr-tree-worktree-column-min
          (mapcar (lambda (worktree)
-                   (length (or (alist-get 'branch worktree)
-                               (alist-get 'label worktree)
-                               "?")))
+                   (length (herdr-worktree-name worktree)))
                  (seq-mapcat #'cdr worktrees))))
 
 (defun herdr-tree--worktree-node (worktree width)
@@ -344,15 +338,13 @@ place.  So it is marked, not repeated.
 
 Abbreviate the displayed path only.  VALUE stays the real path, because
 commands send it to the server."
-  (let ((open (alist-get 'open_workspace_id worktree)))
-    (list 'herdr-worktree (alist-get 'path worktree)
+  (let ((open (herdr-worktree-open-workspace-id worktree)))
+    (list 'herdr-worktree (herdr-worktree-path worktree)
           (herdr-tree--faced
            (string-trim-right
             (format (format "%%-%ds %%-30s %%s" width)
-                    (or (alist-get 'branch worktree)
-                        (alist-get 'label worktree)
-                        "?")
-                    (abbreviate-file-name (or (alist-get 'path worktree) ""))
+                    (herdr-worktree-name worktree)
+                    (abbreviate-file-name (or (herdr-worktree-path worktree) ""))
                     (if open (format "open as %s" open) "")))
            'shadow)
           nil)))
@@ -368,7 +360,7 @@ place of the dimmed pointer row, which is what puts a worktree you are
 working in underneath its repository rather than beside it.
 
 Two predicates drop rows, and neither subsumes the other:
-`herdr-tree-linked-worktree-p\\=' drops the repository\\='s own checkout,
+`herdr-worktree-linked-p\\=' drops the repository\\='s own checkout,
 `herdr-tree-own-workspace-p\\=' drops any entry naming WORKSPACE-ID.  A
 row surviving both is a worktree and is not the workspace it sits under.
 
@@ -378,12 +370,12 @@ whole workspace, that extra level put a running agent three deep."
   (when-let* ((entry (assoc workspace-id worktrees))
               (found (seq-filter
                       (lambda (worktree)
-                        (and (herdr-tree-linked-worktree-p worktree)
+                        (and (herdr-worktree-linked-p worktree)
                              (not (herdr-tree-own-workspace-p worktree
                                                               workspace-id))))
                       (cdr entry))))
     (mapcar (lambda (worktree)
-              (or (cdr (assoc (alist-get 'open_workspace_id worktree) nested))
+              (or (cdr (assoc (herdr-worktree-open-workspace-id worktree) nested))
                   (herdr-tree--worktree-node worktree width)))
             found)))
 
@@ -467,7 +459,7 @@ repository with no worktrees is one row rather than nothing: that row is
 where \\[herdr-dispatch-create-terminal] is aimed.  Nil means the reply
 has not landed, which is the one case where drawing nothing is right.
 
-Two rows are dropped.  `herdr-tree-linked-worktree-p\\=' drops the main
+Two rows are dropped.  `herdr-worktree-linked-p\\=' drops the main
 checkout.  What remains is compared against ROOT by path, because a
 directory that is someone else\\='s worktree lists itself among its own,
 and drawing that row put ROOT underneath itself.
@@ -479,9 +471,9 @@ it compares `open_workspace_id\\=', and an unopened ROOT has none."
                           (herdr-tree--worktree-node worktree width))
                         (seq-filter
                          (lambda (worktree)
-                           (and (herdr-tree-linked-worktree-p worktree)
+                           (and (herdr-worktree-linked-p worktree)
                                 (not (equal (herdr-tree--as-directory
-                                             (alist-get 'path worktree))
+                                             (herdr-worktree-path worktree))
                                             (herdr-tree--as-directory root)))))
                          (cdr entry))))
           (main (herdr-tree--main-checkout-node root worktrees width)))
