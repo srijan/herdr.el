@@ -259,6 +259,15 @@ both now fixed and pinned:
   shell parses again, so an unquoted `sh -c 'a && b'` loses the `&&` and runs only `a`. The
   script is quoted before it goes over.
 
+Measured again with two accounts on one host, `shadow` and `agent@shadow`, connected at once.
+This is the strongest evidence the earlier units have: the two homes give different socket
+paths and different binaries, which is what resolving on the far host is for, and the two
+accounts happened to be running **different herdr versions — protocol 22 and protocol 20** —
+which is what the per-connection protocol check and the per-connection schema cache are for.
+The older one warned; the newer one did not. The terminal registry held
+`((2 . "w9:p1") (1 . "w3:p1"))`, a composite key per KTD2. Disconnecting one left the other's
+cache, tunnel and terminal untouched, and removed only its own socket.
+
 ### U6 - Show several servers
 
 **Goal:** One dashboard, every connection, each attributable.

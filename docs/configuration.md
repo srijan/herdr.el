@@ -40,7 +40,9 @@ Nothing connects when Emacs starts. A connection is made when you ask for one an
 retried while you still want it, and stopped when you disconnect.
 
 The SSH target is passed to `ssh` untouched, so a bare host, a `user@host` and an alias from
-your SSH config all work.
+your SSH config all work. Two accounts on one machine are two connections like any others:
+they have different home directories, so herdr puts their sockets in different places and
+they may be running different versions of herdr.
 
 ### How it reaches the server
 
