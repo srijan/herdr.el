@@ -31,6 +31,7 @@
 (require 'herdr-term)
 (require 'herdr-pane)
 (require 'herdr-workspace)
+(require 'herdr-tree)
 
 ;; The embark map below binds commands from `herdr-cmd', which requires
 ;; this file, so they are declared rather than required.
@@ -41,15 +42,6 @@
 (declare-function herdr-agent-prompt "herdr-cmd" (text &optional target))
 
 (declare-function project-known-project-roots "project" ())
-
-(defun herdr-select--status-glyph (status)
-  "Return a short glyph for agent STATUS."
-  (pcase status
-    ("working" "▶")
-    ("blocked" "⏸")
-    ("done" "✓")
-    ("idle" "·")
-    (_ " ")))
 
 (defun herdr-select--annotate-pane (pane-id &optional connection)
   "Return the annotation string for PANE-ID on CONNECTION."
@@ -68,7 +60,7 @@
             (cwd (herdr-pane-cwd pane)))
         (concat "  "
                 (if agent
-                    (format "%s %-8s" (herdr-select--status-glyph status) agent)
+                    (format "%s %-8s" (herdr-tree-glyph status) agent)
                   (format "%-10s" "shell"))
                 " " (or title "")
                 (if cwd (format "  %s" (abbreviate-file-name cwd)) ""))))))
@@ -83,15 +75,14 @@
                 (or (herdr-workspace-pane-count workspace) 0))
       "")))
 
-(defun herdr-select--read (prompt candidates category annotator)
-  "Read one of CANDIDATES with PROMPT, tagged CATEGORY and using ANNOTATOR."
+(defun herdr-select--read (prompt candidates category)
+  "Read one of CANDIDATES with PROMPT, tagged CATEGORY."
   (unless candidates
     (user-error "herdr: nothing to choose from"))
   (let ((table
          (lambda (string predicate action)
            (if (eq action 'metadata)
-               `(metadata (category . ,category)
-                          (annotation-function . ,annotator))
+               `(metadata (category . ,category))
              (complete-with-action action candidates string predicate)))))
     (completing-read prompt table nil t)))
 
@@ -174,9 +165,7 @@ Choosing a row also makes its connection the answer for this command.
 Nil for a row nothing offered, which is what empty input reduces to."
   (when-let* ((row (herdr-select--read
                     prompt (herdr-select--offer connections ids candidate)
-                    ;; No annotator: the row is the candidate now, and
-                    ;; annotating it again would print it twice.
-                    category #'ignore))
+                    category))
               (pick (alist-get row herdr-select--rows nil nil #'equal)))
     (herdr-connection-choose (car pick))
     (cdr pick)))
@@ -286,30 +275,8 @@ and moves only when something moves it."
    (t (herdr-select-pane prompt))))
 
 ;;; Optional integrations, registered only when the package is loaded
-
-;; Cosmetic only: the completion tables already carry an
-;; `annotation-function', and this just buys marginalia's column
-;; alignment.  Every hook is `boundp'-guarded because these are
-;; third-party variables that get renamed, and a cosmetic integration
-;; must never be able to break startup.
-
-(defconst herdr-select-annotators
-  '((herdr-pane      herdr-select--annotate-pane)
-    (herdr-workspace herdr-select--annotate-workspace))
-  "Annotator per completion category, in `marginalia-annotators' order.")
-
-(defun herdr-select--register-marginalia ()
-  "Register herdr's categories with marginalia, if its API is recognised."
-  (let ((registry (cond ((boundp 'marginalia-annotators) 'marginalia-annotators)
-                        ;; marginalia before the 2024 rename.
-                        ((boundp 'marginalia-annotator-registry)
-                         'marginalia-annotator-registry))))
-    (when registry
-      (dolist (entry herdr-select-annotators)
-        (add-to-list registry (append entry '(builtin none)))))))
-
-(with-eval-after-load 'marginalia
-  (herdr-select--register-marginalia))
+;; Every hook is `boundp'-guarded: these are third-party variables that
+;; get renamed, and a convenience must never break startup.
 
 (defvar herdr-select-pane-embark-map
   (let ((map (make-sparse-keymap)))

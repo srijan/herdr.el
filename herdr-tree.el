@@ -13,16 +13,10 @@
 ;; cache into a nested list of (TYPE VALUE LINE CHILDREN); `herdr-dispatch'
 ;; walks that list emitting magit sections.
 ;;
-;; Kept separate from the renderer, and loadable without magit-section.
-;; The original reason was that `make test' ran under `emacs -Q -L .'
-;; where magit-section was not on the load path, so a model living in
-;; herdr-dispatch.el would not have been tested at all; that reason is
-;; gone — test/herdr-deps.el finds the dependency and nothing skips —
-;; but the separation earns its keep on its own.  Everything here is a
-;; pure function of the state cache, testable by comparing values,
-;; while the renderer can only be tested by inserting into a buffer and
-;; reading text properties back.  Keeping the two apart is what lets
-;; nearly all the logic be tested the cheap way.
+;; Kept separate from the renderer, and loadable without magit-section:
+;; everything here is a pure function of the state cache, testable by
+;; comparing values, while the renderer can only be tested by inserting
+;; into a buffer and reading text properties back.
 
 ;;; Code:
 
@@ -183,12 +177,9 @@ workspace: already on screen as the heading above, and the object a verb
 on the row would destroy.  A linked worktree opened as a workspace comes
 back in its own listing exactly this way.
 
-Bare ids on both sides, which is sound here and only here: a tree is
-built from one connection\='s cache and one connection\='s listings, so
-everything this compares was issued by the same server.  Anything
-comparing a worktree\='s open workspace across connections — the
-dispatcher resolving a row back to a record, for one — has to qualify
-both sides with `herdr-worktree-open-as-p\=' instead.
+Bare ids on both sides, which is sound because every caller compares
+a record against the workspace of the listing it came from, on one
+connection.
 
 Apply this AND `herdr-worktree-linked-p\='.  Neither subsumes the other.
 This asks \"is this row the workspace it is nested under?\"; that asks

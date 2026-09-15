@@ -83,9 +83,7 @@ name hands back another pane\\='s buffer rather than a fresh one."
   "Return NAME with a trailing `<N>\\=' uniquifying suffix stripped, if any.
 Without this, a buffer that collided on creation compares unequal to its
 own wanted name forever; see `herdr-term--rename-stale-buffers\\='."
-  (if (string-match "<[0-9]+>\\'" name)
-      (substring name 0 (match-beginning 0))
-    name))
+  (replace-regexp-in-string "<[0-9]+>\\'" "" name))
 
 (defun herdr-term-buffers-to-reap (state buffers)
   "Return the buffers in BUFFERS whose pane is gone from STATE.

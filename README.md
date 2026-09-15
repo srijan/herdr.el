@@ -223,7 +223,7 @@ the SELinux relabelling Fedora and RHEL need.
 - [herdr](https://herdr.dev) 0.9.0 (protocol 22)
 - `ghostel`, `magit-section`
 
-Optional, used when present and never required: `marginalia`, `embark`, `consult`, `alert`.
+Optional, used when present and never required: `embark`, `consult`, `alert`.
 
 The dashboard is built on `magit-section`. No file here names `transient`, but `magit-section`
 requires one, and Emacs has shipped one since 28.1, so it loads anyway.
@@ -391,9 +391,9 @@ make test-live   # needs a running herdr; includes the schema drift test
 make compile     # byte-compile, warnings are errors
 ```
 
-Both targets run `emacs -Q -L .`, which reads no init file. `test/herdr-deps.el` therefore
-searches the package directories of `elpaca`, `package.el` and `straight.el` for `magit-section`
-and what it needs. A missing dependency is a hard error naming `EXTRA_LOAD_PATH`. Nothing skips.
+Both targets run `emacs -Q -L .`, which reads no init file. The Makefile therefore runs
+`package-initialize` and adds the `elpaca` and `straight.el` build directories to the load path.
+A missing `magit-section` is a hard error naming `EXTRA_LOAD_PATH`. Nothing skips.
 
 Both suites run in batch, and that is a real blind spot. A batch Emacs has no frame. It cannot
 catch a modeline rendering `*invalid*`, a command splitting a window, or a `require` that nothing

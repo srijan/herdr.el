@@ -23,10 +23,10 @@
 ;; something read the variable late.  The resolver is asked at the point
 ;; of action and its answer is carried from there.
 ;;
-;; It is asked in a fixed order, most specific first: the connection
-;; bound around an asynchronous dispatch, the buffer's own connection,
-;; whatever a registered resolver makes of point, and the sole
-;; connection when there is only one.
+;; It is asked in a fixed order, most specific first: the connection a
+;; picker just chose, the buffer's own connection, whatever a registered
+;; resolver makes of point, and the sole connection when there is only
+;; one.
 
 ;;; Code:
 
@@ -168,15 +168,6 @@ must not stop the one taking its place from registering."
 
 ;;; The resolver
 
-(defvar herdr-connection--dispatching nil
-  "The connection an asynchronous dispatch is running under.
-
-The one place this package rebinds a connection dynamically, following
-`eglot\\='s rebind at its own dispatch site.  A callback runs in an empty
-extent, so a listener it reaches — a redraw, a reap — would otherwise
-resolve whatever the user last looked at.  Nothing may read it except
-`herdr-current-connection\\='.")
-
 (defvar herdr-connection-chosen nil
   "The connection a picker just answered with, for this command only.
 
@@ -217,13 +208,6 @@ answers non-nil.  The dashboard adds one that reads the object at
 point, which is the case a buffer-local cannot serve: one buffer, rows
 from several servers.")
 
-(defmacro herdr-connection-with-dispatch (connection &rest body)
-  "Run BODY with CONNECTION as what `herdr-current-connection\\=' answers.
-For the extent of an asynchronous dispatch and nothing else."
-  (declare (indent 1) (debug t))
-  `(let ((herdr-connection--dispatching ,connection))
-     ,@body))
-
 (defun herdr-connection--only ()
   "Return the connection a command with no other context means.
 
@@ -254,13 +238,11 @@ reconnect or an async reply captures its connection when it is scheduled
 and carries it to the moment it fires; resolving late is how work
 scheduled against one server lands on another.
 
-Asked most specific first: an asynchronous dispatch says which
-connection it is running under, a picker says which server the thing
-just chosen is on, a buffer says which server it belongs to, a
-registered resolver reads point, and failing all four the sole
-connection answers."
-  (or herdr-connection--dispatching
-      herdr-connection-chosen
+Asked most specific first: a picker says which server the thing just
+chosen is on, a buffer says which server it belongs to, a registered
+resolver reads point, and failing all three the sole connection
+answers."
+  (or herdr-connection-chosen
       herdr-buffer-connection
       (run-hook-with-args-until-success 'herdr-connection-resolvers)
       (herdr-connection--only)))
@@ -284,11 +266,6 @@ shared."
 
 (defcustom herdr-connection-tunnel-timeout 10.0
   "Seconds to wait for a forwarded socket to answer before giving up."
-  :type 'number
-  :group 'herdr)
-
-(defcustom herdr-connection-tunnel-poll 0.5
-  "Seconds between attempts to reach a forwarded socket while it comes up."
   :type 'number
   :group 'herdr)
 
@@ -538,7 +515,7 @@ pong is a server that is not herdr."
         ;; A refused channel comes back at once, so the wait is what
         ;; paces this: without it the loop asks ten times a second and
         ;; ssh answers each with a line of its own about the failure.
-        (accept-process-output nil herdr-connection-tunnel-poll))
+        (accept-process-output nil 0.5))
       (signal 'herdr-error
               (list "no_answer"
                     (format "%s: the forwarded socket did not answer in %ss"

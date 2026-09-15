@@ -32,9 +32,9 @@ round-trip test leaves the session exactly as it found it.
 Both targets run `emacs -Q -L .`. That command starts no package system and reads no init file,
 so `magit-section` is absent from the load path.
 
-Each target therefore loads `test/herdr-deps.el` first. That file searches the package
-directories of `elpaca`, `package.el` and `straight.el`, and puts the dependencies on the load
-path. A missing `magit-section` is a hard error, and the error names `EXTRA_LOAD_PATH`.
+Each target therefore runs `package-initialize` and adds the build directories of `elpaca` and
+`straight.el` to the load path. A missing `magit-section` is a hard error, and the error names
+`EXTRA_LOAD_PATH`.
 
 Nothing skips. `make test` runs the whole suite or stops and tells you why. `make compile`
 compiles every source file, including `herdr-dispatch.el`.

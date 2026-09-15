@@ -39,7 +39,6 @@ optionally a herdr session on that host.
 |---|---|---|
 | `herdr-connection-socket-directory` | `"/tmp/herdr-<uid>"` | Where the local end of each forwarded socket is bound. |
 | `herdr-connection-tunnel-timeout` | `10.0` | The number of seconds to wait for a forwarded socket to answer. |
-| `herdr-connection-tunnel-poll` | `0.5` | The number of seconds between attempts while the forward comes up. |
 
 Nothing connects when Emacs starts. A connection is made when you ask for one and then kept,
 retried while you still want it, and stopped when you disconnect.
@@ -179,7 +178,6 @@ rather than at the backstop's.
 | `herdr-dispatch-buffer-name` | `"*herdr-agents*"` | The name of the dashboard buffer. |
 | `herdr-dispatch-display-action` | `(display-buffer-same-window)` | Where the dashboard appears. |
 | `herdr-dispatch-refresh-debounce` | `0.2` | The number of seconds to group the dashboard redraws. |
-| `herdr-dispatch-fold-indicators` | `nil` | The value that `magit-section-visibility-indicators` takes. |
 
 The dashboard reuses the selected window, so it preserves the rest of the frame. The key `q`
 restores the buffer that window held before.
