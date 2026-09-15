@@ -106,10 +106,21 @@ way to know where it is.
 
 `foreground_cwd\\=' is the fallback: a pane that has not reported a cwd of
 its own may still say where its foreground process is."
+  (when-let* ((dir (herdr-pane-directory-name pane)))
+    (when (file-directory-p dir) dir)))
+
+(defun herdr-pane-directory-name (pane)
+  "Return PANE\\='s working directory as a directory name, unchecked.
+
+`herdr-pane-directory\\=' asks the filesystem whether it exists; this does
+not, because the filesystem it would ask is the wrong one whenever the
+pane belongs to a server on another machine.  Checking a remote path
+properly means a stat over TRAMP per pane per poll, and the server
+tracks its own machine\\='s directories and republishes them, so it is the
+better authority anyway."
   (when-let* ((dir (or (alist-get 'cwd pane)
                        (alist-get 'foreground_cwd pane))))
-    (when (file-directory-p dir)
-      (file-name-as-directory dir))))
+    (and (stringp dir) (file-name-as-directory dir))))
 
 (defun herdr-pane-cwd (pane)
   "Return the cwd PANE reports, unchecked, or nil.
@@ -125,9 +136,15 @@ the pane record knows it."
       (user-error "herdr: pane %s has no terminal_id; herdr 0.8.2+ required"
                   (herdr-pane-id pane))))
 
-(defun herdr-pane-attach-args (pane takeover)
-  "Return the argv tail for attaching to PANE, stealing it when TAKEOVER."
-  (append (list "terminal" "attach" (herdr-pane-terminal-id pane))
+(defun herdr-pane-attach-args (pane takeover &optional session)
+  "Return the argv tail for attaching to PANE, stealing it when TAKEOVER.
+
+SESSION names one of the host\\='s herdr sessions, and goes before the
+subcommand because that is where herdr takes it: `terminal attach\\=' has
+no session option of its own, so a client for a named session says so
+globally or attaches to the default one."
+  (append (when session (list "--session" session))
+          (list "terminal" "attach" (herdr-pane-terminal-id pane))
           (when takeover '("--takeover"))))
 
 (defconst herdr-pane-significant-fields

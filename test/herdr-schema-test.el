@@ -5,6 +5,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'herdr-schema)
+(require 'herdr-test-helper)
 
 (defvar herdr-schema-test--fixture
   (expand-file-name "fixtures/schema-protocol-22.json"
@@ -13,14 +14,14 @@
 (defmacro herdr-schema-test-with-fixture (&rest body)
   "Run BODY with the captured protocol-22 schema loaded."
   (declare (indent 0) (debug t))
-  `(let ((herdr-schema--cache nil)
-         (herdr-schema--cache-version nil))
-     (herdr-schema-load-file herdr-schema-test--fixture)
+  `(let ((herdr-connections (herdr-test-connections (herdr-test-connection))))
+     (herdr-schema-load-file (herdr-current-connection)
+                             herdr-schema-test--fixture)
      ,@body))
 
 (ert-deftest herdr-schema-exposes-every-method ()
   (herdr-schema-test-with-fixture
-    (let ((methods (herdr-schema-methods)))
+    (let ((methods (herdr-schema-methods (herdr-current-connection))))
       (should (= (length methods) 102))
       (should (member "ping" methods))
       (should (member "pane.read" methods))
@@ -29,14 +30,14 @@
 
 (ert-deftest herdr-schema-reports-required-params ()
   (herdr-schema-test-with-fixture
-    (should (equal (sort (herdr-schema-required "pane.read") #'string<)
+    (should (equal (sort (herdr-schema-required (herdr-current-connection) "pane.read") #'string<)
                    '("pane_id" "source")))
-    (should (equal (herdr-schema-required "ping") nil))
-    (should (member "direction" (herdr-schema-required "pane.split")))))
+    (should (equal (herdr-schema-required (herdr-current-connection) "ping") nil))
+    (should (member "direction" (herdr-schema-required (herdr-current-connection) "pane.split")))))
 
 (ert-deftest herdr-schema-lists-all-params-not-only-required ()
   (herdr-schema-test-with-fixture
-    (let ((names (mapcar #'car (herdr-schema-params "pane.read"))))
+    (let ((names (mapcar #'car (herdr-schema-params (herdr-current-connection) "pane.read"))))
       (should (member "pane_id" names))
       (should (member "lines" names))
       (should (member "strip_ansi" names))
@@ -45,26 +46,26 @@
 (ert-deftest herdr-schema-resolves-ref-to-enum ()
   "`source' on pane.read is a $ref; its four values must resolve."
   (herdr-schema-test-with-fixture
-    (let ((choices (herdr-schema-enum "pane.read" "source")))
+    (let ((choices (herdr-schema-enum (herdr-current-connection) "pane.read" "source")))
       (should (equal (sort choices #'string<)
                      '("detection" "recent" "recent_unwrapped" "visible"))))))
 
 (ert-deftest herdr-schema-resolves-nested-enum-for-split-direction ()
   (herdr-schema-test-with-fixture
-    (should (equal (sort (herdr-schema-enum "pane.split" "direction") #'string<)
+    (should (equal (sort (herdr-schema-enum (herdr-current-connection) "pane.split" "direction") #'string<)
                    '("down" "right")))))
 
 (ert-deftest herdr-schema-reports-boolean-params ()
   (herdr-schema-test-with-fixture
-    (should (eq (herdr-schema-param-type "pane.split" "focus") 'boolean))
-    (should (eq (herdr-schema-param-type "pane.read" "pane_id") 'string))
-    (should (eq (herdr-schema-param-type "pane.read" "lines") 'integer))
-    (should (eq (herdr-schema-param-type "pane.read" "source") 'enum))))
+    (should (eq (herdr-schema-param-type (herdr-current-connection) "pane.split" "focus") 'boolean))
+    (should (eq (herdr-schema-param-type (herdr-current-connection) "pane.read" "pane_id") 'string))
+    (should (eq (herdr-schema-param-type (herdr-current-connection) "pane.read" "lines") 'integer))
+    (should (eq (herdr-schema-param-type (herdr-current-connection) "pane.read" "source") 'enum))))
 
 (ert-deftest herdr-schema-unknown-method-has-no-params ()
   (herdr-schema-test-with-fixture
-    (should (null (herdr-schema-params "no.such.method")))
-    (should (null (herdr-schema-required "no.such.method")))))
+    (should (null (herdr-schema-params (herdr-current-connection) "no.such.method")))
+    (should (null (herdr-schema-required (herdr-current-connection) "no.such.method")))))
 
 ;;; The nullable shape, and the types nothing asked for
 
@@ -78,25 +79,24 @@ anyOf and then the `$ref' behind it, the parameter has no type and no
 enum at all, and `herdr-call' offers a free-text prompt where exactly
 four values are legal."
   (herdr-schema-test-with-fixture
-    (should (eq 'enum (herdr-schema-param-type "pane.swap" "direction")))
-    (should (member "left" (herdr-schema-enum "pane.swap" "direction")))
+    (should (eq 'enum (herdr-schema-param-type (herdr-current-connection) "pane.swap" "direction")))
+    (should (member "left" (herdr-schema-enum (herdr-current-connection) "pane.swap" "direction")))
     ;; Resolution must not land on the null branch, which is the other
     ;; thing picking the wrong element of the anyOf would do.
-    (should-not (equal "null" (alist-get 'type (herdr-schema-param
-                                                "pane.swap" "direction"))))))
+    (should-not (equal "null" (alist-get 'type (herdr-schema-param (herdr-current-connection)                                                 "pane.swap" "direction"))))))
 
 (ert-deftest herdr-schema-maps-every-declared-type ()
   "number, object and array had no test, so the arm for each could answer
 nil unnoticed — which is how `herdr-call' comes to prompt for a JSON
 object as though it were a plain string."
   (herdr-schema-test-with-fixture
-    (should (eq 'string (herdr-schema-param-type "pane.read" "pane_id")))
-    (should (eq 'boolean (herdr-schema-param-type "pane.split" "focus")))
-    (should (eq 'integer (herdr-schema-param-type "pane.read" "lines")))
-    (should (eq 'number (herdr-schema-param-type "pane.split" "ratio")))
-    (should (eq 'object (herdr-schema-param-type "workspace.create" "env")))
-    (should (eq 'array (herdr-schema-param-type "agent.send_keys" "keys")))
-    (should-not (herdr-schema-param-type "pane.read" "no_such_param"))))
+    (should (eq 'string (herdr-schema-param-type (herdr-current-connection) "pane.read" "pane_id")))
+    (should (eq 'boolean (herdr-schema-param-type (herdr-current-connection) "pane.split" "focus")))
+    (should (eq 'integer (herdr-schema-param-type (herdr-current-connection) "pane.read" "lines")))
+    (should (eq 'number (herdr-schema-param-type (herdr-current-connection) "pane.split" "ratio")))
+    (should (eq 'object (herdr-schema-param-type (herdr-current-connection) "workspace.create" "env")))
+    (should (eq 'array (herdr-schema-param-type (herdr-current-connection) "agent.send_keys" "keys")))
+    (should-not (herdr-schema-param-type (herdr-current-connection) "pane.read" "no_such_param"))))
 
 ;;; Prompting, one branch per JSON type
 
@@ -108,17 +108,18 @@ JSON parse error."
     (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "12"))
               ((symbol-function 'completing-read) (lambda (&rest _) "visible"))
               ((symbol-function 'y-or-n-p) (lambda (&rest _) t)))
-      (should (equal "visible" (herdr-schema-read-param "pane.read" "source")))
-      (should (eq t (herdr-schema-read-param "pane.split" "focus")))
-      (should (equal 12 (herdr-schema-read-param "pane.read" "lines")))
-      (should (equal "12" (herdr-schema-read-param "pane.read" "pane_id"))))
+      (should (equal "visible" (herdr-schema-read-param (herdr-current-connection) "pane.read" "source")))
+      (should (eq t (herdr-schema-read-param (herdr-current-connection) "pane.split" "focus")))
+      (should (equal 12 (herdr-schema-read-param (herdr-current-connection) "pane.read" "lines")))
+      (should (equal "12" (herdr-schema-read-param (herdr-current-connection) "pane.read" "pane_id"))))
     ;; A declined boolean is false on the wire, not absence.
     (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) nil)))
-      (should (eq :false (herdr-schema-read-param "pane.split" "focus"))))
+      (should (eq :false (herdr-schema-read-param (herdr-current-connection) "pane.split" "focus"))))
     ;; Objects and arrays are read as JSON, not as text.
     (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "{\"A\": 1}")))
       (should (equal 1 (alist-get 'A (herdr-schema-read-param
-                                      "workspace.create" "env")))))
+                                 (herdr-current-connection)
+                                 "workspace.create" "env")))))
     ;; Arrays come back as vectors, not lists: `json-serialize' cannot
     ;; tell a list of alists from a single alist, so `herdr-rpc-array'
     ;; is what makes an array parameter unambiguous on the wire — a
@@ -126,16 +127,19 @@ JSON parse error."
     ;; went out.
     (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "[\"a\"]")))
       (should (equal ["a"] (herdr-schema-read-param
+                            (herdr-current-connection)
                             "agent.send_keys" "keys"))))
     ;; An empty array is a real, non-nil value distinct from omission.
     (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "[]")))
       (should (equal [] (herdr-schema-read-param
+                         (herdr-current-connection)
                          "agent.send_keys" "keys"))))
     (cl-letf (((symbol-function 'read-string) (lambda (&rest _) ""))
               ((symbol-function 'completing-read) (lambda (&rest _) "")))
       (dolist (case '(("pane.read" "source") ("pane.read" "lines")
                       ("pane.read" "pane_id") ("workspace.create" "env")))
-        (should-not (apply #'herdr-schema-read-param case))))))
+        (should-not (apply #'herdr-schema-read-param
+                           (herdr-current-connection) case))))))
 
 (ert-deftest herdr-schema-read-param-says-which-prompts-are-optional ()
   "Being asked for five things with no way to tell which may be skipped
@@ -144,8 +148,8 @@ is what makes `herdr-call' with a prefix argument unusable."
     (let (prompts)
       (cl-letf (((symbol-function 'read-string)
                  (lambda (prompt &rest _) (push prompt prompts) "")))
-        (herdr-schema-read-param "pane.read" "pane_id")
-        (herdr-schema-read-param "pane.read" "lines"))
+        (herdr-schema-read-param (herdr-current-connection) "pane.read" "pane_id")
+        (herdr-schema-read-param (herdr-current-connection) "pane.read" "lines"))
       (let ((for-lines (nth 0 prompts))
             (for-pane (nth 1 prompts)))
         (should (string-match-p "optional" for-lines))
@@ -158,22 +162,27 @@ is what makes `herdr-call' with a prefix argument unusable."
   "A cache kept across a herdr upgrade means the drift test checks the
 old schema and reports no drift, which is the one thing it exists to
 find."
-  (let ((herdr-schema--cache '((schemas . nil)))
-        (herdr-schema--cache-version "0.8.0")
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         fetched)
+    (setf (herdr-connection-schema (herdr-current-connection)) '((schemas . nil))
+          (herdr-connection-schema-version (herdr-current-connection)) "0.8.0")
     (cl-letf (((symbol-function 'herdr-schema--server-version)
-               (lambda () "0.9.0"))
+               (lambda (_connection) "0.9.0"))
               ;; A parsed schema, not a sentinel: `herdr-schema' reads
               ;; the protocol out of what the fetch produced, so a stub
               ;; that returns something no fetch can return would assert
               ;; against an implementation this file does not have.
               ((symbol-function 'herdr-schema--fetch)
-               (lambda ()
-                 (setq fetched t herdr-schema--cache '((protocol . 22))))))
-      (herdr-schema)
+               (lambda (connection)
+                 (setq fetched t)
+                 (setf (herdr-connection-schema connection)
+                       '((protocol . 22))))))
+      (herdr-schema (herdr-current-connection))
       (should fetched)
-      (should (equal "0.9.0" herdr-schema--cache-version))
-      (should (equal 22 herdr-schema--cache-protocol)))))
+      (should (equal "0.9.0"
+                     (herdr-connection-schema-version (herdr-current-connection))))
+      (should (equal 22 (herdr-connection-schema-protocol
+                         (herdr-current-connection)))))))
 
 (ert-deftest herdr-schema-keeps-a-cache-the-server-still-matches ()
   "Shelling out to herdr on every schema question is the cost this cache
@@ -183,20 +192,22 @@ The version the server reports is a fresh string off the wire every
 time, never the one already held, so the comparison has to be `equal'.
 The stub copies its answer for that reason: handed the same object, an
 `eq' would pass here and fail against a real server."
-  (let ((herdr-schema--cache '((schemas . nil)))
-        (herdr-schema--cache-version "0.9.0")
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         fetched)
+    (setf (herdr-connection-schema (herdr-current-connection)) '((schemas . nil))
+          (herdr-connection-schema-version (herdr-current-connection)) "0.9.0")
     (cl-letf (((symbol-function 'herdr-schema--server-version)
-               (lambda () (copy-sequence "0.9.0")))
+               (lambda (_connection) (copy-sequence "0.9.0")))
               ((symbol-function 'herdr-schema--fetch)
-               (lambda () (setq fetched t))))
-      (herdr-schema)
+               (lambda (_connection) (setq fetched t))))
+      (herdr-schema (herdr-current-connection))
       (should-not fetched))
     ;; An unreachable server is not evidence that the cache is stale.
-    (cl-letf (((symbol-function 'herdr-schema--server-version) (lambda () nil))
+    (cl-letf (((symbol-function 'herdr-schema--server-version)
+               (lambda (_connection) nil))
               ((symbol-function 'herdr-schema--fetch)
-               (lambda () (setq fetched t))))
-      (herdr-schema)
+               (lambda (_connection) (setq fetched t))))
+      (herdr-schema (herdr-current-connection))
       (should-not fetched))))
 
 (ert-deftest herdr-schema-resolve-picks-the-real-branch-whichever-way-round ()
@@ -207,14 +218,12 @@ fixed position, and that is only visible when the order is the other way
 about — every anyOf in the captured schema happens to put the real thing
 first, so the search and a plain `car' agree there."
   (should (equal '((type . "string"))
-                 (herdr-schema-resolve
-                  '((anyOf . (((type . "null")) ((type . "string"))))))))
+                 (herdr-schema-resolve (herdr-current-connection)                   '((anyOf . (((type . "null")) ((type . "string"))))))))
   (should (equal '((type . "string"))
-                 (herdr-schema-resolve
-                  '((anyOf . (((type . "string")) ((type . "null"))))))))
+                 (herdr-schema-resolve (herdr-current-connection)                   '((anyOf . (((type . "string")) ((type . "null"))))))))
   ;; Nothing but null: there is no real branch, so the node stands.
   (should (equal '((anyOf . (((type . "null")))))
-                 (herdr-schema-resolve '((anyOf . (((type . "null")))))))))
+                 (herdr-schema-resolve (herdr-current-connection) '((anyOf . (((type . "null")))))))))
 
 (ert-deftest herdr-schema-fetch-shells-out-and-fails-loudly ()
   "The command is `herdr api schema --json', and a non-zero exit is an
@@ -229,7 +238,7 @@ the version it compared against lived only in a `defvar' that started
 each session nil.  A scratch `user-emacs-directory' left empty by the
 fetch catches a reintroduction at that path; the `boundp' catches one
 at any other."
-  (let ((herdr-schema--cache nil)
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         (user-emacs-directory
          (file-name-as-directory (make-temp-file "herdr-schema-test" t)))
         ;; A real stub executable rather than a `call-process' stub: the
@@ -243,14 +252,15 @@ at any other."
     (unwind-protect
         (progn
           (let ((herdr-executable stub))
-            (herdr-schema--fetch))
-          (should (equal 17 (alist-get 'protocol herdr-schema--cache)))
+            (herdr-schema--fetch (herdr-current-connection)))
+          (should (equal 17 (alist-get 'protocol (herdr-connection-schema
+                                                 (herdr-current-connection)))))
           (should-not (directory-files user-emacs-directory nil "\\`[^.]"))
           (should-not (boundp 'herdr-schema-cache-file))
           (let ((failing (herdr-schema-test--stub-executable "exit 3\n")))
             (unwind-protect
                 (let* ((herdr-executable failing)
-                       (err (should-error (herdr-schema--fetch)
+                       (err (should-error (herdr-schema--fetch (herdr-current-connection))
                                           :type 'herdr-error)))
                   (should (equal "schema_unavailable" (herdr-error-code err))))
               (delete-file failing))))
@@ -271,9 +281,7 @@ then checks the curated commands against an API nobody is talking to.
 So the protocol the schema declares is recorded, and disagreeing with
 the server is something the package can be asked about rather than
 something it hides."
-  (let* ((herdr-schema--cache nil)
-         (herdr-schema--cache-version nil)
-         (herdr-schema--cache-protocol nil)
+  (let* ((herdr-connections (herdr-test-connections (herdr-test-connection)))
          (stub (herdr-schema-test--stub-executable
                 "printf '{\"protocol\": 22, \"schemas\": {}}'\n")))
     (unwind-protect
@@ -283,17 +291,15 @@ something it hides."
                                          (protocol . 20)))
                     nil))
           (let ((herdr-executable stub))
-            (herdr-schema)
+            (herdr-schema (herdr-current-connection))
             ;; The schema is the binary's, and says so.
-            (should (equal 22 (herdr-schema-protocol)))
-            (should-not (herdr-schema-matches-server-p))))
+            (should (equal 22 (herdr-schema-protocol (herdr-current-connection))))
+            (should-not (herdr-schema-matches-server-p (herdr-current-connection)))))
       (delete-file stub))))
 
 (ert-deftest herdr-schema-agrees-when-binary-and-server-match ()
   "The ordinary case must not report a mismatch."
-  (let* ((herdr-schema--cache nil)
-         (herdr-schema--cache-version nil)
-         (herdr-schema--cache-protocol nil)
+  (let* ((herdr-connections (herdr-test-connections (herdr-test-connection)))
          (stub (herdr-schema-test--stub-executable
                 "printf '{\"protocol\": 22, \"schemas\": {}}'\n")))
     (unwind-protect
@@ -303,8 +309,8 @@ something it hides."
                                          (protocol . 22)))
                     nil))
           (let ((herdr-executable stub))
-            (herdr-schema)
-            (should (herdr-schema-matches-server-p))))
+            (herdr-schema (herdr-current-connection))
+            (should (herdr-schema-matches-server-p (herdr-current-connection)))))
       (delete-file stub))))
 
 (ert-deftest herdr-schema-unreachable-server-is-not-a-mismatch ()
@@ -313,16 +319,14 @@ something it hides."
 `herdr-call' works with no server running, reading the binary's schema
 to build a request.  Reporting that as a mismatch would put a warning
 in front of every one of those."
-  (let* ((herdr-schema--cache nil)
-         (herdr-schema--cache-version nil)
-         (herdr-schema--cache-protocol nil)
+  (let* ((herdr-connections (herdr-test-connections (herdr-test-connection)))
          (herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
          (stub (herdr-schema-test--stub-executable
                 "printf '{\"protocol\": 22, \"schemas\": {}}'\n")))
     (unwind-protect
         (let ((herdr-executable stub))
-          (herdr-schema)
-          (should (herdr-schema-matches-server-p)))
+          (herdr-schema (herdr-current-connection))
+          (should (herdr-schema-matches-server-p (herdr-current-connection))))
       (delete-file stub))))
 
 (defun herdr-schema-test--stub-executable (body)
@@ -341,18 +345,50 @@ process died — reachable from the raw-method escape hatch right after
 `herdr update', which is exactly when the binary may be mid-restart.
 The bounded fetch gives up at `herdr-rpc-timeout', kills the process,
 and signals the same code the exit-status path uses."
-  (let ((herdr-schema--cache nil)
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         (herdr-rpc-timeout 0.3)
         (stub (herdr-schema-test--stub-executable "sleep 30\n")))
     (unwind-protect
         (let ((start (float-time)))
           (let* ((herdr-executable stub)
-                 (err (should-error (herdr-schema--fetch) :type 'herdr-error)))
+                 (err (should-error
+                       (herdr-schema--fetch (herdr-current-connection))
+                       :type 'herdr-error)))
             (should (equal "schema_unavailable" (herdr-error-code err))))
           ;; Generous bound: the point is seconds, not thirty.
           (should (< (- (float-time) start) 5))
-          (should-not herdr-schema--cache))
+          (should-not (herdr-connection-schema (herdr-current-connection))))
       (delete-file stub))))
+
+(ert-deftest herdr-schema-two-connections-do-not-share-a-schema ()
+  "Two servers are two binaries and two schemas.  One cache holding both
+would have `herdr-call' prompt for the parameters of whichever server
+asked first, against whichever server the user is talking to now."
+  (let ((one (herdr-test-connection))
+        (two (herdr-test-connection)))
+    (herdr-schema-load-file one herdr-schema-test--fixture)
+    (should (member "ping" (herdr-schema-methods one)))
+    (should-not (herdr-connection-schema two))))
+
+(ert-deftest herdr-schema-fetches-a-remote-schema-on-its-own-host ()
+  "There is no socket method for the schema, so it comes from a binary —
+and a remote server's binary is on the remote host.  Reading the local
+one would describe an API nobody is talking to, which is exactly the
+mismatch this module already warns about within one machine."
+  (let ((connection (herdr-test-connection))
+        (where nil) (handler nil))
+    (setf (herdr-connection-ssh-target connection) "shadow")
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest args)
+                 (setq where default-directory
+                       handler (plist-get args :file-handler))
+                 ;; Stop before anything is actually run: the fetch
+                 ;; turns this into `herdr-error', which is what it does
+                 ;; with any failure to start the binary.
+                 (error "no process here"))))
+      (should-error (herdr-schema--fetch connection) :type 'herdr-error))
+    (should (equal "/ssh:shadow:" where))
+    (should handler)))
 
 (provide 'herdr-schema-test)
 ;;; herdr-schema-test.el ends here

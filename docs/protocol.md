@@ -40,6 +40,58 @@ therefore easy to read an error as an empty replay.
 **Array parameters must be vectors.** The Emacs function `json-serialize` cannot tell a list of
 alists from one alist. A list gives you a rejected `events.subscribe`.
 
+## A forwarded socket
+
+Measured on 2026-09-14: a macOS client against a Fedora server running herdr 0.9.0, forwarded
+with `ssh -N -L /tmp/herdr-probe.sock:<remote socket> <target>`.
+
+**The forward carries the protocol unchanged.** `ping` answered `protocol 22`,
+`session.snapshot` returned the remote's panes and workspaces, and `herdr-rpc-call` needed no
+change to speak through it. Ask the remote for the path rather than composing one: `ssh <target>
+herdr session list --json` names `socket_path` per session. A path written with `$HOME` is
+expanded by the local shell, so a macOS client forwards `/Users/...` to a Linux server and the
+probe fails for a reason that has nothing to do with the tunnel.
+
+**A subscription survives an idle period.** `events.subscribe` was held for 180 seconds with no
+traffic, the process stayed open, and a `workspace.rename` made afterwards arrived on the same
+subscription. Neither side sets `ServerAliveInterval` or `ClientAliveInterval`, so nothing at the
+SSH layer tears an idle channel down. The subscription also began with no history at all, the
+same as a local one on 0.9.0.
+
+**SELinux blocks the forward before it blocks anything else.** On a Fedora server the socket under
+`~/.config/herdr` is labelled `config_home_t`, and `sshd-session` may not write it, so every
+connection through the tunnel fails. The audit log names it; the SSH client only says
+`channel N: open failed: connect failed: open failed`. A socket under `/tmp` is labelled
+`user_tmp_t` and forwards without complaint, and `chcon -t user_tmp_t <socket>` needs no
+privilege. The label does not survive a server restart, because the socket is recreated.
+
+### What a failure looks like from the client
+
+`ExitOnForwardFailure` does not help. OpenSSH binds the local socket when the tunnel is set up
+and only dials the remote socket when something connects to the local one, so a forward to a
+socket that cannot be reached still looks like a healthy start.
+
+| Situation | Local socket | `herdr-rpc-call` | SSH client says |
+|---|---|---|---|
+| Healthy | bound | the answer | nothing |
+| Remote socket missing, server stopped, or SELinux denying | bound | `empty_response` | `channel N: open failed: connect failed: open failed` |
+| Tunnel died, socket file left behind | present, stale | `no_server`, `Connection refused` | nothing, the process is gone |
+| Authentication or host failure | **absent** | `no_server` | `Permission denied`, exit 255 |
+
+The first two rows are what a client can act on. `empty_response` means the tunnel is up and the
+far end is not answering, which is a retry. `no_server` means nothing is listening locally, which
+is a tunnel to rebuild. An authentication failure is the one case that leaves no socket at all,
+so it is distinguishable from both, which is what makes an unreachable remote worth telling apart
+from a misconfigured one.
+
+A server that stops removes its own socket file, so a stopped server and a wrong path are the
+same row. They need the same response, so nothing is lost by not telling them apart.
+
+**A dropped tunnel reaches the client as an ordinary disconnect.** Killing the SSH process while a
+subscription was open fired the process sentinel with `connection broken by remote peer` and
+status `closed` - the same signal a local server dropping produces, which is what the reconnect
+logic already handles.
+
 ## The event stream
 
 `events.subscribe` is the one long-lived call. It acknowledges with

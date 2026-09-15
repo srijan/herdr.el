@@ -27,11 +27,10 @@
 (defmacro herdr-call-test-with-schema (&rest body)
   "Run BODY with the captured protocol-22 schema loaded and no live state."
   (declare (indent 0) (debug t))
-  `(let ((herdr-schema--cache nil)
-         (herdr-schema--cache-version nil)
-         (herdr-state--current (herdr-state-from-snapshot nil))
+  `(let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot nil))))
          (current-prefix-arg nil))
-     (herdr-schema-load-file herdr-call-test--fixture)
+     (herdr-schema-load-file (herdr-current-connection)
+                             herdr-call-test--fixture)
      ,@body))
 
 ;;; Annotation
@@ -42,14 +41,17 @@
 A method with nothing required annotates as the empty string rather than
 as two stray spaces, because the completion frame appends it verbatim."
   (herdr-call-test-with-schema
-    (let ((annotation (herdr-call--annotate "pane.read")))
+    (let ((annotation (herdr-call--annotate (herdr-current-connection)
+                                            "pane.read")))
       (should (string-prefix-p "  " annotation))
       (should (string-match-p "pane_id" annotation))
       (should (string-match-p "source" annotation))
       ;; Space-separated, not run together.
       (should (string-match-p "\\_<source\\_>" annotation)))
-    (should (equal "" (herdr-call--annotate "ping")))
-    (should (equal "" (herdr-call--annotate "no.such.method")))))
+    (should (equal "" (herdr-call--annotate (herdr-current-connection)
+                                            "ping")))
+    (should (equal "" (herdr-call--annotate (herdr-current-connection)
+                                            "no.such.method")))))
 
 ;;; The method prompt
 
@@ -68,17 +70,22 @@ tolerate."
                  (lambda (_prompt collection &optional _pred require &rest _)
                    (setq table collection require-match require)
                    "ping")))
-        (should (equal "ping" (herdr-call--read-method))))
+        (should (equal "ping" (herdr-call--read-method
+                               (herdr-current-connection)))))
       (should require-match)
       (let ((candidates (funcall table "" nil t)))
         (should (member "ping" candidates))
         (should (member "pane.read" candidates))
-        (should (= (length (herdr-schema-methods)) (length candidates))))
+        (should (= (length (herdr-schema-methods (herdr-current-connection)))
+                   (length candidates))))
       (let ((metadata (funcall table "" nil 'metadata)))
         (should (eq 'metadata (car metadata)))
         (should (eq 'herdr-method (alist-get 'category (cdr metadata))))
-        (should (eq 'herdr-call--annotate
-                    (alist-get 'annotation-function (cdr metadata))))))))
+        ;; A closure over the connection rather than the bare symbol,
+        ;; so what is asserted is that it annotates.
+        (should (equal "  pane_id source"
+                       (funcall (alist-get 'annotation-function (cdr metadata))
+                                "pane.read")))))))
 
 ;;; Reading one parameter
 
@@ -89,16 +96,15 @@ tolerate."
 Both halves are asserted, because a mutation that always picks — or
 never picks — leaves the other branch looking right."
   (herdr-call-test-with-schema
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot '((panes . (((pane_id . "w1:p1"))))))))
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot '((panes . (((pane_id . "w1:p1")))))))
       (cl-letf (((symbol-function 'herdr-select-pane)
                  (lambda (&rest _) "picked"))
                 ((symbol-function 'herdr-schema-read-param)
                  (lambda (&rest _) "typed")))
-        (should (equal "picked" (herdr-call--read-value "pane.read" "pane_id")))
-        (should (equal "picked" (herdr-call--read-value "pane.move" "target")))
+        (should (equal "picked" (herdr-call--read-value (herdr-current-connection) "pane.read" "pane_id")))
+        (should (equal "picked" (herdr-call--read-value (herdr-current-connection) "pane.move" "target")))
         ;; Anything else still goes through the schema's own prompt.
-        (should (equal "typed" (herdr-call--read-value "pane.read" "lines")))))))
+        (should (equal "typed" (herdr-call--read-value (herdr-current-connection) "pane.read" "lines")))))))
 
 (ert-deftest herdr-call-picker-omits-an-empty-choice-rather-than-sending-it ()
   "`herdr-call's own docstring promises an empty prompt omits the
@@ -108,10 +114,9 @@ picker branch has to map that back to nil itself, or an optional
 pane_id/target left blank goes out as an explicit empty string instead
 of being left off the request."
   (herdr-call-test-with-schema
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot '((panes . (((pane_id . "w1:p1"))))))))
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot '((panes . (((pane_id . "w1:p1")))))))
       (cl-letf (((symbol-function 'herdr-select-pane) (lambda (&rest _) "")))
-        (should-not (herdr-call--read-value "pane.read" "pane_id"))))))
+        (should-not (herdr-call--read-value (herdr-current-connection) "pane.read" "pane_id"))))))
 
 (ert-deftest herdr-call-falls-back-to-typing-an-id-when-no-panes-are-known ()
   "With an empty cache the picker has nothing to offer, and offering an
@@ -122,7 +127,7 @@ being one."
                (lambda (&rest _) (error "The picker must not be used here")))
               ((symbol-function 'herdr-schema-read-param)
                (lambda (&rest _) "typed")))
-      (should (equal "typed" (herdr-call--read-value "pane.read" "pane_id"))))))
+      (should (equal "typed" (herdr-call--read-value (herdr-current-connection) "pane.read" "pane_id"))))))
 
 ;;; What goes on the wire
 
@@ -135,7 +140,8 @@ arrived on the wire."
   (declare (indent 3) (debug t))
   `(let (,method ,params)
      (cl-letf (((symbol-function 'herdr-schema-read-param)
-                (lambda (_method name) (cdr (assoc name ,answers)))))
+                (lambda (_connection _method name)
+                  (cdr (assoc name ,answers)))))
        (herdr-test-with-server
            (lambda (req)
              (setq ,method (alist-get 'method req)
@@ -187,7 +193,7 @@ an hour."
     (herdr-call-test--answering '(("pane_id" . "w1:p1") ("source" . "visible"))
         method params
       (herdr-call "pane.read")
-      (should (equal (herdr-schema-required "pane.read")
+      (should (equal (herdr-schema-required (herdr-current-connection) "pane.read")
                      (mapcar (lambda (cell) (symbol-name (car cell))) params))))))
 
 (ert-deftest herdr-call-returns-the-result-when-called-from-lisp ()

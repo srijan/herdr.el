@@ -367,10 +367,8 @@ last line would satisfy a test that only looked at the text."
 
 (defmacro herdr-dispatch-test-in-dispatcher (snapshot &rest body)
   "Run BODY in a real dispatcher buffer built from SNAPSHOT.
-Every piece of worktree state is rebound, not just the cache: the pending
-set, the unanswered list and the generation counter are globals that
-outlive a buffer, and a test that left one behind would arrive in the
-next as a workspace mysteriously already asked for.
+The worktree cache needs no rebinding of its own: it lives in the
+connection, and the connection here is a fresh one.
 
 `herdr-dispatch--known-project-roots\\=' is stubbed to nil for the same
 reason project.el must not be: it reads the real `project-list-file\\=' on
@@ -382,26 +380,27 @@ history.  A test that means to exercise known projects wraps its own body
 in a nested `cl-letf\\=' on the same symbol; the inner binding wins for its
 extent and this one still restores it afterwards."
   (declare (indent 1) (debug t))
-  `(herdr-dispatch-test--with-worktrees nil
-     (let ((herdr-state--current (herdr-state-from-snapshot ,snapshot))
-           (herdr-dispatch--refresh-timer nil)
-           (buffer (get-buffer-create herdr-dispatch-buffer-name)))
-       (unwind-protect
-           (cl-letf (((symbol-function 'herdr-dispatch--known-project-roots)
-                      (lambda () nil)))
-             (with-current-buffer buffer
-               (herdr-dispatch-mode)
-               ,@body))
-         (herdr-dispatch--cancel-refresh)
-         (when (buffer-live-p buffer) (kill-buffer buffer))))))
+  `(let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot ,snapshot))))
+         (herdr-dispatch--refresh-timer nil)
+         (buffer (get-buffer-create herdr-dispatch-buffer-name)))
+     (unwind-protect
+         (cl-letf (((symbol-function 'herdr-dispatch--known-project-roots)
+                    (lambda () nil)))
+           (with-current-buffer buffer
+             (herdr-dispatch-mode)
+             ,@body))
+       (herdr-dispatch--cancel-refresh)
+       (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
 (defmacro herdr-dispatch-test--with-worktrees (listings &rest body)
   "Run BODY with the worktree cache seeded to LISTINGS.
-The one place a test binds the cache's storage; everything else asks the
-cache.  BODY may be preceded by `:pending', `:unanswered' and
-`:generation' arguments.  All four globals are rebound whichever are
-given, because each outlives a buffer and a test that left one behind
-would arrive in the next as a key mysteriously already asked for."
+The one place a test writes the cache's storage; everything else asks
+the cache.  BODY may be preceded by `:pending', `:unanswered' and
+`:generation' arguments.
+
+Seeds a fresh connection rather than the one in scope, inheriting its
+session cache, so that a test nesting this inside or outside a seeded
+session gets the same thing either way."
   (declare (indent 1) (debug t))
   (let ((pending nil) (unanswered nil) (generation 0))
     (while (keywordp (car body))
@@ -411,10 +410,15 @@ would arrive in the next as a key mysteriously already asked for."
           (:unanswered (setq unanswered value))
           (:generation (setq generation value))
           (_ (error "Unknown worktree seed argument %S" key)))))
-    `(let ((herdr-dispatch--worktrees ,listings)
-           (herdr-dispatch--worktrees-pending ,pending)
-           (herdr-dispatch--worktrees-unanswered ,unanswered)
-           (herdr-dispatch--worktrees-generation ,generation))
+    `(let ((herdr-connections (herdr-test-connections (herdr-test-connection
+             (herdr-connection-cache (herdr-current-connection))))))
+       (setf (herdr-connection-worktrees (herdr-current-connection)) ,listings
+             (herdr-connection-worktrees-pending (herdr-current-connection))
+             ,pending
+             (herdr-connection-worktrees-unanswered (herdr-current-connection))
+             ,unanswered
+             (herdr-connection-worktrees-generation (herdr-current-connection))
+             ,generation)
        ,@body)))
 
 (defmacro herdr-dispatch-test-with-dispatcher (&rest body)
@@ -454,8 +458,8 @@ strings cannot, and that is the whole distinction under test."
   "Fold a `pane_updated' for pane ID with STATUS and REVISION into the cache.
 REVISION and scroll are the fields the live stream mostly carries and the
 dashboard never renders; STATUS is one it does."
-  (setq herdr-state--current
-        (herdr-state-reduce herdr-state--current "pane_updated"
+  (setf (herdr-connection-cache (herdr-current-connection))
+        (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_updated"
                             `((pane . ((pane_id . ,id)
                                        (agent . "claude")
                                        (agent_status . ,status)
@@ -469,7 +473,7 @@ dashboard never renders; STATUS is one it does."
     (herdr-dispatch-refresh)
     (should (string-match-p
              (regexp-quote
-              (format "1 workspaces  2 panes  1%s1%s"
+              (format "1 workspace  2 panes  1%s1%s"
                       (herdr-tree-glyph "blocked")
                       (herdr-tree-glyph "working")))
              (buffer-string)))
@@ -549,8 +553,8 @@ keyed on the tree by itself would freeze the header at a stale count."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
     (let ((tree (herdr-tree-build (herdr-state-current) nil)))
-      (setq herdr-state--current
-            (herdr-state-reduce herdr-state--current "pane_created"
+      (setf (herdr-connection-cache (herdr-current-connection))
+            (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_created"
                                 '((pane . ((pane_id . "ghost:p9")
                                            (agent . "shell")
                                            (agent_status . "idle")
@@ -673,8 +677,8 @@ pane leaves you on its workspace."
     (goto-char (point-min))
     (search-forward "w1:p2")
     (goto-char (line-beginning-position))
-    (setq herdr-state--current
-          (herdr-state-reduce herdr-state--current "pane_closed"
+    (setf (herdr-connection-cache (herdr-current-connection))
+          (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_closed"
                               '((pane_id . "w1:p2"))))
     (herdr-dispatch-refresh)
     (should-not (= (point) (point-max)))
@@ -701,11 +705,11 @@ that is the next workspace."
     (goto-char (point-min))
     (search-forward "w1:p1")
     (goto-char (line-beginning-position))
-    (setq herdr-state--current
-          (herdr-state-reduce herdr-state--current "pane_closed"
+    (setf (herdr-connection-cache (herdr-current-connection))
+          (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_closed"
                               '((pane_id . "w1:p1"))))
-    (setq herdr-state--current
-          (herdr-state-reduce herdr-state--current "workspace_closed"
+    (setf (herdr-connection-cache (herdr-current-connection))
+          (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "workspace_closed"
                               '((workspace_id . "w1"))))
     (herdr-dispatch-refresh)
     ;; Neither end of the buffer, and on a real row: the one that took
@@ -740,11 +744,11 @@ blank line."
     (goto-char (point-min))
     (search-forward "w2:p1")
     (goto-char (line-beginning-position))
-    (setq herdr-state--current
-          (herdr-state-reduce herdr-state--current "pane_closed"
+    (setf (herdr-connection-cache (herdr-current-connection))
+          (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_closed"
                               '((pane_id . "w2:p1"))))
-    (setq herdr-state--current
-          (herdr-state-reduce herdr-state--current "workspace_closed"
+    (setf (herdr-connection-cache (herdr-current-connection))
+          (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "workspace_closed"
                               '((workspace_id . "w2"))))
     (herdr-dispatch-refresh)
     ;; A real row, not a separator: its ident must be longer than the
@@ -816,8 +820,8 @@ usually fires while the dashboard is not the selected window."
             (search-forward "w1:p2")
             (set-window-point window (line-beginning-position))
             (goto-char (point-min))
-            (setq herdr-state--current
-                  (herdr-state-reduce herdr-state--current "pane_closed"
+            (setf (herdr-connection-cache (herdr-current-connection))
+                  (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_closed"
                                       '((pane_id . "w1:p2"))))
             (herdr-dispatch-refresh)
             (should-not (= (window-point window) (point-max)))
@@ -942,9 +946,13 @@ which is why a `pcase' over the type cannot be mis-ordered."
   "Calls recorded by `herdr-dispatch-test--recorder', newest first.")
 
 (defun herdr-dispatch-test--recorder (name)
-  "Return a function recording each call to it as (NAME . ARGS)."
+  "Return a function recording each call to it as (NAME . ARGS).
+A leading connection is dropped.  These assertions are about which
+command ran with which parameters; that a connection was passed at all
+is `herdr-rpc-call-refuses-to-guess-a-connection\='s job."
   (lambda (&rest args)
-    (push (cons name args) herdr-dispatch-test--calls)
+    (push (cons name (if (herdr-connection-p (car args)) (cdr args) args))
+          herdr-dispatch-test--calls)
     nil))
 
 (defmacro herdr-dispatch-test-with-recorders (names &rest body)
@@ -1162,7 +1170,7 @@ can stand in it — is one BODY can hold open for as long as it likes."
   (declare (indent 0) (debug t))
   `(let ((herdr-dispatch-test--async nil))
      (cl-letf (((symbol-function 'herdr-rpc-call-async)
-                (lambda (method params callback &optional timeout)
+                (lambda (_connection method params callback &optional timeout)
                   (setq herdr-dispatch-test--async
                         (append herdr-dispatch-test--async
                                 (list (list method params callback timeout))))
@@ -1213,8 +1221,8 @@ the case that tells the two apart."
     (herdr-dispatch-test-with-async
       (herdr-dispatch-refresh t)
       (herdr-dispatch-test--reply 0 '((worktrees . nil)))
-      (should (herdr-dispatch--worktrees-answered-p "w1"))
-      (should-not (herdr-dispatch--worktrees-listing "w1"))
+      (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
+      (should-not (herdr-dispatch--worktrees-listing (herdr-current-connection) "w1"))
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested))))))
@@ -1307,7 +1315,7 @@ and the assertion would no longer be about placeholders at all."
       (herdr-dispatch-test--reply
        1 '((worktrees . (((path . "/tmp/api-spike")
                           (is_linked_worktree . t) (branch . "spike"))))))
-      (should (herdr-dispatch--worktrees-answered-p "w1"))
+      (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested)))
@@ -1349,8 +1357,8 @@ be true — this test is what confirms it rather than assumes it."
       (herdr-dispatch-test--reply
        1 '((worktrees . (((path . "/tmp/api-spike")
                           (is_linked_worktree . t) (branch . "spike"))))))
-      (should (herdr-dispatch--worktrees-answered-p "w1"))
-      (should-not (herdr-dispatch--worktrees-listing "w1"))
+      (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
+      (should-not (herdr-dispatch--worktrees-listing (herdr-current-connection) "w1"))
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested)))
@@ -1368,13 +1376,13 @@ cache entry that stops it."
   (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
     (let ((attempts nil))
       (advice-add 'herdr-dispatch--fetch-worktrees :before
-                  (lambda (id &rest _) (push id attempts)))
+                  (lambda (_connection id &rest _) (push id attempts)))
       (unwind-protect
           (herdr-dispatch-test-with-async
             (herdr-dispatch-refresh t)
             (dotimes (_ 19) (herdr-dispatch-refresh))
-            (should (herdr-dispatch--worktrees-answered-p "w3"))
-            (should-not (herdr-dispatch--worktrees-listing "w3"))
+            (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w3"))
+            (should-not (herdr-dispatch--worktrees-listing (herdr-current-connection) "w3"))
             (should (equal '("w1" "w2" "w3") (nreverse attempts)))
             (should (equal '("/tmp/web/" "/tmp/api/")
                            (herdr-dispatch-test--requested))))
@@ -1397,8 +1405,8 @@ refreshes after the request are counted too."
       (herdr-dispatch-refresh t)
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested)))
-      (should (herdr-dispatch--worktrees-answered-p "w3"))
-      (setq herdr-state--current
+      (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w3"))
+      (setf (herdr-connection-cache (herdr-current-connection))
             (herdr-state-from-snapshot
              (herdr-dispatch-test--snapshot-with-pane
               herdr-dispatch-test--worktree-snapshot
@@ -1430,18 +1438,18 @@ request for the same workspace."
   (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
     (herdr-dispatch-test-with-async
       (herdr-dispatch-refresh t)
-      (herdr-dispatch--invalidate-worktrees "worktree_created" nil)
-      (should-not (herdr-dispatch--worktrees-unanswered))
+      (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "worktree_created" nil)
+      (should-not (herdr-dispatch--worktrees-unanswered (herdr-current-connection)))
       (herdr-dispatch-refresh)
       (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested)))
       (herdr-dispatch-test--reply 0 '((worktrees . (stale))))
-      (should-not (herdr-dispatch--worktrees-answered-p "w1"))
-      (should (herdr-dispatch--worktrees-in-flight-p "w1"))
+      (should-not (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
+      (should (herdr-dispatch--worktrees-in-flight-p (herdr-current-connection) "w1"))
       (herdr-dispatch-refresh)
       (should (equal 4 (length herdr-dispatch-test--async)))
       (herdr-dispatch-test--reply 2 '((worktrees . (fresh))))
-      (should (equal '(fresh) (herdr-dispatch--worktrees-listing "w1"))))))
+      (should (equal '(fresh) (herdr-dispatch--worktrees-listing (herdr-current-connection) "w1"))))))
 
 (ert-deftest herdr-dispatch-a-reply-after-the-buffer-is-killed-is-harmless ()
   "The dashboard can be killed between the request and the reply.
@@ -1458,7 +1466,7 @@ that no longer exists."
       (herdr-dispatch-refresh t)
       (kill-buffer herdr-dispatch-buffer-name)
       (herdr-dispatch-test--reply 0 '((worktrees . nil)))
-      (should (herdr-dispatch--worktrees-answered-p "w1"))
+      (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
       (should-not herdr-dispatch--refresh-timer))))
 
 (ert-deftest herdr-dispatch-a-reply-that-never-comes-is-cured-by-g ()
@@ -1482,8 +1490,8 @@ request for the same workspace here."
   (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
     (herdr-dispatch-test-with-async
       (herdr-dispatch-refresh t)
-      (should (herdr-dispatch--worktrees-in-flight-p "w1"))
-      (should (herdr-dispatch--worktrees-in-flight-p "w2"))
+      (should (herdr-dispatch--worktrees-in-flight-p (herdr-current-connection) "w1"))
+      (should (herdr-dispatch--worktrees-in-flight-p (herdr-current-connection) "w2"))
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested)))
@@ -1493,12 +1501,12 @@ request for the same workspace here."
                      (herdr-dispatch-test--requested)))
       ;; The reply nobody was waiting for any more.
       (herdr-dispatch-test--reply 0 '((worktrees . (stale))))
-      (should-not (herdr-dispatch--worktrees-answered-p "w1"))
-      (should (herdr-dispatch--worktrees-in-flight-p "w1"))
+      (should-not (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
+      (should (herdr-dispatch--worktrees-in-flight-p (herdr-current-connection) "w1"))
       (dotimes (_ 19) (herdr-dispatch-refresh))
       (should (equal 4 (length herdr-dispatch-test--async)))
       (herdr-dispatch-test--reply 2 '((worktrees . (fresh))))
-      (should (equal '(fresh) (herdr-dispatch--worktrees-listing "w1"))))))
+      (should (equal '(fresh) (herdr-dispatch--worktrees-listing (herdr-current-connection) "w1"))))))
 
 (ert-deftest herdr-dispatch-a-dead-server-caches-rather-than-signalling ()
   "Opening the dashboard while herdr is not running is the common failure.
@@ -1520,10 +1528,10 @@ rest of the session after the first failure."
                  (signal 'herdr-error (list "no_server" "not running")))))
       (herdr-dispatch-refresh t)
       (dolist (id '("w1" "w2"))
-        (should (herdr-dispatch--worktrees-answered-p id))
-        (should-not (herdr-dispatch--worktrees-listing id))
-        (should (eq 'error (herdr-dispatch--worktrees-unanswered-reason id)))
-        (should-not (herdr-dispatch--worktrees-in-flight-p id))))
+        (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) id))
+        (should-not (herdr-dispatch--worktrees-listing (herdr-current-connection) id))
+        (should (eq 'error (herdr-dispatch--worktrees-unanswered-reason (herdr-current-connection) id)))
+        (should-not (herdr-dispatch--worktrees-in-flight-p (herdr-current-connection) id))))
     ;; And the dashboard still draws, which is the point of not signalling.
     (should (string-match-p "web" (buffer-string)))))
 
@@ -1540,9 +1548,9 @@ signal reaching us, not its type."
                (lambda (&rest _)
                  (error "process nil: no longer connected to pipe"))))
       (herdr-dispatch-refresh t)
-      (should (herdr-dispatch--worktrees-answered-p "w1"))
-      (should (eq 'error (herdr-dispatch--worktrees-unanswered-reason "w1")))
-      (should-not (herdr-dispatch--worktrees-in-flight-p "w1")))))
+      (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
+      (should (eq 'error (herdr-dispatch--worktrees-unanswered-reason (herdr-current-connection) "w1")))
+      (should-not (herdr-dispatch--worktrees-in-flight-p (herdr-current-connection) "w1")))))
 
 (ert-deftest herdr-dispatch-opening-the-dashboard-forgets-stale-worktrees ()
   "Worktree knowledge does not outlive the buffer it was fetched for.
@@ -1558,16 +1566,14 @@ correct it.
 Returning to a dashboard that is already open is the other half, and it
 must not forget: that would make every invocation of the command a full
 refetch of the session."
-  (herdr-dispatch-test--with-worktrees '(("w1" . (stale)))
-   (let ((herdr-state--current
-          (herdr-state-from-snapshot herdr-dispatch-test--worktree-snapshot))
-         (herdr-state-change-functions nil)
-         (herdr-dispatch--refresh-timer nil))
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot herdr-dispatch-test--worktree-snapshot))
+   (herdr-dispatch-test--with-worktrees '(("w1" . (stale)))
+    (let* ((herdr-state-change-functions nil) (herdr-dispatch--refresh-timer nil))
     (should-not (get-buffer herdr-dispatch-buffer-name))
     (unwind-protect
         (herdr-dispatch-test-with-async
           (save-window-excursion (herdr-agents))
-          (should-not (herdr-dispatch--worktrees-answered-p "w1"))
+          (should-not (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
           (should (equal '("/tmp/web/" "/tmp/api/")
                          (herdr-dispatch-test--requested)))
           ;; Both, so that nothing is left in flight for the forced
@@ -1583,12 +1589,12 @@ refetch of the session."
           (should (equal "/tmp/web-feat"
                          (alist-get 'path
                                     (car (herdr-dispatch--worktrees-listing
-                                          "w1")))))
+                                           (herdr-current-connection) "w1")))))
           (should (equal '("/tmp/web/" "/tmp/api/")
                          (herdr-dispatch-test--requested))))
       (herdr-dispatch--cancel-refresh)
       (when (get-buffer herdr-dispatch-buffer-name)
-        (kill-buffer herdr-dispatch-buffer-name))))))
+        (kill-buffer herdr-dispatch-buffer-name)))))))
 
 (ert-deftest herdr-dispatch-worktree-events-drop-the-cache ()
   "Invalidation clears every record of every worktree, not just the cache.
@@ -1599,11 +1605,11 @@ Anything less leaves a workspace that is neither cached, nor pending, nor
 asked again."
   (herdr-dispatch-test--with-worktrees '(("w1" . (ignored)))
     :pending '("w2") :unanswered '(("w3" . error)) :generation 7
-    (let ((before (herdr-dispatch--worktrees-epoch)))
-      (herdr-dispatch--invalidate-worktrees "worktree_created" nil)
-      (should-not (herdr-dispatch--worktrees-listings))
-      (should-not (herdr-dispatch--worktrees-unanswered))
-      (should-not (equal before (herdr-dispatch--worktrees-epoch))))))
+    (let ((before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
+      (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "worktree_created" nil)
+      (should-not (herdr-dispatch--worktrees-listings (herdr-current-connection)))
+      (should-not (herdr-dispatch--worktrees-unanswered (herdr-current-connection)))
+      (should-not (equal before (herdr-dispatch--worktrees-epoch (herdr-current-connection)))))))
 
 (ert-deftest herdr-dispatch-closing-a-workspace-drops-the-cache ()
   "A worktree listing must not outlive the workspaces it describes.
@@ -1625,15 +1631,15 @@ would then press RET on."
         ("w2" . (((path . "/tmp/sibling") (is_linked_worktree . t)
                   (open_workspace_id . "w1")))))
     :pending '("w3") :unanswered '(("w4" . error)) :generation 7
-    (let ((before (herdr-dispatch--worktrees-epoch)))
-      (herdr-dispatch--invalidate-worktrees "workspace_closed"
+    (let ((before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
+      (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "workspace_closed"
                                             '((workspace_id . "w1")))
-      (should-not (herdr-dispatch--worktrees-answered-p "w1"))
-      (should-not (herdr-dispatch--worktrees-answered-p "w2"))
-      (should-not (herdr-dispatch--worktrees-unanswered))
+      (should-not (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
+      (should-not (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w2"))
+      (should-not (herdr-dispatch--worktrees-unanswered (herdr-current-connection)))
       ;; Requests already on the wire have to be abandoned too, or one
       ;; lands afterwards and writes the entry straight back.
-      (should-not (equal before (herdr-dispatch--worktrees-epoch))))))
+      (should-not (equal before (herdr-dispatch--worktrees-epoch (herdr-current-connection)))))))
 
 (ert-deftest herdr-dispatch-every-worktree-event-drops-the-cache ()
   "Four events change what worktrees exist or where they are open.
@@ -1646,10 +1652,10 @@ was, with nothing to say so."
                   "worktree_removed" "workspace_closed"))
     (herdr-dispatch-test--with-worktrees '(("w1" . (ignored)))
       :generation 7
-      (let ((before (herdr-dispatch--worktrees-epoch)))
-        (herdr-dispatch--invalidate-worktrees kind '((workspace_id . "w1")))
-        (should-not (herdr-dispatch--worktrees-listings))
-        (should-not (equal before (herdr-dispatch--worktrees-epoch)))))))
+      (let ((before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
+        (herdr-dispatch--invalidate-worktrees (herdr-current-connection) kind '((workspace_id . "w1")))
+        (should-not (herdr-dispatch--worktrees-listings (herdr-current-connection)))
+        (should-not (equal before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))))))
 
 (ert-deftest herdr-dispatch-worktree-invalidation-unhooks-with-the-buffer ()
   "Left on the hook after the dashboard dies, this goes on dropping a
@@ -1660,11 +1666,11 @@ cache nothing reads and making the next open re-ask for every workspace."
          (buffer (get-buffer-create herdr-dispatch-buffer-name)))
     (unwind-protect
         (progn
-          (herdr-dispatch--invalidate-worktrees "pane_updated" nil)
+          (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "pane_updated" nil)
           (should (memq #'herdr-dispatch--invalidate-worktrees
                         herdr-state-change-functions))
           (kill-buffer buffer)
-          (herdr-dispatch--invalidate-worktrees "pane_updated" nil)
+          (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "pane_updated" nil)
           (should-not (memq #'herdr-dispatch--invalidate-worktrees
                             herdr-state-change-functions)))
       (when (buffer-live-p buffer) (kill-buffer buffer))))))
@@ -1685,34 +1691,34 @@ or every visit pays for a full re-fetch."
         (when buffer (kill-buffer buffer)))
       (herdr-dispatch-test--with-worktrees '(("w1" . (stale)))
         :generation 3
-        (let ((before (herdr-dispatch--worktrees-epoch)))
+        (let ((before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
          (unwind-protect
             (progn
               (herdr-agents)
-              (should-not (herdr-dispatch--worktrees-listings))
-              (should-not (equal before (herdr-dispatch--worktrees-epoch)))
+              (should-not (herdr-dispatch--worktrees-listings (herdr-current-connection)))
+              (should-not (equal before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
               ;; The buffer it made has to be a dispatcher, or every key
               ;; the dashboard binds lands in fundamental-mode.
               (should (with-current-buffer herdr-dispatch-buffer-name
                         (derived-mode-p 'herdr-dispatch-mode)))
               ;; Already open: reopening keeps what is known.
               (herdr-dispatch-test--with-worktrees '(("w1" . (fresh)))
-                :generation (herdr-dispatch--worktrees-epoch)
-                (let ((kept (herdr-dispatch--worktrees-epoch)))
+                :generation (herdr-dispatch--worktrees-epoch (herdr-current-connection))
+                (let ((kept (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
                   (herdr-agents)
                   (should (equal '(fresh)
-                                 (herdr-dispatch--worktrees-listing "w1")))
-                  (should (equal kept (herdr-dispatch--worktrees-epoch))))))
+                                 (herdr-dispatch--worktrees-listing (herdr-current-connection) "w1")))
+                  (should (equal kept (herdr-dispatch--worktrees-epoch (herdr-current-connection)))))))
           (let ((buffer (get-buffer herdr-dispatch-buffer-name)))
             (when buffer (kill-buffer buffer)))))))))
 
 (ert-deftest herdr-dispatch-unrelated-events-keep-the-cache ()
   (herdr-dispatch-test--with-worktrees '(("w1" . (ignored)))
     :generation 7
-    (let ((before (herdr-dispatch--worktrees-epoch)))
-      (herdr-dispatch--invalidate-worktrees "pane_updated" nil)
-      (should (herdr-dispatch--worktrees-listings))
-      (should (equal before (herdr-dispatch--worktrees-epoch))))))
+    (let ((before (herdr-dispatch--worktrees-epoch (herdr-current-connection))))
+      (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "pane_updated" nil)
+      (should (herdr-dispatch--worktrees-listings (herdr-current-connection)))
+      (should (equal before (herdr-dispatch--worktrees-epoch (herdr-current-connection)))))))
 
 (ert-deftest herdr-dispatch-refresh-draws-a-populated-worktrees-cache ()
   "The worktrees branch of the renderer, exercised end-to-end.
@@ -1722,15 +1728,14 @@ hand-written fixture, and the cache is empty in all of them,
 so nothing has ever pushed a real cache entry through
 `herdr-dispatch-refresh' -> `herdr-tree-build' -> the renderer.  This
 closes that gap."
-  (herdr-dispatch-test--with-worktrees
-      '(("w1" . (((path . "/tmp/web-feat")
-                  (is_linked_worktree . t)
-                  (branch . "feat/x")
-                  (label . "feat/x")
-                  (open_workspace_id . nil)))))
-   (let ((herdr-state--current
-          (herdr-state-from-snapshot herdr-dispatch-test--snapshot))
-         (buffer (get-buffer-create herdr-dispatch-buffer-name)))
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot herdr-dispatch-test--snapshot))
+   (herdr-dispatch-test--with-worktrees
+       '(("w1" . (((path . "/tmp/web-feat")
+                   (is_linked_worktree . t)
+                   (branch . "feat/x")
+                   (label . "feat/x")
+                   (open_workspace_id . nil)))))
+    (let* ((buffer (get-buffer-create herdr-dispatch-buffer-name)))
     (unwind-protect
         (with-current-buffer buffer
           (herdr-dispatch-mode)
@@ -1740,7 +1745,7 @@ closes that gap."
                       (herdr-dispatch-test--type-at "main (")))
           (should (eq 'herdr-worktree
                       (herdr-dispatch-test--type-at "feat/x"))))
-      (kill-buffer buffer)))))
+      (kill-buffer buffer))))))
 
 (ert-deftest herdr-dispatch-tab-fetches-nothing ()
   "TAB is the plain section toggle, and reaches the server not at all.
@@ -1934,8 +1939,8 @@ The status is the one `herdr-dispatch-test--snapshot' already gives
 `w1:p1', so a sequence of these differs in the title and in nothing
 else — which is the whole point, and is not true of an event that
 quietly changes the status as well."
-  (setq herdr-state--current
-        (herdr-state-reduce herdr-state--current "pane_updated"
+  (setf (herdr-connection-cache (herdr-current-connection))
+        (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_updated"
                             `((pane . ((pane_id . ,id)
                                        (agent . "claude")
                                        (agent_status . "blocked")
@@ -2131,7 +2136,8 @@ attempted here -- `file-remote-p' answers from the name alone."
   "The filter runs where project.el's answer enters the dashboard, so
 everything downstream -- the `Inactive' rows and the `worktree.list'
 round trip each one would otherwise cost -- sees only live roots."
-  (let ((directory (make-temp-file "herdr-dispatch-test-" t)))
+  (let ((directory (make-temp-file "herdr-dispatch-test-" t))
+        (herdr-dispatch-show-known-projects t))
     (unwind-protect
         (cl-letf (((symbol-function 'project-known-project-roots)
                    (lambda () (list directory
@@ -2140,13 +2146,24 @@ round trip each one would otherwise cost -- sees only live roots."
                          (herdr-dispatch--known-project-roots))))
       (delete-directory directory t))))
 
+(ert-deftest herdr-dispatch-known-projects-are-off-until-asked-for ()
+  "The list grows with every project visited and never shrinks, so it is
+soon longer than the session it sits under — and each root costs an
+asynchronous `worktree.list' every time the cache is forgotten."
+  (cl-letf (((symbol-function 'project-known-project-roots)
+             (lambda () (list "/tmp"))))
+    (let ((herdr-dispatch-show-known-projects nil))
+      (should-not (herdr-dispatch--known-project-roots)))
+    (let ((herdr-dispatch-show-known-projects t))
+      (should (equal '("/tmp") (herdr-dispatch--known-project-roots))))))
+
 (defconst herdr-dispatch-test--known-project-nodes
   '((herdr-known-project "/tmp/other-project/" "other-project (0)  /tmp/other-project/" nil))
   "One `herdr-known-project\\=' row, for the tests below.")
 
 (ert-deftest herdr-dispatch-visit-creates-a-workspace-for-a-known-project ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (let ((herdr-state--current (herdr-state-empty)))
+    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty)))))
       (search-forward "other-project (0)")
       ;; `focus' rides on the create: without it the workspace is made
       ;; but not focused, and going to "wherever the server is now"
@@ -2170,11 +2187,10 @@ render can be one poll tick behind by the time RET lands — this is the
 same TOCTOU `herdr-state-workspace-for-directory' exists to close, and
 the test that would catch losing the check."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((workspaces . (((workspace_id . "w9"))))
               (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
-                         (cwd . "/tmp/other-project"))))))))
+                         (cwd . "/tmp/other-project")))))))
       (search-forward "other-project (0)")
       (should (equal '((herdr-rpc-call "workspace.focus"
                                        ((workspace_id . "w9")))
@@ -2209,8 +2225,8 @@ tests that type before `herdr-known-project\\=', so it used to reach
 not being a linked worktree.  The guard is right; the row had no
 business arriving at it."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
-    (herdr-dispatch-test--with-worktrees herdr-dispatch-test--main-checkout-worktrees
-     (let ((herdr-state--current (herdr-state-empty)))
+    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty)))))
+     (herdr-dispatch-test--with-worktrees herdr-dispatch-test--main-checkout-worktrees
       (search-forward "main")
       (should (equal '((herdr-rpc-call "workspace.create"
                                        ((cwd . "/tmp/other-project/")
@@ -2227,12 +2243,11 @@ business arriving at it."
 poll behind, and a second workspace for one directory is the bug
 `herdr-state-workspace-for-directory\\=' exists to prevent."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
-    (herdr-dispatch-test--with-worktrees herdr-dispatch-test--main-checkout-worktrees
-     (let ((herdr-state--current
-            (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
              '((workspaces . (((workspace_id . "w9"))))
                (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
-                          (cwd . "/tmp/other-project"))))))))
+                          (cwd . "/tmp/other-project")))))))
+     (herdr-dispatch-test--with-worktrees herdr-dispatch-test--main-checkout-worktrees
       (search-forward "main")
       (should (equal '((herdr-rpc-call "workspace.focus" ((workspace_id . "w9")))
                        (herdr-term-select-focused))
@@ -2246,8 +2261,8 @@ poll behind, and a second workspace for one directory is the bug
 A row whose record cannot be found says so; it does not get treated as a
 checkout and opened."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
-    (herdr-dispatch-test--with-worktrees nil
-     (let ((herdr-state--current (herdr-state-empty)))
+    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty)))))
+     (herdr-dispatch-test--with-worktrees nil
       (search-forward "main")
       (should (equal nil
                      (herdr-dispatch-test-with-recorders
@@ -2516,6 +2531,7 @@ checkout, which is a different problem with a different fix."
       (search-forward "open as w2")
       (let ((message (cadr (should-error
                             (herdr-dispatch--checked-worktree
+                             (herdr-current-connection)
                              (herdr-dispatch-target-at-point))
                             :type 'user-error))))
         (should (string-match-p "no worktree listing" message))
@@ -2641,7 +2657,7 @@ ancestor must not stop it firing when point really is on the heading."
   "tab.create takes a workspace_id rather than a pane to split into."
   (let ((params nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method p) (setq params p) nil))
+               (lambda (_connection _method p) (setq params p) nil))
               ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
       (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
         (search-forward "w1:p2")
@@ -2658,9 +2674,8 @@ Only `n\\='.  The target\\='s WORKSPACE stays the section it sits in, because
 `w\\=' and `%\\=' create things against a workspace on screen and must refuse
 a row that shows none - reaching through a record for one would make `%\\='
 build a worktree for a workspace the row never named."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot
-          '((panes . (((pane_id . "w9:p1") (workspace_id . "w9"))))))))
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+          '((panes . (((pane_id . "w9:p1") (workspace_id . "w9")))))))
     (herdr-dispatch-test-with-buffer
         '((herdr-pane "w9:p1" "orphan pane w9:p1" nil))
       (search-forward "w9:p1")
@@ -2676,6 +2691,7 @@ where the verb it replaced said which row you needed."
     (should (equal "herdr: point is not on a worktree"
                    (condition-case err
                        (herdr-dispatch--checked-worktree
+                        (herdr-current-connection)
                         (herdr-dispatch-target-at-point))
                      (user-error (error-message-string err)))))))
 
@@ -2703,7 +2719,7 @@ than inherited from `herdr-worktree-create\\='."
   (let ((params nil)
         (prompts nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method p) (setq params p) nil))
+               (lambda (_connection _method p) (setq params p) nil))
               ((symbol-function 'herdr-state-workspace-directory)
                (lambda (_state _id) "/tmp/herdr.el/"))
               ((symbol-function 'read-string)
@@ -2727,7 +2743,7 @@ than inherited from `herdr-worktree-create\\='."
 than the current HEAD."
   (let ((params nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method p) (setq params p) nil))
+               (lambda (_connection _method p) (setq params p) nil))
               ((symbol-function 'herdr-state-workspace-directory)
                (lambda (_state _id) "/tmp/herdr.el/"))
               ((symbol-function 'read-string)
@@ -2796,8 +2812,7 @@ Real state rather than mocked accessors, for the reason given in
 (defmacro herdr-dispatch-test-with-start-tree (&rest body)
   "Render the agent-start fixture over its own state and run BODY there."
   (declare (indent 0) (debug t))
-  `(let ((herdr-state--current
-          (herdr-state-from-snapshot herdr-dispatch-test--start-snapshot)))
+  `(herdr-test-with-state (:cache (herdr-state-from-snapshot herdr-dispatch-test--start-snapshot))
      (herdr-dispatch-test-with-buffer herdr-dispatch-test--start-nodes
        ,@body)))
 
@@ -2805,7 +2820,7 @@ Real state rather than mocked accessors, for the reason given in
   "A pane row resolves through its own record to its workspace."
   (let ((workspace-id nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method params)
+               (lambda (_connection _method params)
                  (setq workspace-id (alist-get 'workspace_id params))
                  '((root_pane . ((pane_id . "w1:p9"))))))
               ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
@@ -2844,12 +2859,12 @@ server has focused, so `n\\=' here used to open a terminal in some other
 repository.  Nothing is open at this directory, so its root pane is what
 gets followed."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (let ((herdr-state--current (herdr-state-empty))
+    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty))))
           (calls nil)
           (followed nil))
       (search-forward "other-project (0)")
       (cl-letf (((symbol-function 'herdr-rpc-call)
-                 (lambda (method params)
+                 (lambda (_connection method params)
                    (push (cons method params) calls)
                    '((root_pane . ((pane_id . "w7:p1"))))))
                 ((symbol-function 'herdr-cmd--follow-new-pane)
@@ -2865,15 +2880,13 @@ gets followed."
   "The row can be a poll tick stale; creating a second workspace for the
 same directory is what `herdr-state-workspace-for-directory\\=' prevents."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((workspaces . (((workspace_id . "w9"))))
               (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
-                         (cwd . "/tmp/other-project")))))))
-          (calls nil))
+                         (cwd . "/tmp/other-project")))))))(let* ((calls nil))
       (search-forward "other-project (0)")
       (cl-letf (((symbol-function 'herdr-rpc-call)
-                 (lambda (method params)
+                 (lambda (_connection method params)
                    (push (cons method params) calls)
                    '((root_pane . ((pane_id . "w9:p2"))))))
                 ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
@@ -2881,7 +2894,7 @@ same directory is what `herdr-state-workspace-for-directory\\=' prevents."
       (should (equal '(("tab.create" . ((workspace_id . "w9")
                                         (cwd . nil)
                                         (focus . t))))
-                     (reverse calls))))))
+                     (reverse calls)))))))
 
 (ert-deftest herdr-dispatch-create-terminal-prefers-a-worktree-row-to-its-repository ()
   "Walking up would open the terminal in the repository the user was
@@ -2890,22 +2903,20 @@ pointing past."
       '((herdr-workspace "w1" "herdr.el (2)"
          ((herdr-panes "w1" "main (1)" ((herdr-pane "w1:p1" "claude" nil)))
           (herdr-worktree "/tmp/herdr.el-fix/" "fix" nil))))
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((workspaces . (((workspace_id . "w1"))))
               (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
-                         (cwd . "/tmp/herdr.el")))))))
-          (calls nil))
+                         (cwd . "/tmp/herdr.el")))))))(let* ((calls nil))
       (search-forward "fix")
       (cl-letf (((symbol-function 'herdr-rpc-call)
-                 (lambda (method params)
+                 (lambda (_connection method params)
                    (push (cons method params) calls)
                    '((root_pane . ((pane_id . "w8:p1"))))))
                 ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
         (herdr-dispatch-create-terminal))
       (should (equal "workspace.create" (car (car (reverse calls)))))
       (should (equal "/tmp/herdr.el-fix/"
-                     (alist-get 'cwd (cdr (car (reverse calls)))))))))
+                     (alist-get 'cwd (cdr (car (reverse calls))))))))))
 
 (ert-deftest herdr-dispatch-create-terminal-refuses-a-heading-that-names-no-place ()
   "The `Inactive (N)\\=' heading and the header line name no place, and a
@@ -2930,7 +2941,7 @@ underneath — but `tab.create\\=' needs a workspace id, not a pane, and the
 heading is that id directly."
   (let ((params nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
-               (lambda (_method p) (setq params p) nil))
+               (lambda (_connection _method p) (setq params p) nil))
               ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
       (herdr-dispatch-test-with-start-tree
         (search-forward "herdr.el")
@@ -2998,18 +3009,18 @@ this fails if the constructor ever starts decorating its keys."
   "A repository with no worktrees caches as an entry whose value is nil
 and must not be asked again, which is why every guard uses `assoc'."
   (herdr-dispatch-test--with-worktrees '(("w1" . nil))
-    (should (herdr-dispatch--worktrees-answered-p "w1"))
-    (should-not (herdr-dispatch--worktrees-listing "w1"))
-    (should-not (herdr-dispatch--worktrees-wanted-p "w1"))))
+    (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
+    (should-not (herdr-dispatch--worktrees-listing (herdr-current-connection) "w1"))
+    (should-not (herdr-dispatch--worktrees-wanted-p (herdr-current-connection) "w1"))))
 
 (ert-deftest herdr-dispatch-a-key-never-asked-is-wanted ()
   (herdr-dispatch-test--with-worktrees nil
-    (should-not (herdr-dispatch--worktrees-answered-p "w1"))
-    (should (herdr-dispatch--worktrees-wanted-p "w1"))))
+    (should-not (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
+    (should (herdr-dispatch--worktrees-wanted-p (herdr-current-connection) "w1"))))
 
 (ert-deftest herdr-dispatch-a-key-in-flight-is-not-wanted-again ()
   (herdr-dispatch-test--with-worktrees nil :pending '("w1")
-    (should-not (herdr-dispatch--worktrees-wanted-p "w1"))))
+    (should-not (herdr-dispatch--worktrees-wanted-p (herdr-current-connection) "w1"))))
 
 (ert-deftest herdr-dispatch-unanswered-covers-all-three-categories ()
   "Errored, no-directory, and still in flight.  The third is easy to omit
@@ -3018,7 +3029,7 @@ thing that can rescue an in-flight request before its timeout."
   (herdr-dispatch-test--with-worktrees '(("w1" . nil) ("w2" . nil) ("w4" . (found)))
     :pending '("w3")
     :unanswered '(("w1" . error) ("w2" . no-directory))
-    (let ((unanswered (herdr-dispatch--worktrees-unanswered)))
+    (let ((unanswered (herdr-dispatch--worktrees-unanswered (herdr-current-connection))))
       (should (member "w1" unanswered))
       (should (member "w2" unanswered))
       (should (member "w3" unanswered))
@@ -3029,25 +3040,25 @@ thing that can rescue an in-flight request before its timeout."
 one waits for the keystroke.  Collapsing the two loses that."
   (herdr-dispatch-test--with-worktrees '(("w1" . nil) ("w2" . nil))
     :unanswered '(("w1" . error) ("w2" . no-directory))
-    (should (eq 'error (herdr-dispatch--worktrees-unanswered-reason "w1")))
-    (should (eq 'no-directory (herdr-dispatch--worktrees-unanswered-reason "w2")))
-    (should-not (herdr-dispatch--worktrees-unanswered-reason "w9"))))
+    (should (eq 'error (herdr-dispatch--worktrees-unanswered-reason (herdr-current-connection) "w1")))
+    (should (eq 'no-directory (herdr-dispatch--worktrees-unanswered-reason (herdr-current-connection) "w2")))
+    (should-not (herdr-dispatch--worktrees-unanswered-reason (herdr-current-connection) "w9"))))
 
 (ert-deftest herdr-dispatch-a-forced-retry-keeps-a-genuinely-empty-answer ()
   (herdr-dispatch-test--with-worktrees '(("w1" . nil) ("w2" . nil))
     :unanswered '(("w1" . error))
-    (herdr-dispatch--retry-unanswered-worktrees)
-    (should-not (herdr-dispatch--worktrees-answered-p "w1"))
-    (should (herdr-dispatch--worktrees-answered-p "w2"))
-    (should-not (herdr-dispatch--worktrees-unanswered))))
+    (herdr-dispatch--retry-unanswered-worktrees (herdr-current-connection))
+    (should-not (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
+    (should (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w2"))
+    (should-not (herdr-dispatch--worktrees-unanswered (herdr-current-connection)))))
 
 (ert-deftest herdr-dispatch-a-path-resolves-through-any-listing ()
   "A worktree row knows its path and not which listing answered for it,
 so the search flattens every listing together."
   (herdr-dispatch-test--with-worktrees
       '(("w1" . (((path . "/tmp/a/")))) ("w2" . (((path . "/tmp/b/")))))
-    (should (equal '((path . "/tmp/b/")) (herdr-dispatch--worktree-record "/tmp/b/")))
-    (should-not (herdr-dispatch--worktree-record "/tmp/missing/"))))
+    (should (equal '((path . "/tmp/b/")) (herdr-dispatch--worktree-record (herdr-current-connection) "/tmp/b/")))
+    (should-not (herdr-dispatch--worktree-record (herdr-current-connection) "/tmp/missing/"))))
 
 (ert-deftest herdr-dispatch-an-event-that-changes-worktrees-is-stale-making ()
   "`workspace_closed' belongs on the list even though it announces no
@@ -3057,6 +3068,198 @@ worktree: every other listing carries `open_workspace_id'."
     (should (herdr-dispatch--worktrees-stale-p kind)))
   (dolist (kind '("pane_updated" "workspace_renamed" "resync"))
     (should-not (herdr-dispatch--worktrees-stale-p kind))))
+
+(ert-deftest herdr-dispatch-two-connections-do-not-share-worktrees ()
+  "Ids are per-server counters, so two servers can each answer for a `w1'.
+One cache holding both would draw one server's worktrees under the
+other's workspace, which is the whole reason the cache moved into the
+connection."
+  (let ((one (herdr-test-connection))
+        (two (herdr-test-connection)))
+    (herdr-dispatch--worktrees-received
+     one "w1" (herdr-dispatch--worktrees-epoch one)
+     '(((path . "/tmp/one-feat"))) nil)
+    (should (herdr-dispatch--worktrees-answered-p one "w1"))
+    (should-not (herdr-dispatch--worktrees-answered-p two "w1"))
+    (should (herdr-dispatch--worktrees-wanted-p two "w1"))
+    (herdr-dispatch--forget-worktrees two)
+    (should (herdr-dispatch--worktrees-answered-p one "w1"))))
+
+(ert-deftest herdr-dispatch-two-connections-do-not-share-a-worktree-epoch ()
+  "The epoch drops replies invalidated in flight.  Shared, one server's
+invalidation would throw away another's answer as though it were stale."
+  (let ((one (herdr-test-connection))
+        (two (herdr-test-connection))
+        (kept nil))
+    (setq kept (herdr-dispatch--worktrees-epoch one))
+    (herdr-dispatch--forget-worktrees two)
+    (should (equal kept (herdr-dispatch--worktrees-epoch one)))
+    (should-not (equal kept (herdr-dispatch--worktrees-epoch two)))))
+
+(ert-deftest herdr-dispatch-a-path-resolves-only-within-its-own-server ()
+  "A path is a path on some machine.  Two servers can each hold a
+`~/workspace/repo', and they are not the same directory or the same
+repository — so a row's path must be looked up in the listings of the
+connection the row came from and nowhere else."
+  (let ((one (herdr-test-connection))
+        (two (herdr-test-connection)))
+    (setf (herdr-connection-worktrees one)
+          '(("w1" . (((path . "/tmp/repo/") (branch . "on-one")))))
+          (herdr-connection-worktrees two)
+          '(("w1" . (((path . "/tmp/repo/") (branch . "on-two"))))))
+    (should (equal "on-one"
+                   (herdr-worktree-branch
+                    (herdr-dispatch--worktree-record one "/tmp/repo/"))))
+    (should (equal "on-two"
+                   (herdr-worktree-branch
+                    (herdr-dispatch--worktree-record two "/tmp/repo/"))))
+    ;; A path only the other server has is not found here.
+    (setf (herdr-connection-worktrees two)
+          '(("w1" . (((path . "/tmp/only-on-two/"))))))
+    (should-not (herdr-dispatch--worktree-record one "/tmp/only-on-two/"))))
+
+(ert-deftest herdr-dispatch-a-target-carries-the-server-its-row-came-from ()
+  "A verb acts on the server the row came from.  Carrying the value on
+and letting something else decide where to send it is how a command ends
+up acting on whichever server the user looked at next."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "w1")
+    (let ((target (herdr-dispatch-target-at-point)))
+      (should (herdr-connection-p (herdr-dispatch-target-connection target)))
+      (should (eq (herdr-current-connection)
+                  (herdr-dispatch-target-connection target))))))
+
+(ert-deftest herdr-dispatch-answers-the-resolver-from-the-dashboard ()
+  "A verb invoked by name rather than through the target resolver still
+has to reach the server the row came from, which is what the resolver
+hook is for.  Outside the dashboard it says nothing and falls through."
+  (should (memq #'herdr-dispatch--resolve-connection
+                herdr-connection-resolvers))
+  (with-temp-buffer
+    (should-not (herdr-dispatch--resolve-connection)))
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
+    (search-forward "w1")
+    (should (eq (herdr-current-connection)
+                (herdr-dispatch--resolve-connection)))))
+
+;;; One dashboard, several servers
+
+(defmacro herdr-dispatch-test--with-two-servers (&rest body)
+  "Run BODY with two connections whose servers issued the same ids.
+Binds ONE and TWO, and draws the dashboard from both."
+  (declare (indent 0) (debug t))
+  `(let* ((one (herdr-test-connection
+                (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w1") (label . "on-one"))))
+                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (agent . "claude"))))))))
+          (two (herdr-test-connection
+                (herdr-state-from-snapshot
+                 '((workspaces . (((workspace_id . "w1") (label . "on-two"))))
+                   (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (agent . "codex"))))))))
+          (herdr-connections (list (cons "one" one) (cons "two" two)))
+          (herdr-dispatch--refresh-timer nil)
+          (herdr-dispatch-show-known-projects nil)
+          (buffer (get-buffer-create herdr-dispatch-buffer-name)))
+     (setf (herdr-connection-name one) "one"
+           (herdr-connection-name two) "two"
+           (herdr-connection-running one) t
+           (herdr-connection-running two) t)
+     (unwind-protect
+         (cl-letf (((symbol-function 'herdr-dispatch--request-worktrees) #'ignore)
+                   ((symbol-function
+                     'herdr-dispatch--request-known-project-worktrees)
+                    #'ignore))
+           (with-current-buffer buffer
+             (herdr-dispatch-mode)
+             (herdr-dispatch-refresh t)
+             ,@body))
+       (herdr-dispatch--cancel-refresh)
+       (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest herdr-dispatch-two-servers-render-as-two-subtrees ()
+  "Both servers issued `w1' and `w1:p1'.  One flat tree would draw them
+as one workspace, and whichever verb ran would reach whichever server
+answered last."
+  (herdr-dispatch-test--with-two-servers
+    (let ((text (buffer-string)))
+      (should (string-match-p "^one" text))
+      (should (string-match-p "^two" text))
+      (should (string-match-p "on-one" text))
+      (should (string-match-p "on-two" text)))
+    ;; The header counts across both.
+    (should (string-match-p "2 servers" herdr-dispatch--rendered-header))
+    (should (string-match-p "2 workspaces" herdr-dispatch--rendered-header))))
+
+(ert-deftest herdr-dispatch-a-row-resolves-to-the-server-it-came-from ()
+  "The guard this unit owes: a colliding id has to reach the connection
+whose subtree the row sits in, not whichever the resolver would answer."
+  (herdr-dispatch-test--with-two-servers
+    (goto-char (point-min))
+    (search-forward "on-one")
+    (let ((target (herdr-dispatch-target-at-point)))
+      (should (eq one (herdr-dispatch-target-connection target)))
+      (should (equal "on-one" (herdr-workspace-label
+                               (herdr-dispatch-target-record target)))))
+    (goto-char (point-min))
+    (search-forward "on-two")
+    (let ((target (herdr-dispatch-target-at-point)))
+      (should (eq two (herdr-dispatch-target-connection target)))
+      (should (equal "on-two" (herdr-workspace-label
+                               (herdr-dispatch-target-record target)))))
+    ;; And a verb invoked by name reaches the same one.
+    (goto-char (point-min))
+    (search-forward "on-two")
+    (should (eq two (herdr-current-connection)))))
+
+(ert-deftest herdr-dispatch-one-connection-draws-no-server-level ()
+  "Nobody following one server should see a row that says nothing."
+  (let* ((connection (herdr-test-connection
+                      (herdr-state-from-snapshot
+                       '((workspaces . (((workspace_id . "w1")
+                                         (label . "solo")))))))))
+    (setf (herdr-connection-name connection) "local")
+    (let ((herdr-connections (herdr-test-connections connection))
+          (herdr-dispatch-show-known-projects nil))
+      (let ((tree (herdr-dispatch--tree (herdr-connection-list))))
+        (should-not (seq-find (lambda (node) (eq 'herdr-server (car node)))
+                              tree))
+        (should (eq 'herdr-workspace (car (car tree)))))
+      (should-not (string-match-p
+                   "servers" (herdr-dispatch--header
+                              (herdr-connection-list)))))))
+
+(ert-deftest herdr-dispatch-a-server-that-is-down-is-drawn-as-itself ()
+  "An empty dashboard and an unreachable server are different facts, and
+a row that vanishes when a laptop sleeps tells you the wrong one."
+  (herdr-dispatch-test--with-two-servers
+    (setf (herdr-connection-running two) nil
+          (herdr-connection-cache two) (herdr-state-empty))
+    (herdr-dispatch-refresh t)
+    (let ((text (buffer-string)))
+      (should (string-match-p "^two  not connected" text))
+      ;; The other is still fully there.
+      (should (string-match-p "on-one" text)))
+    ;; And still navigable.
+    (goto-char (point-min))
+    (search-forward "on-one")
+    (should (eq one (herdr-dispatch-target-connection
+                     (herdr-dispatch-target-at-point))))))
+
+(ert-deftest herdr-dispatch-a-known-root-belongs-to-one-connection ()
+  "A root is a path on some machine.  Asking every connection about every
+root is how one server's projects reached another, and how two servers
+holding the same path became indistinguishable."
+  (let* ((local (herdr-connection--make :name "local"))
+         (remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
+         (herdr-dispatch-show-known-projects t))
+    (cl-letf (((symbol-function 'herdr-dispatch--known-project-roots)
+               (lambda () '("/srv/here/" "/ssh:shadow:/srv/there/"
+                            "/ssh:elsewhere:/srv/other/"))))
+      (should (equal '("/srv/here/") (herdr-dispatch--roots-for local)))
+      (should (equal '("/ssh:shadow:/srv/there/")
+                     (herdr-dispatch--roots-for remote))))))
 
 (provide 'herdr-dispatch-test)
 ;;; herdr-dispatch-test.el ends here

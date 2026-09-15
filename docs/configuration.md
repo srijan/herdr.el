@@ -12,7 +12,7 @@ herdr.el binds no key. `herdr-command-map` is a prefix keymap that you bind your
 |---|---|---|
 | `herdr-socket-path` | `"~/.config/herdr/herdr.sock"` | The path to the unix socket of the server. |
 | `herdr-executable` | `"herdr"` | The name of the herdr program, or the path to it. |
-| `herdr-protocol-version` | `20` | The protocol version that this package targets. |
+| `herdr-protocol-version` | `22` | The protocol version that this package targets. |
 | `herdr-rpc-timeout` | `10.0` | The number of seconds to wait for a synchronous response. |
 | `herdr-rpc-background-timeout` | `2.0` | The number of seconds that a background call can block Emacs. |
 | `herdr-server-start-timeout` | `15.0` | The number of seconds to wait for a new server to answer. |
@@ -23,6 +23,131 @@ waits for 2 seconds only.
 
 Change `herdr-protocol-version` only to stop the mismatch warning. The value does not change
 what herdr.el sends.
+
+## Remote servers
+
+A remote server is a herdr server on another machine, reached over SSH. Connect to one with
+`M-x herdr-connect-remote` and stop following it with `M-x herdr-disconnect`.
+
+If you have saved machines with `herdr machine add`, the command offers them by label and
+takes the target and the session from the catalog. Anything you type that is not one of those
+labels is read as an SSH target and asked about in full, so a machine nobody saved is no
+harder to reach than it was. With no saved machines the command asks for a target, a name and
+optionally a herdr session on that host.
+
+| Option | Default | Function |
+|---|---|---|
+| `herdr-connection-socket-directory` | `"/tmp/herdr-<uid>"` | Where the local end of each forwarded socket is bound. |
+| `herdr-connection-tunnel-timeout` | `10.0` | The number of seconds to wait for a forwarded socket to answer. |
+| `herdr-connection-tunnel-poll` | `0.5` | The number of seconds between attempts while the forward comes up. |
+
+Nothing connects when Emacs starts. A connection is made when you ask for one and then kept,
+retried while you still want it, and stopped when you disconnect.
+
+The SSH target is passed to `ssh` untouched, so a bare host, a `user@host` and an alias from
+your SSH config all work. Two accounts on one machine are two connections like any others:
+they have different home directories, so herdr puts their sockets in different places and
+they may be running different versions of herdr.
+
+### How it reaches the server
+
+herdr's control socket is a unix socket, and Emacs cannot open one on another machine. So the
+remote socket is forwarded to a local one with `ssh -N -L`, and the rest of herdr.el is
+unchanged: it opens a unix socket either way.
+
+The remote path is read off the remote host, by running `herdr session list --json` there. It
+is not guessed from `herdr-socket-path`: that default contains a `~`, and expanding it here
+would send a macOS client looking for a `/Users/...` path on a Linux server. Running that
+command is also the only check that herdr is installed on the far host at all — the forward
+itself cannot tell, because `ssh` dials the path it is given without looking at what is
+behind it.
+
+Terminals do not use the tunnel. A remote pane's terminal buffer gets a TRAMP
+`default-directory`, and the terminal client runs on the remote host, which is how it reaches
+a pane that is running there.
+
+The path to herdr on the remote host is resolved at the same time, with `command -v herdr`,
+and the terminal client is run by that absolute path. `herdr-executable` is not used for a
+remote connection: TRAMP runs remote commands under `tramp-remote-path` rather than your
+login PATH, so a herdr installed in `~/.local/bin` is found by `ssh host herdr` and not by
+the terminal client. An absolute path needs no PATH at all.
+
+### When it does not work
+
+A connection is reported up only once a ping answers through the forward. The local socket
+appearing proves only that `ssh` bound it, which it does before speaking to the far host at
+all. Each of these is something herdr.el observed, and it does not guess past them:
+
+| What you see | What it means |
+|---|---|
+| `ssh_failed`, with what `ssh` printed | SSH did not connect. Its own message is the diagnosis. |
+| `no_herdr` | SSH connected and the far host did not say where its herdr is. Usually herdr is not installed there. |
+| `bad_answer` | The far host answered and its answer would not parse. |
+| `no_such_session` | That host runs herdr, and has no session by that name. |
+| `ssh_exited` | The forward's `ssh` exited while the connection was being made. |
+| `no_answer` | The forward is up and the socket did not answer. Usually no herdr server is running on that host. |
+| `not_herdr` | Something answered on that socket and it was not a herdr server. |
+
+`wrong_host` is a different class: it means a path was about to cross to the wrong machine, and
+herdr.el refused rather than guess. Two accounts on one host count as two machines, because they
+have different home directories and different herdr sockets.
+
+On a host with SELinux enforcing — Fedora and RHEL by default — `sshd` is refused access to a
+socket in `~/.config`, which is where herdr puts it. The connection then reports `no_answer`
+and `ssh` logs `channel N: open failed: connect failed`. Relabelling the socket lets it
+through:
+
+```sh
+chcon -t user_tmp_t ~/.config/herdr/herdr.sock
+```
+
+That does not survive the socket being recreated, so it is a workaround rather than a fix.
+
+### Saved machines
+
+`herdr machine` is herdr's own catalog of SSH machines, holding a label, a target, an optional
+session and an enabled flag:
+
+```sh
+herdr machine add shadow --label shadow --remote-session work
+herdr machine list --json
+```
+
+herdr.el reads it and never writes it. A disabled machine is not offered. A herdr with no
+`machine` subcommand, a catalog that will not parse and an empty one are all the same answer,
+and you name a target directly as before.
+
+The catalog is client-side and per-machine: the socket API has no `machine` method, and each
+machine keeps its own server and its own socket, so following several servers still means
+several connections. Your laptop's machine list is not the list on the machines it reaches.
+
+A profile keeps its id when you rename it. Reconnecting to a renamed machine answers with the
+connection already being followed, under its new name, rather than opening a second tunnel to
+the same server.
+
+### What changes once there are two
+
+Following one server looks exactly as it did. A second one changes three surfaces, and only
+while it is connected:
+
+- The dashboard grows an outer level, one row per server, named and foldable. A server that is
+  down keeps its row, dimmed, rather than disappearing.
+- Pickers offer every server's panes, workspaces and projects at once, each row ending in
+  `@name`. That name is part of the candidate, so it can be typed: `claude shadow` narrows to
+  the agents on `shadow`.
+- The modeline counts across every connection.
+
+Choosing a row says which server the command means, even when you typed it in a terminal
+buffer belonging to another one. Where nothing was chosen and nothing on screen says, a
+command means the local server.
+
+Known projects belong to the machine their path is on. A plain path is asked of local servers
+only, and a TRAMP path of the server on the host it names, so one machine's project list never
+reaches another and two machines holding the same path stay distinguishable.
+
+A server that has gone quiet costs a picker its own rows' freshness and nothing else: its
+last-known rows are still offered, the other servers are still asked, and nothing waits on it
+longer than `herdr-rpc-background-timeout`.
 
 ## Terminals
 
@@ -50,6 +175,7 @@ rather than at the backstop's.
 
 | Option | Default | Function |
 |---|---|---|
+| `herdr-dispatch-show-known-projects` | `nil` | Whether to list projects with no workspace open. |
 | `herdr-dispatch-buffer-name` | `"*herdr-agents*"` | The name of the dashboard buffer. |
 | `herdr-dispatch-display-action` | `(display-buffer-same-window)` | Where the dashboard appears. |
 | `herdr-dispatch-refresh-debounce` | `0.2` | The number of seconds to group the dashboard redraws. |

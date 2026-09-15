@@ -27,6 +27,7 @@
 ;;; Code:
 
 (require 'herdr-rpc)
+(require 'herdr-connection)
 (require 'herdr-state)
 (require 'herdr-term)
 (require 'herdr-cmd)
@@ -45,39 +46,52 @@ because herdr bumped a minor is worse than one command misbehaving."
   :type 'integer
   :group 'herdr)
 
-(defvar herdr--protocol-warned nil)
+(defun herdr--check-protocol (connection)
+  "Warn once if CONNECTION\='s server speaks a protocol this package does not know.
 
-(defun herdr--check-protocol ()
-  "Warn once if the server speaks a protocol this package does not know."
-  (unless herdr--protocol-warned
-    (when-let* ((pong (ignore-errors (herdr-rpc-call "ping")))
+Once per connection rather than once per package: a single flag let the
+first server's mismatch silence the check for every server after it, and
+the one most likely to disagree is the one added last."
+  (unless (herdr-connection-protocol-warned connection)
+    (when-let* ((pong (ignore-errors (herdr-rpc-call connection "ping")))
                 (protocol (alist-get 'protocol pong)))
       (unless (equal protocol herdr-protocol-version)
-        (setq herdr--protocol-warned t)
+        (setf (herdr-connection-protocol-warned connection) t)
         (message
-         "herdr.el: server speaks protocol %s, this package targets %s; \
+         "herdr.el: %s speaks protocol %s, this package targets %s; \
 some commands may misbehave"
+         (herdr-connection-name connection)
          protocol herdr-protocol-version)))))
 
 ;;;###autoload
 (defun herdr-start ()
   "Bring up herdr inside Emacs: server, terminals, and the event stream."
   (interactive)
-  (herdr-term-ensure)
-  (herdr--check-protocol)
-  (unless (herdr-state-running-p)
-    (herdr-state-start))
-  ;; Twice: the second pass has the cache, which is what decides what to
-  ;; attach.
-  (herdr-term-ensure))
+  ;; Resolved once and carried, not resolved again at each step: the
+  ;; connection an action belongs to is settled when the action starts.
+  (let ((connection (herdr-current-connection)))
+    (herdr-term-ensure connection)
+    (herdr--check-protocol connection)
+    (unless (herdr-state-running-p connection)
+      (herdr-state-start connection))
+    ;; Twice: the second pass has the cache, which is what decides what to
+    ;; attach.
+    (herdr-term-ensure connection)))
 
 ;;;###autoload
 (defun herdr-stop ()
-  "Stop following herdr and kill its Emacs-side buffers.
-The herdr server keeps running; agents are unaffected."
+  "Stop following one herdr connection and kill its Emacs-side buffers.
+The herdr server keeps running; agents are unaffected.
+
+One connection, both halves.  The teardown used to be called with no
+argument, which kills every connection\\='s terminal buffers, beside a
+stop scoped to one — so stopping the local server reaped a remote
+server\\='s terminals and left that connection running.  Use
+`herdr-disconnect\\=' to stop a connection you named."
   (interactive)
-  (herdr-term-teardown)
-  (herdr-state-stop))
+  (let ((connection (herdr-current-connection)))
+    (herdr-term-teardown connection)
+    (herdr-state-stop connection)))
 
 ;;;###autoload
 (defun herdr-project ()

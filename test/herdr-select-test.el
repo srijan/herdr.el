@@ -13,6 +13,7 @@
 (require 'ert)
 (require 'herdr-select)
 (require 'herdr-term)
+(require 'herdr-test-helper)
 
 ;; Declared, deliberately unbound: `let' on an undeclared symbol under
 ;; lexical binding is invisible to `boundp' elsewhere, which is exactly
@@ -24,7 +25,7 @@
 
 (defmacro herdr-select-test-with-state (panes &rest body)
   (declare (indent 1) (debug t))
-  `(let ((herdr-state--current (herdr-state-from-snapshot `((panes . ,,panes)))))
+  `(let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot `((panes . ,,panes)))))))
      ,@body))
 
 ;;; Annotations
@@ -134,12 +135,11 @@ searchable half of a workspace row was the half that means nothing.
 Four commands read this picker: close, focus, rename and worktree
 remove."
   (let (offered)
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((workspaces . (((workspace_id . "w1") (label . "herdr.el")
                               (pane_count . 3))
                              ((workspace_id . "w2") (label . "fleet-infra")
-                              (pane_count . 1))))))))
+                              (pane_count . 1)))))))
       (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
                 ((symbol-function 'herdr-select--read)
                  (lambda (_prompt candidates &rest _)
@@ -153,9 +153,8 @@ remove."
 
 (ert-deftest herdr-select-workspace-picker-does-not-annotate-the-row-twice ()
   (let (annotator)
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w1") (label . "herdr.el"))))))))
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1") (label . "herdr.el")))))))
       (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
                 ((symbol-function 'herdr-select--read)
                  (lambda (_prompt candidates _category annotate)
@@ -198,20 +197,18 @@ buffer at all: they appeared in the list and selecting one left you
 where you were."
   (let ((live (generate-new-buffer " *pane-with-buffer*")))
     (unwind-protect
-        (let ((herdr-term--buffers (list (cons "w1:p1" live)))
-              (herdr-state--current
-               (herdr-state-from-snapshot
+        (herdr-test-with-state (:cache (herdr-state-from-snapshot
                 '((panes . (((pane_id . "w1:p1") (agent . "claude"))
-                            ((pane_id . "w1:p2"))))))))
+                            ((pane_id . "w1:p2")))))))(let* ((herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" live)))))
           (should (equal '("w1:p1") (herdr-select-panes-with-buffers)))
           (let ((source (herdr-select--consult-source)))
             (should (equal 'herdr-pane (plist-get source :category)))
             ;; The source reconciles against the server before listing;
             ;; stub that out so the suite stays hermetic.
             (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
-                       (lambda () nil)))
+                       (lambda (_connection) nil)))
               (should (equal '("w1:p1")
-                             (funcall (plist-get source :items)))))))
+                             (funcall (plist-get source :items))))))))
       (kill-buffer live))))
 
 (ert-deftest herdr-select-consult-source-bounds-its-reconcile-timeout ()
@@ -221,12 +218,12 @@ unbounded reconcile here freezes ordinary buffer switching for the full
 `herdr-rpc-timeout' — the same class of freeze `herdr-server-live-p'
 and `herdr-state-repair' already guard against by binding
 down to `herdr-rpc-background-timeout'."
-  (let ((herdr-state--current (herdr-state-from-snapshot nil))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot nil))))
         (herdr-rpc-timeout 10.0)
         (herdr-rpc-background-timeout 2.0)
         seen-timeout)
     (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
-               (lambda () (setq seen-timeout herdr-rpc-timeout) nil)))
+               (lambda (_connection) (setq seen-timeout herdr-rpc-timeout) nil)))
       (funcall (plist-get (herdr-select--consult-source) :items))
       (should (equal 2.0 seen-timeout))
       ;; The binding must not leak past the call.
@@ -237,9 +234,9 @@ down to `herdr-rpc-background-timeout'."
   (let ((target (generate-new-buffer " *target*"))
         focused)
     (unwind-protect
-        (let ((herdr-term--buffers (list (cons "w1:p1" target))))
+        (let ((herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" target)))))
           (cl-letf (((symbol-function 'herdr-rpc-call)
-                     (lambda (method params)
+                     (lambda (_connection method params)
                        (when (equal method "pane.focus")
                          (setq focused (alist-get 'pane_id params))))))
             (save-window-excursion
@@ -254,50 +251,38 @@ down to `herdr-rpc-background-timeout'."
   "Acting from inside one agent's buffer used to target whichever pane
 you last went to, because herdr's focus is server-side and does not
 follow Emacs."
-  (let* ((mine (generate-new-buffer " *pane-b*"))
-         (herdr-term--buffers (list (cons "w1:pB" mine)))
-         (herdr-state--current
-          (herdr-state-from-snapshot
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
            '((focused_pane_id . "w1:pA")
-             (panes . (((pane_id . "w1:pA")) ((pane_id . "w1:pB")))))))
-         (current-prefix-arg nil))
+             (panes . (((pane_id . "w1:pA")) ((pane_id . "w1:pB")))))))(let* ((mine (generate-new-buffer " *pane-b*")) (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:pB" mine)))) (current-prefix-arg nil))
     (unwind-protect
         (with-current-buffer mine
           (should (equal "w1:pB" (herdr-select-target-pane))))
-      (kill-buffer mine))))
+      (kill-buffer mine)))))
 
 (ert-deftest herdr-select-target-falls-back-to-herdr-focus ()
   "Outside a herdr buffer there is no local answer, so use the server's."
-  (let* ((herdr-term--buffers nil)
-         (herdr-state--current
-          (herdr-state-from-snapshot
-           '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))
-         (current-prefix-arg nil))
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+           '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))(let* ((herdr-term--buffers nil) (current-prefix-arg nil))
     (with-temp-buffer
-      (should (equal "w1:pA" (herdr-select-target-pane))))))
+      (should (equal "w1:pA" (herdr-select-target-pane)))))))
 
 (ert-deftest herdr-select-target-ignores-a-buffer-whose-pane-is-gone ()
-  (let* ((orphan (generate-new-buffer " *orphan*"))
-         (herdr-term--buffers (list (cons "w1:gone" orphan)))
-         (herdr-state--current
-          (herdr-state-from-snapshot
-           '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))
-         (current-prefix-arg nil))
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+           '((focused_pane_id . "w1:pA") (panes . (((pane_id . "w1:pA")))))))(let* ((orphan (generate-new-buffer " *orphan*")) (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:gone" orphan)))) (current-prefix-arg nil))
     (unwind-protect
         (with-current-buffer orphan
           (should (equal "w1:pA" (herdr-select-target-pane))))
-      (kill-buffer orphan))))
+      (kill-buffer orphan)))))
 
 ;;; Choosing where a new terminal goes
 
 (ert-deftest herdr-select-place-offers-workspaces-and-every-known-project ()
   "Known projects stay searchable by path even when already open."
   (let (offered)
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((workspaces . (((workspace_id . "w1"))))
               (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
-                         (cwd . "/tmp/open"))))))))
+                         (cwd . "/tmp/open")))))))
       (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
                 ((symbol-function 'project-known-project-roots)
                  (lambda () '("/tmp/open/" "/tmp/elsewhere/")))
@@ -317,9 +302,8 @@ asks, and a stub that answers calls cannot make it answer nil."
         (saved (when (fboundp 'project-known-project-roots)
                  (symbol-function 'project-known-project-roots))))
     (unwind-protect
-        (let ((herdr-state--current
-               (herdr-state-from-snapshot
-                '((workspaces . (((workspace_id . "w1"))))))))
+        (herdr-test-with-state (:cache (herdr-state-from-snapshot
+                '((workspaces . (((workspace_id . "w1")))))))
           (fmakunbound 'project-known-project-roots)
           (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
                     ((symbol-function 'herdr-select--read)
@@ -332,12 +316,11 @@ asks, and a stub that answers calls cannot make it answer nil."
 
 (ert-deftest herdr-select-place-annotates-projects-by-open-state ()
   "Project paths say whether their workspace is already open."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
           '((workspaces . (((workspace_id . "w1") (label . "ws")
                             (pane_count . 2))))
             (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
-                       (cwd . "/tmp/open/"))))))))
+                       (cwd . "/tmp/open/")))))))
     (should (string-match-p "ws" (herdr-select--place-annotation "w1")))
     (should (string-match-p "ws"
                             (herdr-select--place-annotation "/tmp/open/")))
@@ -347,12 +330,11 @@ asks, and a stub that answers calls cannot make it answer nil."
 (ert-deftest herdr-select-place-rows-carry-the-label-and-the-open-state ()
   "A place row can be matched by what the workspace is called."
   (let (offered)
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((workspaces . (((workspace_id . "w1") (label . "lantern")
                               (pane_count . 2))))
               (panes . (((pane_id . "w1:p1") (workspace_id . "w1")
-                         (cwd . "/tmp/open/"))))))))
+                         (cwd . "/tmp/open/")))))))
       (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
                 ((symbol-function 'project-known-project-roots)
                  (lambda () '("/tmp/elsewhere/")))
@@ -366,7 +348,7 @@ asks, and a stub that answers calls cannot make it answer nil."
 
 (ert-deftest herdr-select-place-maps-a-row-back-to-a-path-with-a-space ()
   "The reduction cannot be a split: a directory name may contain a space."
-  (let ((herdr-state--current (herdr-state-from-snapshot '())))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot '())))))
     (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
               ((symbol-function 'project-known-project-roots)
                (lambda () '("/tmp/my project/")))
@@ -377,9 +359,8 @@ asks, and a stub that answers calls cannot make it answer nil."
 (ert-deftest herdr-select-place-picker-does-not-annotate-the-row-twice ()
   "The row already carries the annotation, so the table must not add it."
   (let (annotator)
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w1"))))))))
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1")))))))
       (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
                 ((symbol-function 'project-known-project-roots) (lambda () nil))
                 ((symbol-function 'herdr-select--read)
@@ -391,8 +372,7 @@ asks, and a stub that answers calls cannot make it answer nil."
 (ert-deftest herdr-select-place-refuses-empty-input ()
   "`completing-read\\=' hands back the empty string on empty input whatever
 REQUIRE-MATCH says, and no row can match it."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot '((workspaces . (((workspace_id . "w1"))))))))
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot '((workspaces . (((workspace_id . "w1")))))))
     (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
               ((symbol-function 'project-known-project-roots) (lambda () nil))
               ((symbol-function 'completing-read) (lambda (&rest _) "")))
@@ -427,12 +407,11 @@ two statuses says nothing on screen."
 (ert-deftest herdr-select-annotates-a-workspace-by-its-own-id ()
   "The annotator matches rows on `workspace_id'; reading any other field
 annotates every workspace with the first one's label."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
           '((workspaces . (((workspace_id . "w1") (label . "first")
                             (pane_count . 3))
                            ((workspace_id . "w2") (label . "second")
-                            (pane_count . 1))))))))
+                            (pane_count . 1)))))))
     (should (string-match-p "second" (herdr-select--annotate-workspace "w2")))
     (should (string-match-p "1 panes" (herdr-select--annotate-workspace "w2")))
     (should (string-match-p "first" (herdr-select--annotate-workspace "w1")))
@@ -444,10 +423,9 @@ annotates every workspace with the first one's label."
 what a reader sees.  The row leads with the id, so the annotation's
 first column stays the raw label: identity there would print `w2F' a
 second time, in exactly the case this seam exists to fix."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
           '((workspaces . (((workspace_id . "w2F") (label . "")
-                            (pane_count . 3))))))))
+                            (pane_count . 3)))))))
     (let ((row (herdr-select--workspace-candidate "w2F")))
       (should (string-prefix-p "w2F" row))
       (should (= 1 (cl-count-if (lambda (s) (equal s "w2F"))
@@ -457,12 +435,11 @@ second time, in exactly the case this seam exists to fix."
 (ert-deftest herdr-select-place-rows-do-not-repeat-their-leading-token ()
   "A place is a workspace id or a project path.  Neither shape may have
 its own leading token echoed back by the annotation."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
           '((workspaces . (((workspace_id . "w2F") (label . "")
                             (pane_count . 3))))
             (panes . (((pane_id . "w2F:p1") (workspace_id . "w2F")
-                       (tab_id . "w2F:t1") (cwd . "/tmp"))))))))
+                       (tab_id . "w2F:t1") (cwd . "/tmp")))))))
     (let ((by-id (herdr-select--place-candidate "w2F"))
           (by-path (herdr-select--place-candidate "/tmp/")))
       (should (= 1 (cl-count-if (lambda (s) (equal s "w2F"))
@@ -490,6 +467,46 @@ is the only reason the picker shows anything but bare ids."
       (should (eq #'herdr-select--annotate-pane
                   (alist-get 'annotation-function (cdr metadata)))))
     (should (equal '("a" "b") (funcall table "" nil t)))))
+
+
+;;; Which server a row is on
+
+(ert-deftest herdr-select-one-server-rows-carry-no-server-name ()
+  "Nobody following one server should see a column that says nothing.
+R10: the single-connection picker is exactly what it was."
+  (let (offered)
+    (herdr-select-test-with-state '(((pane_id . "w1:p1") (agent . "claude")))
+      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates &rest _)
+                   (setq offered candidates) (car candidates))))
+        (herdr-select-pane)))
+    (should (= 1 (length offered)))
+    (should-not (string-match-p "@" (car offered)))))
+
+(ert-deftest herdr-select-a-place-root-is-offered-by-its-own-host-only ()
+  "A root is a path on a machine.  Asking every connection about every
+root is how one server\='s projects reached another, and how two servers
+holding the same path became indistinguishable."
+  (let* ((here (herdr-test-connection (herdr-state-empty)))
+         (there (herdr-test-connection (herdr-state-empty)))
+         offered)
+    (setf (herdr-connection-name here) "here")
+    (setf (herdr-connection-name there) "there")
+    (setf (herdr-connection-ssh-target there) "shadow")
+    (let ((herdr-connections (list (cons "here" here) (cons "there" there))))
+      (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
+                ((symbol-function 'project-known-project-roots)
+                 (lambda () '("/tmp/local/" "/ssh:shadow:/tmp/far/")))
+                ((symbol-function 'herdr-select--read)
+                 (lambda (_prompt candidates &rest _)
+                   (setq offered candidates) (car candidates))))
+        (herdr-select-place)))
+    (should (= 2 (length offered)))
+    (should (string-prefix-p "/tmp/local/" (nth 0 offered)))
+    (should (string-match-p "@here" (nth 0 offered)))
+    (should (string-prefix-p "/ssh:shadow:/tmp/far/" (nth 1 offered)))
+    (should (string-match-p "@there" (nth 1 offered)))))
 
 (provide 'herdr-select-test)
 ;;; herdr-select-test.el ends here

@@ -7,6 +7,10 @@ No second terminal application sits in the loop. Commands go over herdr's unix s
 event stream keeps a cache of the session, and that cache feeds a foldable dashboard, a modeline
 segment and completion pickers.
 
+More than one server can be followed at once, including a server on another machine over SSH.
+Nothing connects until you ask it to, and one server looks and behaves exactly as it did before
+that was possible.
+
 ## This is a fork
 
 Upstream is [eddof13/herdr.el](https://github.com/eddof13/herdr.el). This copy has diverged far
@@ -85,8 +89,12 @@ The count on a repository row is its checkouts: its own, plus one for each workt
 
 ### Inactive projects
 
-Below the live workspaces sits one foldable `Inactive (N)` heading. It lists every `project.el`
-project with no herdr workspace open. Each row is dimmed, folds, and carries the repository's
+Set `herdr-dispatch-show-known-projects` to `t` and the dashboard ends with one foldable
+`Inactive (N)` heading. It lists every `project.el` project with no herdr workspace open.
+
+It is off by default. The list grows with every project you visit and never shrinks, so it is
+soon longer than the session above it, and each root costs a `worktree.list` round trip whenever
+the dashboard refetches. Each row is dimmed, folds, and carries the repository's
 checkouts underneath: a `main` row for its own, then one for each worktree.
 
 ```
@@ -164,6 +172,50 @@ through `default-directory`, but `C-x p k` left them standing: no default clause
 `project-kill-buffer-conditions` matches a ghostel buffer. herdr adds one when `project.el`
 loads, so killing a project's buffers kills its terminals too. The panes themselves keep running -
 the buffer is an attachment, and `M-x herdr` attaches again.
+
+## Several servers
+
+| Command | What it does |
+| --- | --- |
+| `herdr-connect` | follow a second server on this machine, by its socket path |
+| `herdr-connect-remote` | follow a server on another machine, over SSH |
+| `herdr-disconnect` | stop following one, and take its SSH forward down |
+
+`herdr-connect-remote` offers the machines you have saved with `herdr machine`, and asks for a
+target when you have none. herdr.el reads that catalog and never writes it.
+
+A remote server's control socket is forwarded to a local one with `ssh -N -L`, because
+`make-network-process` has no file-handler support and so cannot open a socket on another
+machine. Terminals do not use that forward: a remote pane's buffer gets a TRAMP
+`default-directory` and runs the far host's own herdr, which is how it reaches a pane running
+there.
+
+With two servers connected the dashboard grows an outer level, one row per server, and a server
+that is down keeps its row rather than disappearing:
+
+```
+herdr   2 servers  4 workspaces  6 panes  1▶1✓
+
+local (3)
+  herdr.el (2)                 ~/src/herdr.el/
+    ▶ claude    working   w7:p1   Fix the reconcile order
+
+shadow (1)
+  example-api (1)              /ssh:shadow:~/src/example-api/
+    ✓ codex     done      w1:p1   Port the retry helper
+
+scratch  not connected
+```
+
+Ids are per-server counters, so two machines can each hold a `w1:p1`. Every structure keyed by
+one distinguishes them, and a command acts on the server of the row or candidate you chose.
+
+Nothing connects at startup. A laptop opened in a cafe must not slow to a stack of SSH timeouts
+for servers nobody asked about, and a server that has gone quiet costs its own freshness rather
+than the editor's time.
+
+See [Configuration](docs/configuration.md#remote-servers) for what each failure means, and for
+the SELinux relabelling Fedora and RHEL need.
 
 ## Requirements
 
@@ -326,6 +378,10 @@ because `completing-read` matches the candidate and never the annotation. With `
 makes `web claude blocked` a working query. `herdr-new-terminal` builds its rows the same way, over
 open workspaces and known project roots, so a project is findable by path and a workspace by label.
 `embark-act` on a pane candidate offers focus, read, prompt and close.
+
+With more than one server connected every row ends in `@name`. That name is part of the
+candidate, not an annotation, so `claude shadow` narrows to the agents on `shadow`, and choosing
+a row says which server the command means.
 
 ## Development
 

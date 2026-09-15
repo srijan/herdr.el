@@ -85,10 +85,6 @@ herdr.el (2)                          ~/src/herdr.el/
 
 example-api (1)                       ~/src/example-api/
   · shell       idle      wA:p1       npm run watch
-
-Inactive (14)
-  other-api (1)                       ~/src/other-api/
-    main                              ~/src/other-api
 ```
 
 Read the counts this way. A repository row counts its checkouts: its own, plus one for each
@@ -101,8 +97,19 @@ checkout and no worktrees, so it has no `main` group and its pane sits directly 
 A closed section shows the worst status inside it. A closed section therefore never hides a
 blocked agent.
 
-The `Inactive` section lists the `project.el` projects that have no open workspace. Press `RET`
-on one row to create the workspace, or `n` on any checkout under it to open a terminal there.
+Set `herdr-dispatch-show-known-projects` to `t` and the dashboard also ends with an `Inactive`
+section, listing the `project.el` projects that have no open workspace:
+
+```
+Inactive (14)
+  other-api (1)                       ~/src/other-api/
+    main                              ~/src/other-api
+```
+
+Press `RET` on one of those rows to create the workspace, or `n` on any checkout under it to
+open a terminal there. It is off by default because the list grows with every project you visit
+and never shrinks, so it is soon longer than the session above it — and each root costs a
+`worktree.list` round trip whenever the dashboard refetches.
 
 ## Step 5: Do the first tasks
 
@@ -137,6 +144,28 @@ The first command writes a hook file into the configuration directory of the age
 the file is `~/.claude/hooks/herdr-agent-state.sh`.
 
 The integration makes the modeline and the dashboard accurate.
+
+## Step 7: Connect a second machine, if you have one
+
+herdr.el follows more than one server at once. A second server can be on another machine,
+reached over SSH:
+
+```
+M-x herdr-connect-remote RET shadow RET RET RET
+```
+
+The first answer is a saved machine or an SSH target, the second names the connection, and the
+third is a herdr session on that host — leave it empty for its default session. If you have
+saved machines with `herdr machine add`, the first prompt offers them and fills in the rest.
+`M-x herdr-disconnect` stops following it again, and takes the SSH forward down with it.
+
+With a second server connected, the dashboard grows a row per server, pickers end each row with
+`@name`, and the modeline counts across both. With one it all looks exactly as it did.
+
+That host needs herdr installed and a server running on it. If nothing is running there the
+connection reports `no_answer`, because the tunnel cannot tell an absent server from a wrong
+path. See [Remote servers](configuration.md#remote-servers) for what each failure means, and
+for the SELinux relabelling that Fedora and RHEL need.
 
 ## Next steps
 

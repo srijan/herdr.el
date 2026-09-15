@@ -30,7 +30,7 @@
   (herdr-test-with-server
       (lambda (req)
         (cons (herdr-test-ok req '((type . "pong") (protocol . 17))) nil))
-    (let ((result (herdr-rpc-call "ping")))
+    (let ((result (herdr-rpc-call (herdr-current-connection) "ping")))
       (should (equal (alist-get 'type result) "pong"))
       (should (equal (alist-get 'protocol result) 17)))))
 
@@ -44,7 +44,7 @@ spinning on a socket whose answer had already arrived."
         (cons (herdr-test-ok req '((type . "pong"))) t))
     (let* ((herdr-rpc-timeout 5.0)
            (start (float-time))
-           (result (herdr-rpc-call "ping")))
+           (result (herdr-rpc-call (herdr-current-connection) "ping")))
       (should (equal (alist-get 'type result) "pong"))
       (should (< (- (float-time) start) 1.0)))))
 
@@ -54,28 +54,29 @@ spinning on a socket whose answer had already arrived."
         (lambda (req)
           (setq seen req)
           (cons (herdr-test-ok req '((type . "ok"))) nil))
-      (herdr-rpc-call "pane.close" '((pane_id . "w1:p3")))
+      (herdr-rpc-call (herdr-current-connection) "pane.close" '((pane_id . "w1:p3")))
       (should (equal (alist-get 'method seen) "pane.close"))
       (should (equal (alist-get 'pane_id (alist-get 'params seen)) "w1:p3")))))
 
 (ert-deftest herdr-rpc-call-signals-herdr-error-with-code ()
   (herdr-test-with-server
       (lambda (req) (cons (herdr-test-err req "not_found" "pane not found") nil))
-    (let ((err (should-error (herdr-rpc-call "pane.get" '((pane_id . "nope")))
+    (let ((err (should-error (herdr-rpc-call (herdr-current-connection) "pane.get" '((pane_id . "nope")))
                              :type 'herdr-error)))
       (should (equal (herdr-error-code err) "not_found"))
       (should (string-match-p "pane not found" (herdr-error-message err))))))
 
 (ert-deftest herdr-rpc-call-without-server-signals-no-server ()
-  (let ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock"))
-    (let ((err (should-error (herdr-rpc-call "ping") :type 'herdr-error)))
+  (let* ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
+         (herdr-connections (herdr-test-connections (herdr-connection-local))))
+    (let ((err (should-error (herdr-rpc-call (herdr-current-connection) "ping") :type 'herdr-error)))
       (should (equal (herdr-error-code err) "no_server")))))
 
 (ert-deftest herdr-rpc-call-async-invokes-callback-with-result ()
   (herdr-test-with-server
       (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
     (let (got-result got-error done)
-      (herdr-rpc-call-async "ping" nil
+      (herdr-rpc-call-async (herdr-current-connection) "ping" nil
                             (lambda (result err)
                               (setq got-result result got-error err done t)))
       (let ((deadline (+ (float-time) 5)))
@@ -89,7 +90,7 @@ spinning on a socket whose answer had already arrived."
   (herdr-test-with-server
       (lambda (req) (cons (herdr-test-err req "invalid_request" "bad") nil))
     (let (got-error done)
-      (herdr-rpc-call-async "pane.split" nil
+      (herdr-rpc-call-async (herdr-current-connection) "pane.split" nil
                             (lambda (_result err) (setq got-error err done t)))
       (let ((deadline (+ (float-time) 5)))
         (while (and (not done) (< (float-time) deadline))
@@ -105,7 +106,7 @@ and pass nothing here, so nil must remain \"wait indefinitely\"."
   (herdr-test-with-server
       (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
     (let (got-result got-error done)
-      (herdr-rpc-call-async "ping" nil
+      (herdr-rpc-call-async (herdr-current-connection) "ping" nil
                             (lambda (result err)
                               (setq got-result result got-error err done t))
                             nil)
@@ -138,7 +139,7 @@ this the test that would fail if the cancellation were deleted."
       (advice-add 'cancel-timer :before #'herdr-rpc-test--note-cancel)
       (unwind-protect
           (progn
-            (herdr-rpc-call-async "ping" nil
+            (herdr-rpc-call-async (herdr-current-connection) "ping" nil
                                   (lambda (&rest _) (setq done t))
                                   30)
             (let ((deadline (+ (float-time) 5)))
@@ -157,7 +158,7 @@ overwrite `got-error' with a timeout — this is the observable half of
   (herdr-test-with-server
       (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
     (let (calls got-result got-error)
-      (herdr-rpc-call-async "ping" nil
+      (herdr-rpc-call-async (herdr-current-connection) "ping" nil
                             (lambda (result err)
                               (setq calls (1+ (or calls 0)))
                               (setq got-result result got-error err))
@@ -183,7 +184,7 @@ Without a TIMEOUT this would hang for the life of the Emacs session,
 which is the bug this whole feature exists to close."
   (herdr-test-with-server (lambda (_req) (cons nil t))
     (let (calls got-error)
-      (herdr-rpc-call-async "agent.wait" nil
+      (herdr-rpc-call-async (herdr-current-connection) "agent.wait" nil
                             (lambda (_result err)
                               (setq calls (1+ (or calls 0)))
                               (setq got-error err))
@@ -205,7 +206,7 @@ that ran around the guard rather than through it — the mistake the task
 brief calls out by name — would show up as a second, later call."
   (herdr-test-with-server (lambda (_req) (cons nil t))
     (let (calls got-error)
-      (herdr-rpc-call-async "agent.wait" nil
+      (herdr-rpc-call-async (herdr-current-connection) "agent.wait" nil
                             (lambda (_result err)
                               (setq calls (1+ (or calls 0)))
                               (setq got-error err))
@@ -233,7 +234,7 @@ would show up as a second, later call."
     (cl-letf (((symbol-function 'process-send-string)
                (lambda (&rest _) (error "peer closed before send"))))
       (let (calls got-error)
-        (herdr-rpc-call-async "ping" nil
+        (herdr-rpc-call-async (herdr-current-connection) "ping" nil
                               (lambda (_result err)
                                 (setq calls (1+ (or calls 0)))
                                 (setq got-error err))
@@ -252,7 +253,7 @@ guarantee a timeout already gets."
     (cl-letf (((symbol-function 'process-send-string)
                (lambda (&rest _) (error "peer closed before send"))))
       (let (proc)
-        (setq proc (herdr-rpc-call-async "ping" nil #'ignore))
+        (setq proc (herdr-rpc-call-async (herdr-current-connection) "ping" nil #'ignore))
         (should-not (memq proc (process-list)))))))
 
 (ert-deftest herdr-rpc-array-serializes-as-a-json-array ()
@@ -300,7 +301,7 @@ never deleted is still there."
       ;; has to clean up.
       (let ((herdr-rpc-timeout 0.3))
         (herdr-test-with-server (lambda (_req) (cons nil t))
-          (should-error (herdr-rpc-call "ping") :type 'herdr-error)))
+          (should-error (herdr-rpc-call (herdr-current-connection) "ping") :type 'herdr-error)))
       (should (= 1 (length deleted)))
       (should-not (memq (car deleted) (process-list))))))
 
@@ -314,13 +315,13 @@ nothing; one that holds it open has not answered yet.  Both surface as
 has to."
   ;; Closed without writing.
   (herdr-test-with-server (lambda (_req) (cons nil nil))
-    (let ((err (should-error (herdr-rpc-call "ping") :type 'herdr-error)))
+    (let ((err (should-error (herdr-rpc-call (herdr-current-connection) "ping") :type 'herdr-error)))
       (should (equal "empty_response" (herdr-error-code err)))
       (should (string-match-p "ping" (herdr-error-message err)))))
   ;; Accepted and held open, saying nothing.
   (herdr-test-with-server (lambda (_req) (cons nil t))
     (let* ((herdr-rpc-timeout 0.3)
-           (err (should-error (herdr-rpc-call "ping") :type 'herdr-error)))
+           (err (should-error (herdr-rpc-call (herdr-current-connection) "ping") :type 'herdr-error)))
       (should (equal "timeout" (herdr-error-code err))))))
 
 (ert-deftest herdr-rpc-call-async-reports-unparseable-output-as-bad-response ()
@@ -330,7 +331,7 @@ where nothing is left to catch it."
   (herdr-test-with-server
       (lambda (_req) (cons "this is not json\n" nil))
     (let (calls got-error)
-      (herdr-rpc-call-async "ping" nil
+      (herdr-rpc-call-async (herdr-current-connection) "ping" nil
                             (lambda (_result err)
                               (setq calls (1+ (or calls 0)) got-error err)))
       (let ((deadline (+ (float-time) 5)))
@@ -348,7 +349,7 @@ connection would simply stay open for the rest of the session.  So the
 process itself is asked."
   (herdr-test-with-server (lambda (_req) (cons nil t))
     (let (calls)
-      (let ((proc (herdr-rpc-call-async
+      (let ((proc (herdr-rpc-call-async (herdr-current-connection)
                    "agent.wait" nil
                    (lambda (&rest _) (setq calls (1+ (or calls 0))))
                    0.2)))
@@ -368,11 +369,74 @@ compared across two separate calls to a server that records them."
         (lambda (req)
           (push (alist-get 'id req) ids)
           (cons (herdr-test-ok req '((type . "ok"))) nil))
-      (herdr-rpc-call "ping")
-      (herdr-rpc-call "ping")
-      (herdr-rpc-call "ping"))
+      (herdr-rpc-call (herdr-current-connection) "ping")
+      (herdr-rpc-call (herdr-current-connection) "ping")
+      (herdr-rpc-call (herdr-current-connection) "ping"))
     (should (= 3 (length ids)))
     (should (= 3 (length (delete-dups (copy-sequence ids)))))))
+
+;;; A connection is a value, not an ambient default
+
+(ert-deftest herdr-rpc-call-refuses-to-guess-a-connection ()
+  "Taking the connection first is what makes a forgotten one loud.
+
+A call written the old way fails at the call: one argument short of the
+arity.  A call that keeps its parameters fails on the struct accessor,
+naming the type it wanted.  Either way nothing reaches a server, which
+is the point - an ambient default would have sent all of these
+somewhere and told nobody."
+  (should-error (herdr-rpc-call "ping") :type 'wrong-number-of-arguments)
+  (should-error (herdr-rpc-call-async "ping" nil #'ignore)
+                :type 'wrong-number-of-arguments)
+  (let ((err (should-error (herdr-rpc-call "ping" '((a . 1)))
+                           :type 'wrong-type-argument)))
+    (should (eq 'herdr-connection (nth 1 err)))))
+
+(ert-deftest herdr-connection-token-is-allocated-once-and-never-moves ()
+  "A composite key holds the token, not the struct: the struct is
+mutable and `equal' on one compares fields, so a key holding it would
+stop matching the moment a process or a cache slot changed."
+  (let ((connection (herdr-connection-local))
+        (other (herdr-connection-local)))
+    (should-not (equal (herdr-connection-token connection)
+                       (herdr-connection-token other)))
+    (let ((token (herdr-connection-token connection)))
+      (setf (herdr-connection-running connection) t)
+      (setf (herdr-connection-cache connection) 'anything)
+      (should (equal token (herdr-connection-token connection))))))
+
+(ert-deftest herdr-connections-do-not-share-a-cache ()
+  "Each connection owns its own session cache.  Two of them in one test
+is the cheapest proof that nothing behind the struct is still global."
+  (let ((one (herdr-connection-local))
+        (two (herdr-connection-local)))
+    (setf (herdr-connection-cache one) 'filled)
+    (should (eq 'filled (herdr-connection-cache one)))
+    (should-not (herdr-connection-cache two))))
+
+(ert-deftest herdr-current-connection-answers-in-an-empty-extent ()
+  "Interactive commands arrive with no connection in hand, and a timer
+callback runs in an empty dynamic extent.  Both reach a server only
+because the resolver answers without one."
+  (let ((herdr-connections nil))
+    (should (herdr-connection-p (herdr-current-connection)))
+    ;; The same connection each time, not a fresh one per call.
+    (should (eq (herdr-current-connection) (herdr-current-connection))))
+  (let ((herdr-connections nil)
+        (fired nil))
+    (let ((timer (run-at-time 0 nil (lambda ()
+                                      (setq fired (herdr-current-connection))))))
+      (let ((deadline (+ (float-time) 2)))
+        (while (and (not fired) (< (float-time) deadline))
+          (accept-process-output nil 0.02)))
+      (when (timerp timer) (cancel-timer timer)))
+    (should (herdr-connection-p fired))))
+
+(ert-deftest herdr-connection-local-reads-the-configured-socket ()
+  (let ((herdr-socket-path "/tmp/herdr-somewhere-else.sock"))
+    (should (equal "/tmp/herdr-somewhere-else.sock"
+                   (herdr-connection-socket-path (herdr-connection-local)))))
+  (should-not (herdr-connection-remote-p (herdr-connection-local))))
 
 (provide 'herdr-rpc-test)
 ;;; herdr-rpc-test.el ends here

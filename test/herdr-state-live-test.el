@@ -21,9 +21,9 @@
   "Run BODY capturing dispatched events into the list `events'."
   (declare (indent 0) (debug t))
   `(let* ((events nil)
-          (herdr-state--current (herdr-state-empty))
+          (herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty))))
           (herdr-state-change-functions
-           (list (lambda (kind data) (push (cons kind data) events))))
+           (list (lambda (_connection kind data) (push (cons kind data) events))))
           (proc (herdr-state-live-test--proc)))
      (unwind-protect (progn ,@body (setq events (nreverse events)))
        (delete-process proc))))
@@ -31,13 +31,13 @@
 (ert-deftest herdr-state-filter-ignores-the-subscription-ack ()
   "The ack is a response, not an event; reducing against it is meaningless."
   (let ((events (herdr-state-live-test-with-capture
-                  (herdr-state--filter
+                  (herdr-state--filter (herdr-current-connection)
                    proc "{\"id\":\"1\",\"result\":{\"type\":\"subscription_started\"}}\n"))))
     (should (null events))))
 
 (ert-deftest herdr-state-filter-splits-two-events-in-one-chunk ()
   (let ((events (herdr-state-live-test-with-capture
-                  (herdr-state--filter
+                  (herdr-state--filter (herdr-current-connection)
                    proc
                    (concat
                     "{\"event\":\"pane_focused\",\"data\":{\"pane_id\":\"w1:p1\"}}\n"
@@ -49,25 +49,25 @@
 (ert-deftest herdr-state-filter-buffers-a-partial-line ()
   "A chunk that ends mid-event must produce nothing until its newline."
   (let ((events (herdr-state-live-test-with-capture
-                  (herdr-state--filter proc "{\"event\":\"pane_focu")
+                  (herdr-state--filter (herdr-current-connection) proc "{\"event\":\"pane_focu")
                   (should (null events))
-                  (herdr-state--filter
+                  (herdr-state--filter (herdr-current-connection)
                    proc "sed\",\"data\":{\"pane_id\":\"w1:p9\"}}\n"))))
     (should (= 1 (length events)))
     (should (equal "w1:p9" (alist-get 'pane_id (cdr (car events)))))))
 
 (ert-deftest herdr-state-filter-handles-a-split-across-three-chunks ()
   (let ((events (herdr-state-live-test-with-capture
-                  (herdr-state--filter proc "{\"event\":\"pane_f")
-                  (herdr-state--filter proc "ocused\",\"data\":{\"pane")
-                  (herdr-state--filter proc "_id\":\"w1:p3\"}}\n"))))
+                  (herdr-state--filter (herdr-current-connection) proc "{\"event\":\"pane_f")
+                  (herdr-state--filter (herdr-current-connection) proc "ocused\",\"data\":{\"pane")
+                  (herdr-state--filter (herdr-current-connection) proc "_id\":\"w1:p3\"}}\n"))))
     (should (= 1 (length events)))
     (should (equal "w1:p3" (alist-get 'pane_id (cdr (car events)))))))
 
 (ert-deftest herdr-state-filter-survives-a-malformed-line ()
   "One bad line must not take down the stream."
   (let ((events (herdr-state-live-test-with-capture
-                  (herdr-state--filter
+                  (herdr-state--filter (herdr-current-connection)
                    proc (concat "not json at all\n"
                                 "{\"event\":\"pane_focused\",\"data\":{\"pane_id\":\"w1:p4\"}}\n")))))
     (should (= 1 (length events)))
@@ -75,12 +75,12 @@
 
 (ert-deftest herdr-state-filter-updates-the-cache-as-it-dispatches ()
   (herdr-state-live-test-with-capture
-    (herdr-state--filter
+    (herdr-state--filter (herdr-current-connection)
      proc (concat "{\"event\":\"pane_created\",\"data\":{\"pane\":"
                   "{\"pane_id\":\"w1:p7\",\"agent\":\"codex\","
                   "\"agent_status\":\"working\"}}}\n"))
-    (should (herdr-state-pane herdr-state--current "w1:p7"))
-    (should (= 1 (length (herdr-state-agents herdr-state--current))))))
+    (should (herdr-state-pane (herdr-connection-cache (herdr-current-connection)) "w1:p7"))
+    (should (= 1 (length (herdr-state-agents (herdr-connection-cache (herdr-current-connection))))))))
 
 (ert-deftest herdr-state-pane-subscriptions-cover-agent-panes-only ()
   "Connection B names the agent panes, not every pane.
@@ -93,12 +93,11 @@ Buffers are a separate, wider slice: `herdr-term-reconcile' fronts
 every pane with one, agent or not, since
 `herdr terminal attach' needs no reported agent.  A plain shell can
 therefore have a buffer without ever appearing on this connection."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
           '((panes . (((pane_id . "w1:p1") (agent . "claude"))
                       ((pane_id . "w1:p2"))
-                      ((pane_id . "w1:p3") (agent . "shell"))))))))
-    (let ((subs (herdr-state--pane-subscriptions)))
+                      ((pane_id . "w1:p3") (agent . "shell")))))))
+    (let ((subs (herdr-state--pane-subscriptions (herdr-current-connection))))
       ;; A vector, so it serializes as a JSON array rather than an object.
       (should (vectorp subs))
       (should (= 2 (length subs)))
@@ -108,10 +107,11 @@ therefore have a buffer without ever appearing on this connection."
 
 (ert-deftest herdr-state-start-signals-when-no-server ()
   "Starting without a server must fail cleanly and leave nothing running."
-  (let ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock"))
-    (herdr-state-stop)
-    (should-error (herdr-state-start) :type 'herdr-error)
-    (should-not (herdr-state-running-p))))
+  (let* ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
+         (herdr-connections (herdr-test-connections (herdr-connection-local))))
+    (herdr-state-stop (herdr-current-connection))
+    (should-error (herdr-state-start (herdr-current-connection)) :type 'herdr-error)
+    (should-not (herdr-state-running-p (herdr-current-connection)))))
 
 (ert-deftest herdr-state-start-hydrates-from-a-fake-server ()
   (herdr-test-with-server
@@ -127,12 +127,12 @@ therefore have a buffer without ever appearing on this connection."
           (cons (herdr-test-ok req '((type . "subscription_started"))) t)))
     (unwind-protect
         (progn
-          (herdr-state-start)
-          (should (herdr-state-running-p))
+          (herdr-state-start (herdr-current-connection))
+          (should (herdr-state-running-p (herdr-current-connection)))
           (should (equal "w1:p1"
                          (herdr-state-focused-pane-id (herdr-state-current))))
           (should (= 1 (length (herdr-state-agents (herdr-state-current))))))
-      (herdr-state-stop))))
+      (herdr-state-stop (herdr-current-connection)))))
 
 (ert-deftest herdr-state-every-event-notifies-listeners ()
   "No event is swallowed, whatever the connection has just been through.
@@ -146,20 +146,20 @@ swallowed 533 events.  0.9.0 removed the replay, so there is nothing
 to absorb either.  Anything that reintroduces a suppression window
 fails here."
   (let* ((events nil)
-         (herdr-state--current (herdr-state-empty))
+         (herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty))))
          (herdr-state-change-functions
-          (list (lambda (kind data) (push (cons kind data) events))))
+          (list (lambda (_connection kind data) (push (cons kind data) events))))
          (proc (herdr-state-live-test--proc)))
     (unwind-protect
         (progn
-          (herdr-state--filter
+          (herdr-state--filter (herdr-current-connection)
            proc (concat "{\"event\":\"pane_created\",\"data\":{\"pane\":"
                         "{\"pane_id\":\"w1:p1\"}}}\n"
                         "{\"event\":\"pane_created\",\"data\":{\"pane\":"
                         "{\"pane_id\":\"w1:p2\"}}}\n"
                         "{\"event\":\"pane_focused\",\"data\":"
                         "{\"pane_id\":\"w1:p2\"}}\n"))
-          (should (= 2 (length (herdr-state-panes herdr-state--current))))
+          (should (= 2 (length (herdr-state-panes (herdr-connection-cache (herdr-current-connection))))))
           (should (equal '("pane_created" "pane_created" "pane_focused")
                          (mapcar #'car (reverse events)))))
       (delete-process proc))))
@@ -191,28 +191,22 @@ reconciled set rather than the ghost."
              (setq subscribed (alist-get 'subscriptions (alist-get 'params req)))
              (cons (herdr-test-ok req '((type . "subscription_started"))) t))
             (_ (cons (herdr-test-ok req '((type . "ok"))) nil))))
-      (let ((herdr-state--running t)
-            (herdr-state--pane-process nil)
-            (herdr-state--pane-stream-ids nil)
-            (herdr-state--resubscribe-timer nil)
-            (herdr-state--settle-timer nil)
-            (herdr-state--current
-             (herdr-state-from-snapshot
+      (herdr-test-with-state (:running t :pane-process nil :pane-stream-ids nil :resubscribe-timer nil :settle-timer nil :cache (herdr-state-from-snapshot
               '((panes . (((pane_id . "w1:p1") (agent . "claude")
                            (cwd . "/tmp"))
-                          ((pane_id . "w1:ghost") (agent . "codex"))))))))
+                          ((pane_id . "w1:ghost") (agent . "codex")))))))
         (unwind-protect
             (progn
-              (herdr-state--settle)
+              (herdr-state--settle (herdr-current-connection))
+              (should (herdr-test-wait-for (lambda () subscribed)))
               (should (equal '("w1:p1")
-                             (herdr-state-pane-ids herdr-state--current)))
-              (let ((deadline (+ (float-time) 5)))
-                (while (and (null subscribed) (< (float-time) deadline))
-                  (accept-process-output nil 0.05)))
+                             (herdr-state-pane-ids
+                              (herdr-connection-cache
+                               (herdr-current-connection)))))
               (should (equal '("w1:p1")
                              (mapcar (lambda (s) (alist-get 'pane_id s))
                                      subscribed))))
-          (herdr-state--close herdr-state--pane-process))))))
+          (herdr-state--close (herdr-connection-pane-process (herdr-current-connection))))))))
 
 ;;; What counts as a change to the pane set
 
@@ -220,14 +214,19 @@ reconciled set rather than the ghost."
   "Return non-nil when the cache's watched set drifting from STREAM-IDS
 schedules a rebuild of connection B.  The event kind is passed as a
 kind nothing dispatches on, because the comparison must not care."
-  (let ((herdr-state--running t)
-        (herdr-state--pane-stream-ids stream-ids)
-        (herdr-state--resubscribe-timer nil))
+  (let ((connection (herdr-current-connection)))
+    ;; Seeded onto the connection the caller already has, not a fresh
+    ;; one: the cache this compares against belongs to the enclosing
+    ;; test, and replacing the connection would throw it away.
+    (setf (herdr-connection-running connection) t)
+    (setf (herdr-connection-pane-stream-ids connection) stream-ids)
+    (setf (herdr-connection-resubscribe-timer connection) nil)
     (unwind-protect
-        (progn (herdr-state--note-pane-set-change "whatever" nil)
-               (and herdr-state--resubscribe-timer t))
-      (when herdr-state--resubscribe-timer
-        (cancel-timer herdr-state--resubscribe-timer)))))
+        (progn (herdr-state--note-pane-set-change connection "whatever" nil)
+               (and (herdr-connection-resubscribe-timer connection) t))
+      (when (herdr-connection-resubscribe-timer connection)
+        (cancel-timer (herdr-connection-resubscribe-timer connection)))
+      (setf (herdr-connection-resubscribe-timer connection) nil))))
 
 (ert-deftest herdr-state-watched-set-drift-rebuilds-connection-b ()
   "B rebuilds when the agent pane set drifts from what it subscribed:
@@ -241,11 +240,10 @@ released from an existing pane changes exactly what B should watch, and
 a kind list curated for the old rule missed both.  Comparing sets
 cannot go stale that way.  Order must not matter: a reconcile can
 reorder the cache without changing what B watches."
-  (let ((herdr-state--current
-         (herdr-state-from-snapshot
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
           '((panes . (((pane_id . "w1:p1") (agent . "claude"))
                       ((pane_id . "w1:p2"))
-                      ((pane_id . "w1:p3") (agent . "codex"))))))))
+                      ((pane_id . "w1:p3") (agent . "codex")))))))
     ;; In sync, any order: no rebuild.
     (should-not (herdr-state-live-test--rebuilds-p '("w1:p1" "w1:p3")))
     (should-not (herdr-state-live-test--rebuilds-p '("w1:p3" "w1:p1")))
@@ -258,21 +256,16 @@ reorder the cache without changing what B watches."
   "The connect window schedules a rebuild that the settle then performs
 itself moments later; re-checking at fire time turns the duplicate into
 a no-op instead of a second teardown and its gap."
-  (let* ((rebuilt nil)
-         (herdr-state--running t)
-         (herdr-state--resubscribe-timer nil)
-         (herdr-state--current
-          (herdr-state-from-snapshot
-           '((panes . (((pane_id . "w1:p1") (agent . "claude")))))))
-         (herdr-state--pane-stream-ids '("w1:p1")))
+  (herdr-test-with-state (:running t :resubscribe-timer nil :cache (herdr-state-from-snapshot
+           '((panes . (((pane_id . "w1:p1") (agent . "claude")))))) :pane-stream-ids '("w1:p1"))(let* ((rebuilt nil))
     (cl-letf (((symbol-function 'herdr-state--open-pane-stream)
-               (lambda () (setq rebuilt t)))
+               (lambda (_connection) (setq rebuilt t)))
               ((symbol-function 'herdr-state--refresh-statuses) #'ignore))
-      (herdr-state--resubscribe-panes)
+      (herdr-state--resubscribe-panes (herdr-current-connection))
       (should-not rebuilt)
-      (setq herdr-state--pane-stream-ids nil)
-      (herdr-state--resubscribe-panes)
-      (should rebuilt))))
+      (setf (herdr-connection-pane-stream-ids (herdr-current-connection)) nil)
+      (herdr-state--resubscribe-panes (herdr-current-connection))
+      (should rebuilt)))))
 
 ;;; Reconnecting after a dropped stream
 
@@ -314,7 +307,7 @@ reconcile alone cannot account for a fresh label."
   "Return the label of the entry ACCESSOR holds whose ID-KEY is ID."
   (alist-get 'label
              (seq-find (lambda (item) (equal id (alist-get id-key item)))
-                       (funcall accessor herdr-state--current))))
+                       (funcall accessor (herdr-connection-cache (herdr-current-connection))))))
 
 (ert-deftest herdr-state-reconnect-resyncs-workspaces-too ()
   "A reconnect must replace the whole cache, not just the panes.
@@ -325,31 +318,26 @@ rest of the session."
     (herdr-test-with-server
         (herdr-state-live-test--reconnect-server
          (lambda (method) (push method methods)))
-      (let ((herdr-state--running t)
-            (herdr-state-settle-delay 0.01)
-            (herdr-state--global-process nil)
-            (herdr-state--pane-process nil)
-            (herdr-state--resubscribe-timer nil)
-            (herdr-state--settle-timer nil)
-            (herdr-state--reconnect-timer nil)
-            (herdr-state--reconnect-delay nil)
-            (herdr-state--current (herdr-state-live-test--stale-cache)))
+      (herdr-test-with-state (:running t :global-process nil :pane-process nil :resubscribe-timer nil :settle-timer nil :reconnect-timer nil :reconnect-delay nil :cache (herdr-state-live-test--stale-cache))(let* ((herdr-state-settle-delay 0.01))
         (unwind-protect
             (progn
-              (herdr-state--reconnect)
+              (herdr-state--reconnect (herdr-current-connection))
               (let ((deadline (+ (float-time) 5)))
-                (while (and herdr-state--settle-timer
+                (while (and (herdr-connection-settle-timer (herdr-current-connection))
                             (< (float-time) deadline))
                   (sit-for 0.02)))
-              (should-not herdr-state--settle-timer)
-              (should (member "session.snapshot" methods))
-              (should (equal "fresh" (herdr-state-live-test--label
-                                      #'herdr-state-workspaces
-                                      'workspace_id "w1"))))
-          (herdr-state--close herdr-state--global-process)
-          (herdr-state--close herdr-state--pane-process)
-          (when herdr-state--settle-timer
-            (cancel-timer herdr-state--settle-timer)))))))
+              (should-not (herdr-connection-settle-timer (herdr-current-connection)))
+              (should (herdr-test-wait-for
+                       (lambda () (member "session.snapshot" methods))))
+              (should (herdr-test-wait-for
+                       (lambda ()
+                         (equal "fresh" (herdr-state-live-test--label
+                                         #'herdr-state-workspaces
+                                         'workspace_id "w1"))))))
+          (herdr-state--close (herdr-connection-global-process (herdr-current-connection)))
+          (herdr-state--close (herdr-connection-pane-process (herdr-current-connection)))
+          (when (herdr-connection-settle-timer (herdr-current-connection))
+            (cancel-timer (herdr-connection-settle-timer (herdr-current-connection))))))))))
 
 (ert-deftest herdr-state-reconnect-announces-the-resync-once ()
   "Listeners hold their own view, so a wholesale cache replacement they
@@ -358,18 +346,13 @@ are not told about is the same bug one level up."
     (herdr-test-with-server
         (herdr-state-live-test--reconnect-server
          (lambda (method) (push method methods)))
-      (let* ((herdr-state--running t)
-             (herdr-state--pane-process nil)
-             (herdr-state--resubscribe-timer nil)
-             (herdr-state--settle-timer nil)
-             (herdr-state--current (herdr-state-live-test--stale-cache))
-             (herdr-state-change-functions
-              (list (lambda (kind _data) (push kind kinds)))))
+      (herdr-test-with-state (:running t :pane-process nil :resubscribe-timer nil :settle-timer nil :cache (herdr-state-live-test--stale-cache))(let* ((herdr-state-change-functions (list (lambda (_connection kind _data) (push kind kinds)))))
         (unwind-protect
             (progn
-              (herdr-state--settle t)
-              (should (member "resync" kinds)))
-          (herdr-state--close herdr-state--pane-process))))))
+              (herdr-state--settle (herdr-current-connection) t)
+              (should (herdr-test-wait-for
+                       (lambda () (member "resync" kinds)))))
+          (herdr-state--close (herdr-connection-pane-process (herdr-current-connection)))))))))
 
 (ert-deftest herdr-state-settle-without-resync-does-not-snapshot ()
   "The start path has just snapshotted, so its settle re-fetches
@@ -378,17 +361,14 @@ nothing: it reconciles, and does not ask for another snapshot."
     (herdr-test-with-server
         (herdr-state-live-test--reconnect-server
          (lambda (method) (push method methods)))
-      (let ((herdr-state--running t)
-            (herdr-state--pane-process nil)
-            (herdr-state--resubscribe-timer nil)
-            (herdr-state--settle-timer nil)
-            (herdr-state--current (herdr-state-live-test--stale-cache)))
+      (herdr-test-with-state (:running t :pane-process nil :resubscribe-timer nil :settle-timer nil :cache (herdr-state-live-test--stale-cache))(progn
         (unwind-protect
             (progn
-              (herdr-state--settle)
-              (should-not (member "session.snapshot" methods))
-              (should (member "pane.list" methods)))
-          (herdr-state--close herdr-state--pane-process))))))
+              (herdr-state--settle (herdr-current-connection))
+              (should (herdr-test-wait-for
+                       (lambda () (member "pane.list" methods))))
+              (should-not (member "session.snapshot" methods)))
+          (herdr-state--close (herdr-connection-pane-process (herdr-current-connection)))))))))
 
 ;;; Reconciling the pane set against the server
 
@@ -406,37 +386,34 @@ ordering."
   (herdr-test-with-server
       (herdr-state-live-test--pane-list-server
        [((pane_id . "w1:p1") (cwd . "/tmp"))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))
                         ((pane_id . "w1:ghost1"))
-                        ((pane_id . "w1:ghost2"))))))))
-      (should (herdr-state-reconcile-panes))
-      (should (equal '("w1:p1") (herdr-state-pane-ids herdr-state--current))))))
+                        ((pane_id . "w1:ghost2")))))))
+      (should (herdr-state-reconcile-panes (herdr-current-connection)))
+      (should (equal '("w1:p1") (herdr-state-pane-ids (herdr-connection-cache (herdr-current-connection))))))))
 
 (ert-deftest herdr-state-reconcile-adds-panes-the-cache-missed ()
   (herdr-test-with-server
       (herdr-state-live-test--pane-list-server
        [((pane_id . "w1:p1") (cwd . "/tmp"))
         ((pane_id . "w1:p2") (cwd . "/tmp") (agent . "claude"))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))))))
-      (should (herdr-state-reconcile-panes))
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
+            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp")))))))
+      (should (herdr-state-reconcile-panes (herdr-current-connection)))
       (should (equal '("w1:p1" "w1:p2")
-                     (herdr-state-pane-ids herdr-state--current)))
-      (should (= 1 (length (herdr-state-agents herdr-state--current)))))))
+                     (herdr-state-pane-ids (herdr-connection-cache (herdr-current-connection)))))
+      (should (= 1 (length (herdr-state-agents (herdr-connection-cache (herdr-current-connection)))))))))
 
 (ert-deftest herdr-state-reconcile-picks-up-directory-changes ()
   (herdr-test-with-server
       (herdr-state-live-test--pane-list-server
        [((pane_id . "w1:p1") (cwd . "/usr/local"))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))))))
-      (should (herdr-state-reconcile-panes))
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
+            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp")))))))
+      (should (herdr-state-reconcile-panes (herdr-current-connection)))
       (should (equal "/usr/local"
-                     (alist-get 'cwd (herdr-state-pane herdr-state--current
+                     (alist-get 'cwd (herdr-state-pane (herdr-connection-cache (herdr-current-connection))
                                                        "w1:p1")))))))
 
 (ert-deftest herdr-state-reconcile-reports-no-change-when-in-sync ()
@@ -445,19 +422,18 @@ for nothing."
   (herdr-test-with-server
       (herdr-state-live-test--pane-list-server
        [((pane_id . "w1:p1") (cwd . "/tmp"))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))))))
-      (should-not (herdr-state-reconcile-panes)))))
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
+            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp")))))))
+      (should-not (herdr-state-reconcile-panes (herdr-current-connection))))))
 
 (ert-deftest herdr-state-reconcile-leaves-the-cache-alone-when-unreachable ()
   "A failed poll must not empty the cache."
-  (let ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
-        (herdr-state--current
-         (herdr-state-from-snapshot
-          '((panes . (((pane_id . "w1:p1"))))))))
-    (should-not (herdr-state-reconcile-panes))
-    (should (equal '("w1:p1") (herdr-state-pane-ids herdr-state--current)))))
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+          '((panes . (((pane_id . "w1:p1")))))))(progn
+    (setf (herdr-connection-socket-path (herdr-current-connection))
+          "/tmp/herdr-test-definitely-absent.sock")
+    (should-not (herdr-state-reconcile-panes (herdr-current-connection)))
+    (should (equal '("w1:p1") (herdr-state-pane-ids (herdr-connection-cache (herdr-current-connection))))))))
 
 (ert-deftest herdr-state-reconcile-refreshes-a-changed-agent-label ()
   "A shell pane herdr has relabelled must not keep its old label.
@@ -469,15 +445,14 @@ reporting `shell' indefinitely."
       (herdr-state-live-test--pane-list-server
        [((pane_id . "w1:p1") (agent . "claude") (agent_status . "working")
          (cwd . "/tmp"))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((panes . (((pane_id . "w1:p1") (agent . "shell")
-                         (agent_status . "idle") (cwd . "/tmp"))))))))
-      (should (herdr-state-reconcile-panes))
-      (let ((pane (herdr-state-pane herdr-state--current "w1:p1")))
+                         (agent_status . "idle") (cwd . "/tmp")))))))
+      (should (herdr-state-reconcile-panes (herdr-current-connection)))
+      (let ((pane (herdr-state-pane (herdr-connection-cache (herdr-current-connection)) "w1:p1")))
         (should (equal "claude" (alist-get 'agent pane)))
         (should (equal "working" (alist-get 'agent_status pane))))
-      (should (= 1 (length (herdr-state-agents herdr-state--current)))))))
+      (should (= 1 (length (herdr-state-agents (herdr-connection-cache (herdr-current-connection)))))))))
 
 (ert-deftest herdr-state-reconcile-refreshes-a-title-silently ()
   "A title-only drift refreshes the cache without reporting a change.
@@ -494,14 +469,13 @@ title."
       (herdr-state-live-test--pane-list-server
        [((pane_id . "w1:p1") (cwd . "/tmp")
          (terminal_title_stripped . "* Herding (12s)"))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((panes . (((pane_id . "w1:p1") (cwd . "/tmp")
-                         (terminal_title_stripped . "- Herding (11s)"))))))))
-      (should-not (herdr-state-reconcile-panes))
+                         (terminal_title_stripped . "- Herding (11s)")))))))
+      (should-not (herdr-state-reconcile-panes (herdr-current-connection)))
       (should (equal "* Herding (12s)"
                      (alist-get 'terminal_title_stripped
-                                (herdr-state-pane herdr-state--current
+                                (herdr-state-pane (herdr-connection-cache (herdr-current-connection))
                                                   "w1:p1")))))))
 
 (ert-deftest herdr-state-pane-updated-still-carries-the-title-in ()
@@ -525,10 +499,9 @@ every poll report a change and refresh every consumer."
       (herdr-state-live-test--pane-list-server
        [((pane_id . "w1:p1") (cwd . "/tmp") (revision . 99)
          (scroll . ((offset_from_bottom . 5))))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp") (revision . 1))))))))
-      (should-not (herdr-state-reconcile-panes)))))
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
+            '((panes . (((pane_id . "w1:p1") (cwd . "/tmp") (revision . 1)))))))
+      (should-not (herdr-state-reconcile-panes (herdr-current-connection))))))
 
 ;;; The sentinel: reconnect on a real drop, not on a marked teardown
 
@@ -544,11 +517,10 @@ real process through it: an unmarked drop must schedule a reconnect."
         (if (equal (alist-get 'method req) "events.subscribe")
             (cons (herdr-test-ok req '((type . "subscription_started"))) t)
           (cons (herdr-test-ok req '((type . "ok"))) nil)))
-    (let ((herdr-state--running t)
-          (herdr-state--reconnect-timer nil)
-          (herdr-state--reconnect-delay nil)
-          (proc (herdr-rpc-connect "herdr-sentinel-test" #'ignore
-                                   #'herdr-state--sentinel)))
+    (herdr-test-with-state (:running t :reconnect-timer nil :reconnect-delay nil)(let* ((proc (herdr-rpc-connect (herdr-current-connection) "herdr-sentinel-test" #'ignore
+                                   (let ((connection (herdr-current-connection)))
+                                     (lambda (proc event)
+                                       (herdr-state--sentinel connection proc event))))))
       (unwind-protect
           (progn
             ;; Dropped without `herdr-state--close' marking it
@@ -556,12 +528,12 @@ real process through it: an unmarked drop must schedule a reconnect."
             ;; disconnect takes.
             (delete-process proc)
             (let ((deadline (+ (float-time) 5)))
-              (while (and (not herdr-state--reconnect-timer)
+              (while (and (not (herdr-connection-reconnect-timer (herdr-current-connection)))
                           (< (float-time) deadline))
                 (accept-process-output nil 0.05)))
-            (should herdr-state--reconnect-timer))
-        (when herdr-state--reconnect-timer
-          (cancel-timer herdr-state--reconnect-timer))))))
+            (should (herdr-connection-reconnect-timer (herdr-current-connection))))
+        (when (herdr-connection-reconnect-timer (herdr-current-connection))
+          (cancel-timer (herdr-connection-reconnect-timer (herdr-current-connection)))))))))
 
 (ert-deftest herdr-state-sentinel-ignores-a-marked-teardown ()
   "The other half of the same distinction: `herdr-state--close' marks a
@@ -575,85 +547,26 @@ event."
         (if (equal (alist-get 'method req) "events.subscribe")
             (cons (herdr-test-ok req '((type . "subscription_started"))) t)
           (cons (herdr-test-ok req '((type . "ok"))) nil)))
-    (let ((herdr-state--running t)
-          (herdr-state--reconnect-timer nil)
-          (herdr-state--reconnect-delay nil)
-          (proc (herdr-rpc-connect "herdr-sentinel-test" #'ignore
-                                   #'herdr-state--sentinel)))
+    (herdr-test-with-state (:running t :reconnect-timer nil :reconnect-delay nil)(let* ((proc (herdr-rpc-connect (herdr-current-connection) "herdr-sentinel-test" #'ignore
+                                   (let ((connection (herdr-current-connection)))
+                                     (lambda (proc event)
+                                       (herdr-state--sentinel connection proc event))))))
       (herdr-state--close proc)
       (let ((deadline (+ (float-time) 1)))
         (while (< (float-time) deadline)
           (accept-process-output nil 0.05)))
-      (should-not herdr-state--reconnect-timer))))
+      (should-not (herdr-connection-reconnect-timer (herdr-current-connection)))))))
 
 ;;; Reconciling workspaces and tabs against the server
 
 ;; Ghost workspaces are the same disconnect and startup-window class as
-;; ghost panes, but with no periodic repair at all before
-;; `herdr-state-reconcile-workspaces' existed: a missed `workspace.closed'
-;; had nothing short of a full reconnect to clear it, and a
-;; long-lived session that never disconnects never reconnects.
-;; Observed live: four workspaces and six tabs, closed server-side,
-;; still rendering in the dispatcher after running for days.
-
-(defun herdr-state-live-test--workspace-list-server (workspaces)
-  "Return a responder answering `workspace.list' with WORKSPACES."
-  (lambda (req)
-    (cons (herdr-test-ok req `((type . "workspace_list")
-                               (workspaces . ,workspaces)))
-          nil)))
-
-(ert-deftest herdr-state-reconcile-workspaces-drops-ghosts ()
-  (herdr-test-with-server
-      (herdr-state-live-test--workspace-list-server
-       [((workspace_id . "w1") (label . "kept"))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w1") (label . "kept"))
-                             ((workspace_id . "w9") (label . "ghost"))))))))
-      (should (herdr-state-reconcile-workspaces))
-      (should (equal '("w1")
-                     (mapcar (lambda (w) (herdr-workspace-id w))
-                             (herdr-state-workspaces herdr-state--current)))))))
-
-(ert-deftest herdr-state-reconcile-workspaces-adds-and-updates ()
-  (herdr-test-with-server
-      (herdr-state-live-test--workspace-list-server
-       [((workspace_id . "w1") (label . "renamed"))
-        ((workspace_id . "w2") (label . "new"))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w1") (label . "old"))))))))
-      (should (herdr-state-reconcile-workspaces))
-      (should (equal "renamed"
-                     (alist-get 'label
-                                (seq-find (lambda (w) (equal "w1" (alist-get
-                                                                    'workspace_id w)))
-                                          (herdr-state-workspaces
-                                           herdr-state--current)))))
-      (should (seq-find (lambda (w) (equal "w2" (herdr-workspace-id w)))
-                        (herdr-state-workspaces herdr-state--current))))))
-
-(ert-deftest herdr-state-reconcile-workspaces-reports-no-change-when-in-sync ()
-  "The poll runs on every tick; it must not redraw the dispatcher for
-nothing when nothing has changed."
-  (herdr-test-with-server
-      (herdr-state-live-test--workspace-list-server
-       [((workspace_id . "w1") (label . "kept"))])
-    (let ((herdr-state--current
-           (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w1") (label . "kept"))))))))
-      (should-not (herdr-state-reconcile-workspaces)))))
-
-(ert-deftest herdr-state-reconcile-workspaces-leaves-the-cache-alone-when-unreachable ()
-  (let ((herdr-socket-path "/tmp/herdr-test-definitely-absent.sock")
-        (herdr-state--current
-         (herdr-state-from-snapshot
-          '((workspaces . (((workspace_id . "w1"))))))))
-    (should-not (herdr-state-reconcile-workspaces))
-    (should (equal '("w1")
-                   (mapcar (lambda (w) (herdr-workspace-id w))
-                           (herdr-state-workspaces herdr-state--current))))))
+;; ghost panes, and they used to have no periodic repair at all: a
+;; missed `workspace.closed' had nothing short of a full reconnect to
+;; clear it, and a long-lived session that never disconnects never
+;; reconnects.  Observed live: four workspaces and six tabs, closed
+;; server-side, still rendering in the dispatcher after running for
+;; days.  The repair reconciles both sets now; the tests for the fold
+;; itself are hermetic, and these cover it reaching a real server.
 
 (ert-deftest herdr-state-settle-reconciles-workspaces-too ()
   "The startup window loses events and no replay covers it any more.
@@ -662,8 +575,7 @@ herdr 0.9.0 starts a subscription at the sequence its request arrived
 on, so anything the server announced between `session.snapshot\=' and
 the subscribe is gone.  `pane.list\=' repairs panes; without a
 `workspace.list\=' beside it a workspace renamed in that window stays
-wrong until something else happens to reconcile, and
-`herdr-state-reconcile-workspaces\=' has one other caller."
+wrong until something else happens to reconcile."
   (let (methods)
     (herdr-test-with-server
         (lambda (req)
@@ -679,22 +591,21 @@ wrong until something else happens to reconcile, and
                                             (label . "renamed"))])))
                      nil))
               (_ (cons (herdr-test-ok req '((type . "ok"))) nil)))))
-      (let ((herdr-state--running t)
-            (herdr-state--pane-process nil)
-            (herdr-state--resubscribe-timer nil)
-            (herdr-state--settle-timer nil)
-            (herdr-state--current
-             (herdr-state-from-snapshot
-              '((workspaces . (((workspace_id . "w1") (label . "stale"))))))))
+      (herdr-test-with-state (:running t :pane-process nil :resubscribe-timer nil :settle-timer nil :cache (herdr-state-from-snapshot
+              '((workspaces . (((workspace_id . "w1") (label . "stale")))))))
         (unwind-protect
             (progn
-              (herdr-state--settle)
-              (should (member "workspace.list" methods))
-              (should (equal "renamed"
-                             (alist-get 'label
-                                        (car (herdr-state-workspaces
-                                              herdr-state--current))))))
-          (herdr-state--close herdr-state--pane-process))))))
+              (herdr-state--settle (herdr-current-connection))
+              (should (herdr-test-wait-for
+                       (lambda () (member "workspace.list" methods))))
+              (should (herdr-test-wait-for
+                       (lambda ()
+                         (equal "renamed"
+                                (alist-get 'label
+                                           (car (herdr-state-workspaces
+                                                 (herdr-connection-cache
+                                                  (herdr-current-connection))))))))))
+          (herdr-state--close (herdr-connection-pane-process (herdr-current-connection))))))))
 
 (ert-deftest herdr-state-settle-reconciles-panes-before-workspaces ()
   "Connection B is realigned against the pane set, so the pane set is
@@ -711,25 +622,22 @@ settled first.  Recorded in reverse, so the list reads newest first."
                (cons (herdr-test-ok req '((type . "workspace_list")
                                           (workspaces . []))) nil))
               (_ (cons (herdr-test-ok req '((type . "ok"))) nil)))))
-      (let ((herdr-state--running t)
-            (herdr-state--pane-process nil)
-            (herdr-state--resubscribe-timer nil)
-            (herdr-state--settle-timer nil)
-            (herdr-state--current (herdr-state-empty)))
+      (herdr-test-with-state (:running t :pane-process nil :resubscribe-timer nil :settle-timer nil)(progn
         (unwind-protect
             (progn
-              (herdr-state--settle)
+              (herdr-state--settle (herdr-current-connection))
+              (should (herdr-test-wait-for
+                       (lambda () (member "workspace.list" methods))))
               (let ((order (nreverse methods)))
                 (should (< (seq-position order "pane.list")
                            (seq-position order "workspace.list")))))
-          (herdr-state--close herdr-state--pane-process))))))
+          (herdr-state--close (herdr-connection-pane-process (herdr-current-connection)))))))))
 
 (ert-deftest herdr-state-settle-keeps-the-cache-when-workspace-list-fails ()
   "An unanswerable `workspace.list\=' must not read as an empty server.
 
-`herdr-state-reconcile-workspaces\=' already refuses to treat nil as an
-answer; the settle must not defeat that by calling it somewhere the
-refusal cannot take effect."
+The reconcile already refuses to treat nil as an answer; the settle must
+not defeat that by calling it somewhere the refusal cannot take effect."
   (herdr-test-with-server
       (lambda (req)
         (pcase (alist-get 'method req)
@@ -737,20 +645,15 @@ refusal cannot take effect."
            (cons (herdr-test-ok req '((type . "pane_list") (panes . []))) nil))
           ("workspace.list" (cons nil nil))
           (_ (cons (herdr-test-ok req '((type . "ok"))) nil))))
-    (let ((herdr-state--running t)
-          (herdr-state--pane-process nil)
-          (herdr-state--resubscribe-timer nil)
-          (herdr-state--settle-timer nil)
-          (herdr-state--current
-           (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w1") (label . "kept"))))))))
+    (herdr-test-with-state (:running t :pane-process nil :resubscribe-timer nil :settle-timer nil :cache (herdr-state-from-snapshot
+            '((workspaces . (((workspace_id . "w1") (label . "kept")))))))
       (unwind-protect
           (progn
-            (herdr-state--settle)
+            (herdr-state--settle (herdr-current-connection))
             (should (equal '("w1")
                            (mapcar (lambda (w) (herdr-workspace-id w))
-                                   (herdr-state-workspaces herdr-state--current)))))
-        (herdr-state--close herdr-state--pane-process)))))
+                                   (herdr-state-workspaces (herdr-connection-cache (herdr-current-connection)))))))
+        (herdr-state--close (herdr-connection-pane-process (herdr-current-connection)))))))
 
 (provide 'herdr-state-live-test)
 ;;; herdr-state-live-test.el ends here

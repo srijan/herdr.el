@@ -21,6 +21,7 @@
 
 (require 'subr-x)
 (require 'herdr-state)
+(require 'herdr-connection)
 (require 'herdr-tree)
 (require 'herdr-pane)
 
@@ -39,12 +40,6 @@ Nil means never.  A sensible opt-in is (\"blocked\" \"done\")."
 
 ;;; Modeline segment
 
-(defun herdr-modeline--counts (state)
-  "Return an alist of (STATUS . COUNT) for the agents in STATE.
-Delegates to `herdr-tree-status-counts\\=', which the dispatcher header
-reads from too, so the modeline and the dispatcher cannot disagree."
-  (herdr-tree-status-counts state))
-
 (defun herdr-modeline--segment (state)
   "Return the modeline string for STATE, or an empty string.
 Idle agents are omitted: a count that is always on screen stops being
@@ -52,6 +47,16 @@ read.  Only the states worth acting on appear, via
 `herdr-tree-status-summary\\='."
   (let ((summary (herdr-tree-status-summary state)))
     (if (string-empty-p summary) "" (concat "herdr:" summary))))
+
+(defun herdr-modeline--state ()
+  "Return the state the segment summarises: every connection at once.
+
+Each connection\\='s own cache, added up here and nowhere else, per KTD6.
+Nothing in this path does I/O, so a server that has gone quiet costs
+the summary nothing and the others still count — which is the whole
+reason the segment reads caches rather than asking."
+  (herdr-state-merged
+   (mapcar #'herdr-state-current (herdr-connection-list))))
 
 (defvar herdr-modeline-string ""
   "Cached modeline segment, refreshed from the state change hook.")
@@ -80,7 +85,7 @@ redisplay of every mode line in Emacs several times a second for text
 that almost never differed: the flicker.  The subscription is gone, but
 the guard stays: bursts still happen (settles, reconciles, status
 refreshes), and only a changed count is worth a redisplay."
-  (let ((text (herdr-modeline--segment (herdr-state-current))))
+  (let ((text (herdr-modeline--segment (herdr-modeline--state))))
     (unless (equal text herdr-modeline--text)
       (setq herdr-modeline--text text)
       (setq herdr-modeline-string
@@ -141,15 +146,22 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
     (funcall 'notifications-notify :title title :body body))
    (t (message "%s: %s" title body))))
 
-(defun herdr-notify--maybe (&rest _)
-  "Notify about agents that just entered a status in `herdr-notify-statuses'."
+(defun herdr-notify--maybe (connection &rest _)
+  "Notify about CONNECTION\='s agents that just entered a watched status.
+The statuses worth notifying about are `herdr-notify-statuses\='.
+
+Keyed by the connection\='s token beside the pane id: ids are per-server
+counters, so a bare one would have two machines' `w1:p1\=' share a last
+status — one agent going idle suppressing the other\='s notification, and
+its next status firing one that never happened."
   (when herdr-notify-statuses
-    (dolist (pane (herdr-state-agents (herdr-state-current)))
+    (dolist (pane (herdr-state-agents (herdr-state-current connection)))
       (let* ((id (herdr-pane-id pane))
+             (key (cons (herdr-connection-token connection) id))
              (status (herdr-pane-status pane))
-             (previous (gethash id herdr-notify--last-status)))
+             (previous (gethash key herdr-notify--last-status)))
         (unless (equal status previous)
-          (puthash id status herdr-notify--last-status)
+          (puthash key status herdr-notify--last-status)
           (when (and previous (member status herdr-notify-statuses))
             (herdr-notify--send
              (format "herdr: %s is %s" (or (herdr-pane-agent pane) id) status)

@@ -47,7 +47,7 @@ wrong workspace and creating one in the wrong directory are the two ways
 this goes wrong while still sending the right method."
   (dolist (case '(("/tmp/project/" "workspace.focus" workspace_id "w1")
                   ("/tmp/nowhere/" "workspace.create" cwd "/tmp/nowhere/")))
-    (let ((herdr-state--current (herdr-project-test--state))
+    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-project-test--state))))
           (default-directory (nth 0 case))
           wire params)
       (cl-letf (((symbol-function 'herdr-start) #'ignore)
@@ -68,7 +68,7 @@ this goes wrong while still sending the right method."
       (should (equal (list (nth 1 case)) wire))
       (should (equal (nth 3 case) (alist-get (nth 2 case) params)))))
   ;; A created workspace is named for the directory it is rooted in.
-  (let ((herdr-state--current (herdr-project-test--state))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-project-test--state))))
         (default-directory "/tmp/nowhere/")
         params)
     (cl-letf (((symbol-function 'herdr-start) #'ignore)
@@ -90,7 +90,7 @@ this goes wrong while still sending the right method."
 (ert-deftest herdr-project-prefers-the-project-root-over-the-default-directory ()
   "A command run from a file deep in a tree should reach the tree's
 workspace, not make one for the subdirectory it happened to be in."
-  (let ((herdr-state--current (herdr-project-test--state))
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-project-test--state))))
         (default-directory "/tmp/project/src/deep/")
         wire params)
     (cl-letf (((symbol-function 'herdr-start) #'ignore)
@@ -196,7 +196,7 @@ because herdr bumped a minor is worse than one command misbehaving — and
 it warns once.  This runs at the front of `herdr-start', which runs at
 the front of every entry point, so warning per call is warning per
 command."
-  (let ((herdr--protocol-warned nil)
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         said)
     (cl-letf (((symbol-function 'message)
                (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
@@ -205,8 +205,8 @@ command."
             (cons (herdr-test-ok
                    req `((protocol . ,(1+ herdr-protocol-version))))
                   nil))
-        (herdr--check-protocol)
-        (herdr--check-protocol)))
+        (herdr--check-protocol (herdr-current-connection))
+        (herdr--check-protocol (herdr-current-connection))))
     (should (= 1 (length said)))
     (should (string-match-p (number-to-string (1+ herdr-protocol-version))
                             (car said)))
@@ -215,26 +215,43 @@ command."
 
 (ert-deftest herdr-check-protocol-is-silent-when-the-versions-agree ()
   "The common case has to cost nothing and say nothing."
-  (let ((herdr--protocol-warned nil)
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
         said)
     (cl-letf (((symbol-function 'message) (lambda (&rest _) (push t said))))
       (herdr-test-with-server
           (lambda (req)
             (cons (herdr-test-ok req `((protocol . ,herdr-protocol-version)))
                   nil))
-        (herdr--check-protocol)))
+        (herdr--check-protocol (herdr-current-connection))))
     (should-not said)
-    (should-not herdr--protocol-warned)))
+    (should-not (herdr-connection-protocol-warned (herdr-current-connection)))))
+
+(ert-deftest herdr-check-protocol-warns-once-per-connection ()
+  "One flag for the package meant the first server to disagree silenced
+the check for every server after it — including the one just added,
+which is the one whose protocol is least likely to be known."
+  (let ((herdr-connections (herdr-test-connections (herdr-test-connection)))
+        said)
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
+      (herdr-test-with-server
+          (lambda (req)
+            (cons (herdr-test-ok
+                   req `((protocol . ,(1+ herdr-protocol-version))))
+                  nil))
+        (herdr--check-protocol (herdr-current-connection))
+        (herdr--check-protocol (herdr-test-connection))))
+    (should (= 2 (length said)))))
 
 (ert-deftest herdr-start-does-not-restart-a-stream-already-running ()
   "`herdr-start' fronts every entry point, so it has to be safe to call
 again: a second event stream would double every event the cache folds."
   (let (starts ensures)
     (cl-letf (((symbol-function 'herdr-term-ensure)
-               (lambda () (push t ensures)))
+               (lambda (_connection) (push t ensures)))
               ((symbol-function 'herdr--check-protocol) #'ignore)
-              ((symbol-function 'herdr-state-running-p) (lambda () t))
-              ((symbol-function 'herdr-state-start) (lambda () (push t starts))))
+              ((symbol-function 'herdr-state-running-p) (lambda (_connection) t))
+              ((symbol-function 'herdr-state-start) (lambda (_connection) (push t starts))))
       (herdr-start)
       (should-not starts)
       (should (= 2 (length ensures))))))
@@ -244,23 +261,47 @@ again: a second event stream would double every event the cache folds."
 been primed."
   (let (starts ensures)
     (cl-letf (((symbol-function 'herdr-term-ensure)
-               (lambda () (push t ensures)))
+               (lambda (_connection) (push t ensures)))
               ((symbol-function 'herdr--check-protocol) #'ignore)
-              ((symbol-function 'herdr-state-running-p) (lambda () nil))
-              ((symbol-function 'herdr-state-start) (lambda () (push t starts))))
+              ((symbol-function 'herdr-state-running-p) (lambda (_connection) nil))
+              ((symbol-function 'herdr-state-start) (lambda (_connection) (push t starts))))
       (herdr-start)
       (should (= 1 (length starts)))
       (should (= 2 (length ensures))))))
 
 (ert-deftest herdr-stop-tears-down-both-halves ()
   "Stopping one half leaves either an event stream feeding buffers that
-are gone, or buffers attached to a stream that has stopped."
+are gone, or buffers attached to a stream that has stopped.
+
+Both halves take the SAME connection.  The stub used to take no
+argument, which matched a teardown call that reaped every connection\\='s
+buffers and so kept the defect green."
   (let (torn stopped)
-    (cl-letf (((symbol-function 'herdr-term-teardown) (lambda () (push t torn)))
-              ((symbol-function 'herdr-state-stop) (lambda () (push t stopped))))
+    (cl-letf (((symbol-function 'herdr-term-teardown)
+               (lambda (connection) (push connection torn)))
+              ((symbol-function 'herdr-state-stop)
+               (lambda (connection) (push connection stopped))))
       (herdr-stop))
-    (should torn)
-    (should stopped)))
+    (should (= 1 (length torn)))
+    (should (= 1 (length stopped)))
+    (should (herdr-connection-p (car torn)))
+    (should (eq (car torn) (car stopped)))))
+
+(ert-deftest herdr-project-every-bound-command-can-actually-run ()
+  "A command with a required argument and a bare `(interactive)\=' is a
+dead key: `herdr-state-resync\=' gained an argument and kept the spec, so
+`g\=' signalled wrong-number-of-arguments for every user."
+  (let (broken)
+    (map-keymap
+     (lambda (_event binding)
+       (when (and (symbolp binding) (commandp binding))
+         (let ((arity (func-arity binding))
+               (spec (cadr (interactive-form binding))))
+           ;; A required argument the interactive spec does not supply.
+           (when (and (> (car arity) 0) (null spec))
+             (push binding broken)))))
+     herdr-command-map)
+    (should-not broken)))
 
 (provide 'herdr-project-test)
 ;;; herdr-project-test.el ends here

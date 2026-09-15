@@ -22,6 +22,7 @@
 (require 'subr-x)
 (require 'ansi-color)
 (require 'herdr-rpc)
+(require 'herdr-connection)
 (require 'herdr-state)
 (require 'herdr-select)
 (require 'herdr-term)
@@ -48,7 +49,7 @@ schema by the drift test.")
 (defun herdr-cmd--current-pane-id ()
   "Return the id of the pane herdr currently considers focused."
   (ignore-errors
-    (alist-get 'pane_id (alist-get 'pane (herdr-rpc-call "pane.current")))))
+    (alist-get 'pane_id (alist-get 'pane (herdr-rpc-call (herdr-current-connection) "pane.current")))))
 
 (defun herdr-cmd--pane-description (pane-id)
   "Return a readable description of PANE-ID, retaining its exact id.
@@ -87,22 +88,26 @@ paneless client, so `pane.current' answers with the server's global
 focus instead.  A cache miss waits for reconciliation rather than
 failing, since creation was announced on the event stream."
   (when pane-id
-    (unless (herdr-term-select-pane pane-id)
-      (herdr-cmd--select-pane-when-ready pane-id))))
+    (let ((connection (herdr-current-connection)))
+      (unless (herdr-term-select-pane connection pane-id)
+        (herdr-cmd--select-pane-when-ready connection pane-id)))))
 
-(defun herdr-cmd--select-pane-when-ready (pane-id)
-  "Select PANE-ID's buffer as soon as reconciliation has built it.
-Gated on `herdr-state-generation', captured at the first attempt.  The
-chain keeps no handle for `herdr-stop' to cancel, so without the gate a
-stop-and-restart leaves it selecting buffers for the old session."
-  (let ((generation (herdr-state-generation)))
+(defun herdr-cmd--select-pane-when-ready (connection pane-id)
+  "Select PANE-ID's buffer on CONNECTION once reconciliation has built it.
+Gated on the generation, captured at the first attempt along with the
+connection.  The chain keeps no handle for `herdr-stop' to cancel, so
+without the gate a stop-and-restart leaves it selecting buffers for the
+old session — and without the captured connection a retry scheduled
+against one server lands on whichever the user looked at next, silently,
+because the id exists on both."
+  (let ((generation (herdr-state-generation connection)))
     (letrec ((attempts 0)
              (check
               (lambda ()
                 (setq attempts (1+ attempts))
-                (when (= generation (herdr-state-generation))
+                (when (= generation (herdr-state-generation connection))
                   (cond
-                   ((herdr-term-select-pane pane-id))
+                   ((herdr-term-select-pane connection pane-id))
                    ((< attempts 20) (run-at-time 0.25 nil check)))))))
       (run-at-time 0.25 nil check))))
 
@@ -125,7 +130,7 @@ result greppable."
          (description (herdr-cmd--pane-description pane)))
     (if (y-or-n-p (format "Close pane %s? " description))
         (progn
-          (herdr-rpc-call "pane.close" `((pane_id . ,pane)))
+          (herdr-rpc-call (herdr-current-connection) "pane.close" `((pane_id . ,pane)))
           ;; Say something afterwards.  Closing reaps the pane's buffer,
           ;; so redisplay happens while the confirmation prompt is still
           ;; on screen and it otherwise sits there looking unanswered.
@@ -135,9 +140,12 @@ result greppable."
 (defun herdr-pane-rename (label &optional pane-id)
   "Rename PANE-ID, or the focused pane, to LABEL."
   (interactive (list (read-string "Pane label: ")))
-  (herdr-rpc-call "pane.rename"
-                  `((pane_id . ,(or pane-id (herdr-select-target-pane)))
-                    (label . ,label))))
+  ;; The pane is chosen before the connection is asked for, here and in
+  ;; every command that prompts: picking says which server, and an
+  ;; argument evaluated first would have resolved one already.
+  (let ((pane (or pane-id (herdr-select-target-pane))))
+    (herdr-rpc-call (herdr-current-connection) "pane.rename"
+                    `((pane_id . ,pane) (label . ,label)))))
 
 (defun herdr-pane-focus (&optional pane-id)
   "Focus PANE-ID, prompting when not given, and select its buffer.
@@ -146,10 +154,11 @@ Focusing is server-side and has no visible effect on its own, because
 each pane is a separate Emacs buffer and nothing repaints.  Emacs is
 moved to match."
   (interactive)
-  (let ((pane (or pane-id (herdr-select-pane "Focus pane: "))))
-    (herdr-rpc-call "pane.focus" `((pane_id . ,pane)))
-    (or (herdr-term-select-pane pane)
-        (herdr-cmd--select-pane-when-ready pane))
+  (let ((pane (or pane-id (herdr-select-pane "Focus pane: ")))
+        (connection (herdr-current-connection)))
+    (herdr-rpc-call connection "pane.focus" `((pane_id . ,pane)))
+    (or (herdr-term-select-pane connection pane)
+        (herdr-cmd--select-pane-when-ready connection pane))
     pane))
 
 (defun herdr-cmd--follow-focus ()
@@ -159,9 +168,10 @@ Focusing a workspace lands on one of its panes, and the server decides
 which, so the pane has to be asked for rather than assumed.  The cache
 may not hold it yet, since the focus change arrives on the event stream,
 so a miss waits for reconciliation instead of failing."
-  (or (herdr-term-select-focused)
-      (when-let* ((pane (herdr-cmd--current-pane-id)))
-        (herdr-cmd--select-pane-when-ready pane))))
+  (let ((connection (herdr-current-connection)))
+    (or (herdr-term-select-focused connection)
+        (when-let* ((pane (herdr-cmd--current-pane-id)))
+          (herdr-cmd--select-pane-when-ready connection pane)))))
 
 (defun herdr-cmd-read-text (result)
   "Return the terminal text carried by a read RESULT.
@@ -205,7 +215,7 @@ test is enough."
   (interactive)
   (let* ((pane (or pane-id (herdr-select-target-pane "Read pane: ")))
          (source (or source (herdr-cmd--read-source)))
-         (result (herdr-rpc-call "pane.read"
+         (result (herdr-rpc-call (herdr-current-connection) "pane.read"
                                  `((pane_id . ,pane)
                                    (source . ,source)
                                    (lines . ,lines)
@@ -218,13 +228,14 @@ test is enough."
 (defun herdr-workspace-create (cwd &optional label)
   "Create a workspace rooted at CWD called LABEL."
   (interactive (list (read-directory-name "Workspace directory: ")))
-  (herdr-cmd--follow-new-pane
-   (herdr-cmd--created-pane-id
-    (herdr-rpc-call "workspace.create"
-                    `((cwd . ,(expand-file-name cwd))
-                      (label . ,(or label (file-name-nondirectory
-                                           (directory-file-name cwd))))
-                      (focus . t))))))
+  (let ((connection (herdr-current-connection)))
+    (herdr-cmd--follow-new-pane
+     (herdr-cmd--created-pane-id
+      (herdr-rpc-call connection "workspace.create"
+                      `((cwd . ,(herdr-connection-server-path connection cwd))
+                        (label . ,(or label (file-name-nondirectory
+                                             (directory-file-name cwd))))
+                        (focus . t)))))))
 
 (defun herdr-workspace-close (&optional workspace-id)
   "Close WORKSPACE-ID, prompting when not given.
@@ -247,7 +258,7 @@ this without a race, which a preflight cannot."
         (message "herdr: workspace %s left open" description)
       (condition-case err
           (progn
-            (herdr-rpc-call "workspace.close" `((workspace_id . ,workspace)))
+            (herdr-rpc-call (herdr-current-connection) "workspace.close" `((workspace_id . ,workspace)))
             (message "herdr: closed workspace %s" description))
         (herdr-error
          ;; Only the group refusal.  Reading every `herdr-error' as a
@@ -259,7 +270,7 @@ this without a race, which a preflight cannot."
               (format "Workspace %s has linked worktrees; close the group? "
                       description))
              (progn
-               (herdr-rpc-call "workspace.close"
+               (herdr-rpc-call (herdr-current-connection) "workspace.close"
                                `((workspace_id . ,workspace) (close_group . t)))
                (message "herdr: closed workspace group %s" description))
            (message "herdr: workspace %s left open" description)))))))
@@ -267,18 +278,17 @@ this without a race, which a preflight cannot."
 (defun herdr-workspace-focus (&optional workspace-id)
   "Focus WORKSPACE-ID, prompting when not given, and follow it in Emacs."
   (interactive)
-  (herdr-rpc-call "workspace.focus"
-                  `((workspace_id . ,(or workspace-id
-                                         (herdr-select-workspace "Focus: ")))))
+  (let ((workspace (or workspace-id (herdr-select-workspace "Focus: "))))
+    (herdr-rpc-call (herdr-current-connection) "workspace.focus"
+                    `((workspace_id . ,workspace))))
   (herdr-cmd--follow-focus))
 
 (defun herdr-workspace-rename (label &optional workspace-id)
   "Rename WORKSPACE-ID to LABEL."
   (interactive (list (read-string "New workspace label: ")))
-  (herdr-rpc-call "workspace.rename"
-                  `((workspace_id . ,(or workspace-id
-                                         (herdr-select-workspace "Rename: ")))
-                    (label . ,label))))
+  (let ((workspace (or workspace-id (herdr-select-workspace "Rename: "))))
+    (herdr-rpc-call (herdr-current-connection) "workspace.rename"
+                    `((workspace_id . ,workspace) (label . ,label)))))
 
 ;;; Worktrees
 
@@ -288,11 +298,13 @@ This is the command that pays for the package: one step from a branch
 name to a worktree with its own herdr workspace."
   (interactive (list (read-string "New worktree branch: ")
                      (read-string "Base ref (optional): ")))
-  (herdr-rpc-call "worktree.create"
-                  `((branch . ,branch)
-                    (base . ,(unless (string-empty-p (or base "")) base))
-                    (cwd . ,(expand-file-name default-directory))
-                    (focus . t))))
+  (let ((connection (herdr-current-connection)))
+    (herdr-rpc-call connection "worktree.create"
+                    `((branch . ,branch)
+                      (base . ,(unless (string-empty-p (or base "")) base))
+                      (cwd . ,(herdr-connection-server-path
+                               connection default-directory))
+                      (focus . t)))))
 
 (defun herdr-worktree-remove (&optional workspace-id force)
   "Remove the worktree workspace WORKSPACE-ID, forcing when FORCE."
@@ -302,7 +314,7 @@ name to a worktree with its own herdr workspace."
          (description (herdr-cmd--workspace-description workspace)))
     (if (yes-or-no-p (format "Remove worktree workspace %s? " description))
         (progn
-          (herdr-rpc-call "worktree.remove"
+          (herdr-rpc-call (herdr-current-connection) "worktree.remove"
                           `((workspace_id . ,workspace)
                             (force . ,(if force t :false))))
           (message "herdr: removed worktree %s" description))
@@ -313,9 +325,9 @@ name to a worktree with its own herdr workspace."
 (defun herdr-agent-prompt (text &optional target)
   "Send TEXT as a prompt to the agent in TARGET."
   (interactive (list (read-string "Prompt: ")))
-  (herdr-rpc-call "agent.prompt"
-                  `((target . ,(or target (herdr-select-agent "Prompt agent: ")))
-                    (text . ,text))))
+  (let ((target (or target (herdr-select-agent "Prompt agent: "))))
+    (herdr-rpc-call (herdr-current-connection) "agent.prompt"
+                    `((target . ,target) (text . ,text)))))
 
 ;;; Opening a place to run something
 
@@ -329,11 +341,13 @@ name to a worktree with its own herdr workspace."
 focused, and anything that then asks the server \"where am I?\" answers
 with the pane the user was on before.  The reply names the new
 workspace\\='s root pane, so callers go there directly rather than asking."
-  (herdr-cmd--created-pane-id
-   (herdr-rpc-call "workspace.create"
-                   `((cwd . ,(expand-file-name directory))
-                     (label . ,(herdr-cmd--workspace-label directory))
-                     (focus . t)))))
+  (let ((connection (herdr-current-connection)))
+    (herdr-cmd--created-pane-id
+     (herdr-rpc-call connection "workspace.create"
+                     `((cwd . ,(herdr-connection-server-path
+                                connection directory))
+                       (label . ,(herdr-cmd--workspace-label directory))
+                       (focus . t))))))
 
 (defun herdr-cmd-open-workspace-for (root)
   "Focus the workspace at ROOT, creating it if absent, and go there.
@@ -345,7 +359,7 @@ about."
   (if-let* ((existing (herdr-state-workspace-for-directory
                        (herdr-state-current) root)))
       (progn
-        (herdr-rpc-call "workspace.focus"
+        (herdr-rpc-call (herdr-current-connection) "workspace.focus"
                         `((workspace_id . ,(herdr-workspace-id existing))))
         (herdr-term-select-focused))
     (or (herdr-cmd--follow-new-pane (herdr-cmd--create-workspace-pane root))
@@ -358,7 +372,7 @@ nil inherits the workspace directory.  One tab per agent, rather than a
 split: Emacs ignores herdr's layout, but the TUI does not, and N agents
 as N full-width tabs beats N slivers of one tab."
   (herdr-cmd--created-pane-id
-   (herdr-rpc-call "tab.create"
+   (herdr-rpc-call (herdr-current-connection) "tab.create"
                    `((workspace_id . ,workspace-id)
                      (cwd . ,cwd)
                      (focus . t)))))

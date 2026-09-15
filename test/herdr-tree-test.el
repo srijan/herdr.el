@@ -567,7 +567,7 @@ test above and lose every real worktree here."
                            (herdr-tree-test--worktree-rows children))))))
 
 (ert-deftest herdr-tree-drops-a-checkout-that-is-not-this-workspace ()
-  "The case only `herdr-tree-linked-worktree-p' catches, in the renderer.
+  "The case only `herdr-worktree-linked-p' catches, in the renderer.
 
 Every other bare-checkout test here has the checkout naming the
 enclosing workspace, so `herdr-tree-own-workspace-p' catches those too
@@ -597,7 +597,7 @@ nested under?\\=', which a main checkout also answers yes to — but not
 always.  The listing is fetched for the workspace's pane cwd, and a pane
 `cd'-ed into another repository produces a reply whose main checkout
 names some OTHER workspace, or none: that is the third case here, and it
-is why `herdr-tree-linked-worktree-p' still has to be asked."
+is why `herdr-worktree-linked-p' still has to be asked."
   (should (herdr-tree-own-workspace-p '((open_workspace_id . "w1")) "w1"))
   (should-not (herdr-tree-own-workspace-p '((open_workspace_id . "w2")) "w1"))
   (should-not (herdr-tree-own-workspace-p '((open_workspace_id . nil)) "w1"))
@@ -610,10 +610,10 @@ schema does not describe.  Dropping the row costs a line the workspace
 heading above it already shows; keeping it costs the workspace, because
 `open_workspace_id' on a main checkout names the enclosing workspace.
 So absence reads as not linked."
-  (should-not (herdr-tree-linked-worktree-p '((path . "/tmp/x")
+  (should-not (herdr-worktree-linked-p '((path . "/tmp/x")
                                               (branch . "main"))))
-  (should-not (herdr-tree-linked-worktree-p '((is_linked_worktree . nil))))
-  (should (herdr-tree-linked-worktree-p '((is_linked_worktree . t)))))
+  (should-not (herdr-worktree-linked-p '((is_linked_worktree . nil))))
+  (should (herdr-worktree-linked-p '((is_linked_worktree . t)))))
 
 (ert-deftest herdr-tree-worktree-row-shows-its-own-directory ()
   "A worktree row named only by branch gave no way to tell two
@@ -868,7 +868,7 @@ one that is not actually open."
 (ert-deftest herdr-tree-known-project-node-includes-its-own-worktrees ()
   "A known project is still a repository, and its checkouts hang off its
 row the same way an open workspace's hang off that workspace.  Its own
-checkout leads, as a `main' row: `herdr-tree-linked-worktree-p' drops it
+checkout leads, as a `main' row: `herdr-worktree-linked-p' drops it
 from the worktree rows, and it is put back deliberately so that the one
 directory most likely to be wanted is not the one directory with no row
 to aim a verb at."
@@ -897,7 +897,7 @@ to aim a verb at."
 (ert-deftest herdr-tree-known-project-worktree-nodes-omit-the-root-itself ()
   "A directory that is itself a linked worktree of another repository
 appears in its own `worktree.list' reply, flagged linked, because that is
-what it is.  Only `herdr-tree-linked-worktree-p' filtered here, so that
+what it is.  Only `herdr-worktree-linked-p' filtered here, so that
 entry survived and the root rendered as a child of its own heading."
   (let* ((worktrees '(("/tmp/repo-worktrees/feature/"
                        . (((path . "/tmp/repo") (branch . "main")

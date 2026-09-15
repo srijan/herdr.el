@@ -12,6 +12,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'herdr-term)
+(require 'herdr-test-helper)
 
 (defun herdr-term-test--state (&rest panes)
   (herdr-state-from-snapshot `((panes . ,panes))))
@@ -179,14 +180,14 @@ A buffer that started but never reached it is invisible to every one."
         started)
     (herdr-term-test--attaching
         (lambda (buffer _program &optional args) (setq started (cons buffer args)) t)
-      (let ((buffer (herdr-term--attach
+      (let ((buffer (herdr-term--attach (herdr-current-connection)
                      state (herdr-state-pane state "w1:p1"))))
         (unwind-protect
             (progn
               (should (buffer-live-p buffer))
               (should (equal buffer (car started)))
               (should (equal '("terminal" "attach" "t7") (cdr started)))
-              (should (equal buffer (herdr-term-buffer-for-pane "w1:p1"))))
+              (should (equal buffer (herdr-term-buffer-for-pane (herdr-current-connection) "w1:p1"))))
           (kill-buffer buffer))))))
 
 (ert-deftest herdr-term-attach-leaves-nothing-behind-when-the-client-fails ()
@@ -200,7 +201,7 @@ the same pane."
         (before (buffer-list)))
     (herdr-term-test--attaching
         (lambda (&rest _) (error "ghostel: no such program"))
-      (should-error (herdr-term--attach state (herdr-state-pane state "w1:p1")))
+      (should-error (herdr-term--attach (herdr-current-connection) state (herdr-state-pane state "w1:p1")))
       (should (null herdr-term--buffers))
       (should (null (seq-difference (buffer-list) before))))))
 
@@ -219,7 +220,7 @@ and nothing is displayed."
                  (lambda (&rest _) (error "should not be reached")))
                 ((symbol-function 'herdr-term--show)
                  (lambda (&rest _) (setq shown t))))
-        (should-error (herdr-term--attach state (herdr-state-pane state "w1:p1"))
+        (should-error (herdr-term--attach (herdr-current-connection) state (herdr-state-pane state "w1:p1"))
                       :type 'user-error)
         (should-not shown)
         (should (null herdr-term--buffers))
@@ -239,15 +240,19 @@ a zero-sized one, so the order is load-bearing rather than incidental."
                  (lambda (&rest _) (push 'shown order)))
                 ((symbol-function 'ghostel-exec)
                  (lambda (&rest _) (push 'started order))))
-        (let ((buffer (herdr-term--attach state (herdr-state-pane state "w1:p1"))))
+        (let ((buffer (herdr-term--attach (herdr-current-connection) state (herdr-state-pane state "w1:p1"))))
           (unwind-protect
               (should (equal '(shown started) (nreverse order)))
             (kill-buffer buffer)))))))
 
 (ert-deftest herdr-term-attach-cleans-up-when-any-step-fails ()
-  "Not only the exec: a display action that signals, or a pane whose cwd
-is not a string, used to leave the same unregistered live buffer through
-a different door."
+  "Not only the exec: a display action that signals used to leave the same
+unregistered live buffer through a different door.
+
+A pane whose cwd is not a string used to be a third door, by reaching
+`file-directory-p' with a number.  It is validated now instead of
+signalling: a malformed field is a directory the buffer cannot follow,
+not a reason to refuse the terminal."
   (let ((state (herdr-state-from-snapshot
                 '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
                              (agent . "claude") (terminal_id . "t7")
@@ -257,15 +262,18 @@ a different door."
       (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
                 ((symbol-function 'ghostel-exec) #'ignore)
                 ((symbol-function 'herdr-term--show) #'ignore))
-        ;; `herdr-pane-directory' asks `file-directory-p' about a number.
-        (should-error (herdr-term--attach state (herdr-state-pane state "w1:p1")))
-        (should (null herdr-term--buffers))
-        (should (null (seq-difference (buffer-list) before))))
+        ;; A cwd of 42 names no directory, and the attach carries on.
+        (let ((buffer (herdr-term--attach (herdr-current-connection) state
+                                          (herdr-state-pane state "w1:p1"))))
+          (should (buffer-live-p buffer))
+          (should (equal 1 (length herdr-term--buffers)))
+          (kill-buffer buffer))
+        (setq herdr-term--buffers nil))
       (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
                 ((symbol-function 'ghostel-exec) #'ignore)
                 ((symbol-function 'herdr-term--show)
                  (lambda (&rest _) (error "display-buffer: no window"))))
-        (should-error (herdr-term--attach state (herdr-state-pane state "w1:p1")))
+        (should-error (herdr-term--attach (herdr-current-connection) state (herdr-state-pane state "w1:p1")))
         (should (null herdr-term--buffers))
         (should (null (seq-difference (buffer-list) before)))))))
 
@@ -275,80 +283,65 @@ a different door."
   (with-temp-buffer
     (let ((buffer (current-buffer)))
       (setq default-directory "/")
-      (herdr-term--set-directory buffer '((cwd . "/tmp")))
+      (herdr-term--set-directory (herdr-current-connection) buffer '((cwd . "/tmp")))
       (should (equal "/tmp/" default-directory)))))
 
 (ert-deftest herdr-term-set-directory-ignores-a-missing-directory ()
   "A stale cwd must not leave `default-directory' pointing at nothing."
   (with-temp-buffer
     (setq default-directory "/")
-    (herdr-term--set-directory (current-buffer)
+    (herdr-term--set-directory (herdr-current-connection) (current-buffer)
                                '((cwd . "/no/such/place/anywhere")))
     (should (equal "/" default-directory))))
 
 ;;; Directory sync
 
 (ert-deftest herdr-term-sync-directories-is-per-buffer ()
-  (let* ((herdr-term-track-directory t)
-         (one (generate-new-buffer " *pane1*"))
-         (two (generate-new-buffer " *pane2*"))
-         (herdr-term--buffers (list (cons "w1:p1" one) (cons "w1:p2" two)))
-         (herdr-state--current
-          (herdr-state-from-snapshot
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
            '((panes . (((pane_id . "w1:p1") (agent . "claude") (cwd . "/tmp"))
-                       ((pane_id . "w1:p2") (agent . "codex") (cwd . "/usr"))))))))
+                       ((pane_id . "w1:p2") (agent . "codex") (cwd . "/usr")))))))(let* ((herdr-term-track-directory t) (one (generate-new-buffer " *pane1*")) (two (generate-new-buffer " *pane2*")) (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" one) (cons "w1:p2" two)))))
     (unwind-protect
         (progn
-          (herdr-term--sync-directories)
+          (herdr-term--sync-directories (herdr-current-connection))
           (should (equal "/tmp/" (buffer-local-value 'default-directory one)))
           (should (equal "/usr/" (buffer-local-value 'default-directory two))))
-      (kill-buffer one) (kill-buffer two))))
+      (kill-buffer one) (kill-buffer two)))))
 
 (ert-deftest herdr-term-sync-directories-respects-the-off-switch ()
-  (let* ((herdr-term-track-directory nil)
-         (buffer (get-buffer-create "*herdr-off-switch*"))
-         (herdr-term--buffers (list (cons "w1:p1" buffer)))
-         (herdr-state--current
-          (herdr-state-from-snapshot
-           '((panes . (((pane_id . "w1:p1") (cwd . "/tmp"))))))))
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+           '((panes . (((pane_id . "w1:p1") (cwd . "/tmp")))))))(let* ((herdr-term-track-directory nil) (buffer (get-buffer-create "*herdr-off-switch*")) (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" buffer)))))
     (unwind-protect
         (progn
           (with-current-buffer buffer (setq default-directory "/"))
-          (herdr-term--sync-directories)
+          (herdr-term--sync-directories (herdr-current-connection))
           (should (equal "/" (buffer-local-value 'default-directory buffer))))
-      (kill-buffer buffer))))
+      (kill-buffer buffer)))))
 
 ;;; Buffers must follow their pane's identity
 
 (ert-deftest herdr-term-renames-a-buffer-whose-pane-gained-an-agent ()
   "A shell pane that herdr later names as an agent keeps its buffer,
 since the attachment is still valid, so the name is corrected in place."
-  (let* ((buffer (generate-new-buffer "*herdr: shell@.emacs.d*"))
-         (herdr-term--buffers (list (cons "w1:p1" buffer)))
-         (herdr-state--current
-          (herdr-state-from-snapshot
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
            '((workspaces . (((workspace_id . "w1") (label . ".emacs.d"))))
              (panes . (((pane_id . "w1:p1") (agent . "claude")
-                        (workspace_id . "w1"))))))))
+                        (workspace_id . "w1")))))))(let* ((buffer (generate-new-buffer "*herdr: shell@.emacs.d*")) (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" buffer)))))
     (unwind-protect
         (progn
-          (herdr-term--rename-stale-buffers)
+          (herdr-term--rename-stale-buffers (herdr-current-connection))
           (should (equal "*herdr: claude@.emacs.d*" (buffer-name buffer))))
-      (kill-buffer buffer))))
+      (kill-buffer buffer)))))
 
 (ert-deftest herdr-term-leaves-a-correctly-named-buffer-alone ()
-  (let* ((buffer (generate-new-buffer "*herdr: claude@.emacs.d*"))
-         (herdr-term--buffers (list (cons "w1:p1" buffer)))
-         (herdr-state--current
-          (herdr-state-from-snapshot
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
            '((workspaces . (((workspace_id . "w1") (label . ".emacs.d"))))
              (panes . (((pane_id . "w1:p1") (agent . "claude")
-                        (workspace_id . "w1"))))))))
+                        (workspace_id . "w1")))))))(let* ((buffer (generate-new-buffer "*herdr: claude@.emacs.d*")) (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" buffer)))))
     (unwind-protect
         (progn
-          (herdr-term--rename-stale-buffers)
+          (herdr-term--rename-stale-buffers (herdr-current-connection))
           (should (equal "*herdr: claude@.emacs.d*" (buffer-name buffer))))
-      (kill-buffer buffer))))
+      (kill-buffer buffer)))))
 
 (ert-deftest herdr-term-rename-stale-buffers-does-not-thrash-a-collision ()
   "The subtle failure mode: a buffer holding a uniquified name only
@@ -362,20 +355,13 @@ that way.  What must not happen is `rename-buffer' being called at all
 for a buffer that already carries an acceptable name — repeating that
 from every `herdr-term--on-state-change' would be a rename loop hiding
 behind an unchanging buffer list."
-  (let* (;; `generate-new-buffer' uniquifies on creation exactly like
-         ;; `herdr-term--unique-buffer-name' does, so the second
-         ;; buffer starts life as `...<2>' here without any special-casing.
-         (first (generate-new-buffer "*herdr: claude@.emacs.d*"))
-         (second (generate-new-buffer "*herdr: claude@.emacs.d*"))
-         (herdr-term--buffers (list (cons "w7:p2" first)
-                                          (cons "w7:p5" second)))
-         (herdr-state--current
-          (herdr-state-from-snapshot
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
            '((workspaces . (((workspace_id . "w7") (label . ".emacs.d"))))
              (panes . (((pane_id . "w7:p2") (agent . "claude")
                         (workspace_id . "w7"))
                        ((pane_id . "w7:p5") (agent . "claude")
-                        (workspace_id . "w7"))))))))
+                        (workspace_id . "w7")))))))(let* ((first (generate-new-buffer "*herdr: claude@.emacs.d*")) (second (generate-new-buffer "*herdr: claude@.emacs.d*")) (herdr-term--buffers (herdr-test-term-buffers (list (cons "w7:p2" first)
+                                          (cons "w7:p5" second)))))
     (unwind-protect
         (progn
           (should (equal "*herdr: claude@.emacs.d*<2>" (buffer-name second)))
@@ -385,28 +371,25 @@ behind an unchanging buffer list."
                         (lambda (&rest args)
                           (setq rename-calls (1+ rename-calls))
                           (apply real-rename-buffer args))))
-              (dotimes (_ 3) (herdr-term--rename-stale-buffers)))
+              (dotimes (_ 3) (herdr-term--rename-stale-buffers (herdr-current-connection))))
             (should (= 0 rename-calls))))
-      (kill-buffer first) (kill-buffer second))))
+      (kill-buffer first) (kill-buffer second)))))
 
 ;;; Starting herdr must not rearrange windows
 
 (ert-deftest herdr-term-select-pane-does-not-split-the-frame ()
   "Going to a pane reuses the current window; splitting is the user's
 business, not a side effect of navigation."
-  (let* ((target (generate-new-buffer " *target*"))
-         (herdr-term--buffers (list (cons "w1:p1" target)))
-         (herdr-state--current
-          (herdr-state-from-snapshot
-           '((panes . (((pane_id . "w1:p1") (agent . "claude"))))))))
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+           '((panes . (((pane_id . "w1:p1") (agent . "claude")))))))(let* ((target (generate-new-buffer " *target*")) (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" target)))))
     (unwind-protect
         (save-window-excursion
           (delete-other-windows)
           (let ((before (length (window-list))))
-            (herdr-term-select-pane "w1:p1")
+            (herdr-term-select-pane (herdr-current-connection) "w1:p1")
             (should (eq target (current-buffer)))
             (should (= before (length (window-list))))))
-      (kill-buffer target))))
+      (kill-buffer target)))))
 
 ;;; One display knob, honoured by every path
 
@@ -437,12 +420,12 @@ unusable PTY."
   (let (shown quit)
     (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
               ((symbol-function 'ghostel-exec) #'ignore)
-              ((symbol-function 'herdr-server-live-p) (lambda () t))
+              ((symbol-function 'herdr-server-live-p) (lambda (_connection) t))
               ((symbol-function 'herdr-term--show)
                (lambda (buf) (setq shown buf)))
               ((symbol-function 'quit-windows-on)
                (lambda (buf &rest _) (setq quit buf))))
-      (let ((buffer (herdr-term--bootstrap-server)))
+      (let ((buffer (herdr-term--bootstrap-server (herdr-current-connection))))
         (unwind-protect
             (progn
               (should (eq buffer shown))
@@ -456,12 +439,12 @@ unusable PTY."
     (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
               ((symbol-function 'ghostel-exec) #'ignore)
               ((symbol-function 'herdr-term--show) #'ignore)
-              ((symbol-function 'herdr-server-live-p) (lambda () nil))
+              ((symbol-function 'herdr-server-live-p) (lambda (_connection) nil))
               ((symbol-function 'quit-windows-on)
                (lambda (buf &rest _) (setq quit buf))))
       (unwind-protect
           (progn
-            (should-error (herdr-term--bootstrap-server))
+            (should-error (herdr-term--bootstrap-server (herdr-current-connection)))
             (should (eq (get-buffer herdr-term-bootstrap-buffer-name) quit)))
         (when (get-buffer herdr-term-bootstrap-buffer-name)
           (kill-buffer herdr-term-bootstrap-buffer-name))))))
@@ -482,18 +465,18 @@ session, and the leak is invisible until something it touches is gone."
   (let ((cancelled nil)
         (debounce (run-at-time 3600 nil #'ignore)))
     (unwind-protect
-        (let ((herdr-term--directory-debounce-timer debounce))
+        (let ((herdr-term--directory-debounce-timers (list (cons 1 debounce))))
           (cl-letf (((symbol-function 'cancel-timer)
                      (lambda (timer) (push timer cancelled))))
             (herdr-term--cancel-directory-debounce))
           (should (equal (list debounce) cancelled))
-          (should-not herdr-term--directory-debounce-timer))
+          (should-not herdr-term--directory-debounce-timers))
       (cancel-timer debounce))))
 
 (ert-deftest herdr-term-cancel-directory-debounce-has-nothing-to-cancel-when-idle ()
   "Teardown runs whether or not tracking ever started, so a nil slot must
 not be handed to `cancel-timer', which signals on one."
-  (let ((herdr-term--directory-debounce-timer nil)
+  (let ((herdr-term--directory-debounce-timers nil)
         (cancelled nil))
     (cl-letf (((symbol-function 'cancel-timer)
                (lambda (timer) (push timer cancelled))))
@@ -505,15 +488,18 @@ not be handed to `cancel-timer', which signals on one."
   (let ((pending (run-at-time 3600 nil #'ignore))
         (cancelled nil))
     (unwind-protect
-        (let ((herdr-term-track-directory t)
-              (herdr-term--directory-debounce-timer pending))
+        (let* ((connection (herdr-current-connection))
+               (token (herdr-connection-token connection))
+               (herdr-term-track-directory t)
+               (herdr-term--directory-debounce-timers (list (cons token pending))))
           (cl-letf (((symbol-function 'cancel-timer)
                      (lambda (timer) (push timer cancelled)))
                     ((symbol-function 'run-at-time)
                      (lambda (&rest _) 'replacement)))
-            (herdr-term--schedule-directory-refresh))
+            (herdr-term--schedule-directory-refresh connection))
           (should (equal (list pending) cancelled))
-          (should (eq 'replacement herdr-term--directory-debounce-timer)))
+          (should (eq 'replacement
+                      (alist-get token herdr-term--directory-debounce-timers))))
       (cancel-timer pending))))
 
 (ert-deftest herdr-term-schedule-directory-refresh-reaches-the-repair ()
@@ -522,18 +508,21 @@ A `cd' produces no event herdr.el acts on, so a debounce that only
 synced buffers would show a directory the cache was never told about,
 degrading tracking from the debounce interval to the repair interval."
   (let ((herdr-term-track-directory t)
-        (herdr-term--directory-debounce-timer nil)
+        (herdr-term--directory-debounce-timers nil)
         (repaired nil)
         (callback nil))
     (cl-letf (((symbol-function 'run-at-time)
                (lambda (_delay _repeat fn) (setq callback fn) 'armed))
               ((symbol-function 'herdr-state-repair)
-               (lambda () (setq repaired t))))
-      (herdr-term--schedule-directory-refresh)
-      (should (eq 'armed herdr-term--directory-debounce-timer))
+               (lambda (_connection) (setq repaired t))))
+      (herdr-term--schedule-directory-refresh (herdr-current-connection))
+      (should (eq 'armed (alist-get (herdr-connection-token
+                                     (herdr-current-connection))
+                                    herdr-term--directory-debounce-timers)))
       (funcall callback)
       (should repaired)
-      (should-not herdr-term--directory-debounce-timer))))
+      (should-not (alist-get (herdr-connection-token (herdr-current-connection))
+                                 herdr-term--directory-debounce-timers)))))
 
 ;;; Teardown must actually tear down
 
@@ -542,11 +531,11 @@ degrading tracking from the debounce interval to the repair interval."
 stale entry names a dead buffer that reconciliation would count as
 already attached."
   (let* ((herdr-state-change-functions (list #'herdr-term--on-state-change))
-         (herdr-term--directory-debounce-timer nil)
+         (herdr-term--directory-debounce-timers nil)
          (one (generate-new-buffer " *agent-one*"))
          (two (generate-new-buffer " *agent-two*"))
-         (herdr-term--buffers (list (cons "w1:p1" one)
-                                          (cons "w1:p2" two))))
+         (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" one)
+                                          (cons "w1:p2" two)))))
     (unwind-protect
         (progn
           (herdr-term-teardown)
@@ -562,12 +551,13 @@ already attached."
         (cancelled nil))
     (unwind-protect
         (let ((herdr-term--buffers nil)
-              (herdr-term--directory-debounce-timer debounce))
+              (herdr-term--directory-debounce-timers (list (cons 1 debounce))))
           (cl-letf (((symbol-function 'cancel-timer)
                      (lambda (timer) (push timer cancelled))))
             (herdr-term-teardown))
           (should (equal (list debounce) cancelled))
-          (should-not herdr-term--directory-debounce-timer))
+          (should-not (alist-get (herdr-connection-token (herdr-current-connection))
+                                 herdr-term--directory-debounce-timers)))
       (cancel-timer debounce))))
 
 (ert-deftest herdr-term-a-reconcile-event-nudges-no-further-repair ()
@@ -576,17 +566,17 @@ debounce there sent a second repair 0.4s later that found nothing, so
 every real change cost two extra round trips on the main thread."
   (let ((herdr-term-track-directory t)
         (herdr-term--buffers nil)
-        (herdr-term--directory-debounce-timer nil)
+        (herdr-term--directory-debounce-timers nil)
         (armed 0))
     (cl-letf (((symbol-function 'run-at-time)
                (lambda (&rest _) (cl-incf armed) 'armed))
               ((symbol-function 'herdr-term--sync-buffers) #'ignore)
               ((symbol-function 'herdr-term--sync-directories) #'ignore))
-      (herdr-term--on-state-change "reconcile" nil)
+      (herdr-term--on-state-change (herdr-current-connection) "reconcile" nil)
       (should (zerop armed))
       ;; Every other event still nudges one: a `cd' reaches the cache
       ;; only through a repair.
-      (herdr-term--on-state-change "layout_updated" nil)
+      (herdr-term--on-state-change (herdr-current-connection) "layout_updated" nil)
       (should (= 1 armed)))))
 
 ;;; Directory tracking is a display option and nothing more
@@ -597,16 +587,15 @@ every real change cost two extra round trips on the main thread."
 the package, which drove the only periodic reconcile, so turning off a
 display convenience turned off the liveness watchdog and reconnection
 with it."
-  (let ((herdr-term-track-directory nil)
-        (herdr-state--running t)
-        (herdr-state--repairing nil)
-        (reconciled nil))
-    (cl-letf (((symbol-function 'herdr-state-reconcile-panes)
-               (lambda () (push 'panes reconciled) nil))
-              ((symbol-function 'herdr-state-reconcile-workspaces)
-               (lambda () (push 'workspaces reconciled) nil)))
-      (herdr-state-repair)
-      (should (equal '(workspaces panes) reconciled)))))
+  (herdr-test-with-state (:running t :repairing nil)(let* ((herdr-term-track-directory nil) (reconciled nil))
+    (cl-letf (((symbol-function 'herdr-state--reconcile-panes-async)
+               (lambda (_connection done)
+                 (push 'panes reconciled) (funcall done nil)))
+              ((symbol-function 'herdr-state--reconcile-workspaces-async)
+               (lambda (_connection done)
+                 (push 'workspaces reconciled) (funcall done nil))))
+      (herdr-state-repair (herdr-current-connection))
+      (should (equal '(workspaces panes) reconciled))))))
 
 (ert-deftest herdr-term-server-live-p-is-a-bounded-probe ()
   "A liveness ping answered in milliseconds by a healthy server must
@@ -618,7 +607,7 @@ to a forty-second frozen startup."
         (seen nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
                (lambda (&rest _) (setq seen herdr-rpc-timeout) '((ok . t)))))
-      (should (herdr-server-live-p))
+      (should (herdr-server-live-p (herdr-current-connection)))
       (should (equal 2.0 seen)))))
 
 
@@ -631,8 +620,8 @@ It answers for a buffer whose pane has gone away too, which is a buffer
 to clean up rather than one to protect."
   (let* ((mine (generate-new-buffer " *pane*"))
          (theirs (generate-new-buffer " *other*"))
-         (herdr-term--buffers (list (cons "w1:p1" mine)))
-         (herdr-state--current (herdr-state-from-snapshot nil)))
+         (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" mine))))
+         (herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot nil)))))
     (unwind-protect
         (progn
           (should (herdr-term-buffer-p mine))
@@ -649,7 +638,7 @@ only kills would pass without the registration doing anything."
   (require 'project)
   (let* ((root "/tmp/herdr-project-test/")
          (buffer (generate-new-buffer "*herdr: claude@herdr-project-test*"))
-         (herdr-term--buffers (list (cons "w1:p1" buffer)))
+         (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" buffer))))
          (project (cons 'transient root)))
     (unwind-protect
         (progn
@@ -692,6 +681,216 @@ asks, and project.el's variables are not a contract."
     (should (memq #'herdr-term-buffer-p project-kill-buffer-conditions))
     ;; Appended, so herdr never outranks a condition the user put first.
     (should (equal 'buffer-file-name (car project-kill-buffer-conditions)))))
+
+;;; Two servers can each issue the same id
+
+(ert-deftest herdr-term-a-colliding-pane-id-gets-a-buffer-each ()
+  "Ids are per-server counters, so two machines may each hold a `w1:p1'.
+One registry keyed by the bare id would hand the second connection the
+first one's buffer — two panes sharing one terminal, on different
+machines."
+  (let* ((one (herdr-test-connection))
+         (two (herdr-test-connection))
+         (snapshot '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                                (agent . "claude") (terminal_id . "t1"))))))
+         (state (herdr-state-from-snapshot snapshot)))
+    (setf (herdr-connection-cache one) state
+          (herdr-connection-cache two) state)
+    (herdr-term-test--attaching (lambda (&rest _) t)
+      (let (buffers)
+        (unwind-protect
+            (let ((a (herdr-term--attach one state
+                                         (herdr-state-pane state "w1:p1")))
+                  (b (herdr-term--attach two state
+                                         (herdr-state-pane state "w1:p1"))))
+              (setq buffers (list a b))
+              (should (buffer-live-p a))
+              (should (buffer-live-p b))
+              (should-not (eq a b))
+              (should (eq a (herdr-term-buffer-for-pane one "w1:p1")))
+              (should (eq b (herdr-term-buffer-for-pane two "w1:p1")))
+              ;; Each buffer knows whose pane it is showing.
+              (should (eq one (buffer-local-value 'herdr-buffer-connection a)))
+              (should (eq two (buffer-local-value 'herdr-buffer-connection b))))
+          (dolist (buffer buffers)
+            (when (buffer-live-p buffer) (kill-buffer buffer))))))))
+
+(ert-deftest herdr-term-tearing-down-one-connection-leaves-the-other ()
+  "Stopping one connection used to reap every terminal there was, because
+the registry had no way to say whose a buffer was."
+  (let* ((one (herdr-test-connection))
+         (two (herdr-test-connection))
+         (mine (generate-new-buffer " *one*"))
+         (theirs (generate-new-buffer " *two*")))
+    (unwind-protect
+        (let ((herdr-term--buffers
+               (list (cons (herdr-term--key one "w1:p1") mine)
+                     (cons (herdr-term--key two "w1:p1") theirs))))
+          (herdr-term-teardown one)
+          (should-not (buffer-live-p mine))
+          (should (buffer-live-p theirs))
+          (should (eq theirs (herdr-term-buffer-for-pane two "w1:p1"))))
+      (dolist (buffer (list mine theirs))
+        (when (buffer-live-p buffer) (kill-buffer buffer))))))
+
+(ert-deftest herdr-term-a-reap-on-one-connection-spares-the-other ()
+  "The change hook says which connection notified, and the reap is scoped
+to it.  One server's cache knowing nothing of another server's pane is
+the ordinary case, not a reason to kill its terminal."
+  (let* ((one (herdr-test-connection (herdr-state-from-snapshot nil)))
+         (two (herdr-test-connection
+               (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1"))))))))
+         (mine (generate-new-buffer " *one*"))
+         (theirs (generate-new-buffer " *two*"))
+         (herdr-state-change-functions nil))
+    (unwind-protect
+        (let ((herdr-term--buffers
+               (list (cons (herdr-term--key one "w1:p1") mine)
+                     (cons (herdr-term--key two "w1:p1") theirs))))
+          ;; One's cache has no panes at all, so its own buffer goes.
+          (herdr-term--on-state-change one "reconcile" nil)
+          (should-not (buffer-live-p mine))
+          (should (buffer-live-p theirs)))
+      (dolist (buffer (list mine theirs))
+        (when (buffer-live-p buffer) (kill-buffer buffer))))))
+
+(ert-deftest herdr-term-a-command-in-a-terminal-means-that-terminal-s-server ()
+  "A command typed in a terminal buffer acts on that buffer's connection,
+not on whichever one was resolved last."
+  (let* ((one (herdr-test-connection))
+         (two (herdr-test-connection))
+         (herdr-connections (herdr-test-connections one))
+         (buffer (generate-new-buffer " *pane*")))
+    (unwind-protect
+        (let ((herdr-term--buffers
+               (list (cons (herdr-term--key two "w1:p1") buffer))))
+          (setf (herdr-connection-cache two)
+                (herdr-state-from-snapshot
+                 '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")))))))
+          (with-current-buffer buffer
+            (setq herdr-buffer-connection two)
+            (should (eq two (herdr-current-connection)))
+            (should (equal "w1:p1" (herdr-term-pane-for-buffer)))))
+      (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest herdr-term-a-key-survives-a-mutation-of-the-connection ()
+  "The key holds the token, not the struct.  `equal' on a struct compares
+fields, so a key holding one would stop matching the moment a process or
+a cache slot changed under it — which is every reconnect."
+  (let* ((connection (herdr-test-connection))
+         (buffer (generate-new-buffer " *pane*")))
+    (unwind-protect
+        (let ((herdr-term--buffers
+               (list (cons (herdr-term--key connection "w1:p1") buffer))))
+          (should (eq buffer (herdr-term-buffer-for-pane connection "w1:p1")))
+          (setf (herdr-connection-cache connection) 'replaced
+                (herdr-connection-generation connection) 99
+                (herdr-connection-global-process connection) 'a-process)
+          (should (eq buffer (herdr-term-buffer-for-pane connection "w1:p1"))))
+      (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest herdr-term-a-remote-pane-keeps-its-buffer-remote ()
+  "The pane's reported directory is a path on the server's machine.
+Syncing it verbatim strips the buffer's remoteness, which is the defect:
+the buffer then names a local path of the same name."
+  (let ((remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
+        (local (herdr-connection--make :name "local"))
+        (buffer (generate-new-buffer " *pane*"))
+        (pane '((pane_id . "w1:p1") (cwd . "/srv/app"))))
+    (unwind-protect
+        (progn
+          (herdr-term--set-directory remote buffer pane)
+          (should (equal "/ssh:shadow:/srv/app/"
+                         (buffer-local-value 'default-directory buffer)))
+          (should (file-remote-p
+                   (buffer-local-value 'default-directory buffer)))
+          ;; A local pane's buffer is not made remote.  A real
+          ;; directory, because the local half still checks the local
+          ;; filesystem — which is exactly what it cannot do for the
+          ;; remote one.
+          (herdr-term--set-directory local buffer '((pane_id . "w1:p1")
+                                                    (cwd . "/tmp")))
+          (should (equal "/tmp/"
+                         (buffer-local-value 'default-directory buffer)))
+          (should-not (file-remote-p
+                       (buffer-local-value 'default-directory buffer))))
+      (kill-buffer buffer))))
+
+(ert-deftest herdr-term-a-remote-pane-spawns-on-its-own-machine ()
+  "`ghostel-exec' reads `default-directory' to decide which machine to
+spawn the pty on, so the buffer has to be remote before the client
+starts.  Setting the directory afterwards told it nothing and ran a
+remote pane's client here."
+  (let* ((remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
+         (state (herdr-state-from-snapshot
+                 '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (agent . "claude") (terminal_id . "t7")
+                              (cwd . "/srv/app")))))))
+         (at-exec nil))
+    (herdr-term-test--attaching
+        (lambda (buffer _program &optional _args)
+          (setq at-exec (buffer-local-value 'default-directory buffer))
+          t)
+      (let ((buffer (herdr-term--attach remote state
+                                        (herdr-state-pane state "w1:p1"))))
+        (unwind-protect
+            (progn
+              (should (equal "/ssh:shadow:/srv/app/" at-exec))
+              (should (file-remote-p at-exec)))
+          (when (buffer-live-p buffer) (kill-buffer buffer)))))))
+
+(ert-deftest herdr-term-a-remote-pane-with-no-cwd-still-spawns-remotely ()
+  "The host is the floor.  A pane whose cwd says nothing must not fall
+back to this machine, which is where the client would then attach — to a
+terminal id that exists on another server."
+  (let* ((remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
+         (state (herdr-state-from-snapshot
+                 '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (agent . "claude") (terminal_id . "t7")))))))
+         (at-exec nil))
+    (herdr-term-test--attaching
+        (lambda (buffer _program &optional _args)
+          (setq at-exec (buffer-local-value 'default-directory buffer))
+          t)
+      (let ((buffer (herdr-term--attach remote state
+                                        (herdr-state-pane state "w1:p1"))))
+        (unwind-protect
+            (should (equal "/ssh:shadow:" (file-remote-p at-exec)))
+          (when (buffer-live-p buffer) (kill-buffer buffer)))))))
+
+(ert-deftest herdr-term-a-local-pane-spawns-here ()
+  "The other half: nothing about a local connection becomes remote."
+  (let* ((local (herdr-connection--make :name "local"))
+         (state (herdr-state-from-snapshot
+                 '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (agent . "claude") (terminal_id . "t7")
+                              (cwd . "/tmp")))))))
+         (at-exec nil))
+    (herdr-term-test--attaching
+        (lambda (buffer _program &optional _args)
+          (setq at-exec (buffer-local-value 'default-directory buffer))
+          t)
+      (let ((buffer (herdr-term--attach local state
+                                        (herdr-state-pane state "w1:p1"))))
+        (unwind-protect
+            (progn
+              (should-not (file-remote-p at-exec))
+              (should (equal "/tmp/" at-exec)))
+          (when (buffer-live-p buffer) (kill-buffer buffer)))))))
+
+(ert-deftest herdr-term-a-named-session-reaches-the-attach ()
+  "`terminal attach' has no session option of its own, so a client for a
+named session says so globally or attaches to the default one — which on
+a host running two sessions is the wrong server's terminal."
+  (let ((pane '((pane_id . "w1:p1") (terminal_id . "t7"))))
+    (should (equal '("terminal" "attach" "t7")
+                   (herdr-pane-attach-args pane nil)))
+    (should (equal '("--session" "work" "terminal" "attach" "t7")
+                   (herdr-pane-attach-args pane nil "work")))
+    ;; The session goes before the subcommand; takeover stays after.
+    (should (equal '("--session" "work" "terminal" "attach" "t7" "--takeover")
+                   (herdr-pane-attach-args pane t "work")))))
 
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here

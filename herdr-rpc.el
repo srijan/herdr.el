@@ -46,13 +46,79 @@
   :group 'herdr)
 
 (defcustom herdr-rpc-background-timeout 2.0
-  "Seconds a background synchronous RPC may block the editor.
-Every path that runs on a timer must bind `herdr-rpc-timeout' down to
-this.  A server too slow to answer forfeits that refresh, not the UI."
+  "Seconds a background RPC gets before it forfeits its answer.
+Asynchronous callers pass it as their deadline; the few synchronous
+ones a timer or a keystroke can reach bind `herdr-rpc-timeout\=' down to
+it.  A server too slow to answer forfeits that refresh, not the UI."
   :type 'number
   :group 'herdr)
 
 (define-error 'herdr-error "herdr error")
+
+;;; The connection
+;;
+;; A connection is a value the package passes around, the shape
+;; `jsonrpc.el' and `eglot.el' settled on: the transport takes it as an
+;; argument and never reads an ambient default.
+
+(defvar herdr-connection--tokens 0
+  "Counter behind `herdr-connection-token'.")
+
+(cl-defstruct (herdr-connection (:constructor herdr-connection--make)
+                                (:copier nil))
+  "One herdr server this package follows.
+
+TOKEN is allocated once and never written again.  The struct is mutable
+and `equal' on a struct compares fields, so a key holding the struct
+itself would stop matching the moment a process or a cache slot changed
+under it; a composite key holds the token instead."
+  (token (cl-incf herdr-connection--tokens))
+  name
+  socket-path
+  ssh-target
+  ;; The path on the far host that SOCKET-PATH forwards to, and the
+  ;; named session it belongs to.  Resolved on that host, never by
+  ;; expanding a local default.
+  remote-socket-path
+  session
+  ;; The herdr binary on that host, resolved there.  Nil means the
+  ;; local `herdr-executable'.
+  remote-executable
+  ;; The opaque id of the saved machine this came from, when it came
+  ;; from one.  Kept because a profile's label is what a user renames
+  ;; and its id is what herdr keeps: a renamed profile has to be
+  ;; recognised as the connection already being followed, not as a new
+  ;; one under a new name.
+  machine-id
+  tunnel
+  ;; Session cache and its two event streams, per KTD6.
+  (cache nil) (global-process nil) (pane-process nil) (pane-stream-ids nil)
+  (reconnect-timer nil) (reconnect-delay nil) (resubscribe-timer nil)
+  (settle-timer nil) (repair-timer nil) (repairing nil)
+  (generation 0) (running nil)
+  ;; Worktree cache, reached only through its interface.
+  (worktrees nil) (worktrees-pending nil) (worktrees-unanswered nil)
+  (worktrees-generation 0)
+  ;; Handshake and schema, one answer per server rather than per package.
+  (protocol-warned nil) (schema nil) (schema-version nil)
+  (schema-protocol nil) (schema-mismatch-warned nil))
+
+(defun herdr-connection-local ()
+  "Return a connection to the local server at `herdr-socket-path'."
+  (herdr-connection--make :name "local" :socket-path herdr-socket-path))
+
+(defun herdr-connection-remote-p (connection)
+  "Return non-nil when CONNECTION reaches its server over SSH."
+  (and (herdr-connection-ssh-target connection) t))
+
+(defun herdr-connection-host-directory (connection)
+  "Return a `default-directory\\=' for running herdr on CONNECTION\\='s host.
+A TRAMP path for a remote server, so that `make-process\\=' with
+`:file-handler\\=' runs the binary that belongs to that server rather
+than the local one.  Nil for a local server, meaning leave
+`default-directory\\=' alone."
+  (when-let* ((target (herdr-connection-ssh-target connection)))
+    (format "/ssh:%s:" target)))
 
 (defun herdr-error-code (err)
   "Return the herdr error code carried by ERR, as a string."
@@ -104,11 +170,14 @@ cannot tell a list of alists from a single alist."
                      :object-type 'alist :array-type 'list
                      :null-object nil :false-object nil))
 
-(defun herdr-rpc-connect (name filter sentinel)
-  "Open a connection to the herdr socket named NAME.
+(defun herdr-rpc-connect (connection name filter sentinel)
+  "Open a socket to CONNECTION\='s server, as a process named NAME.
 FILTER and SENTINEL are installed on the process.  Signals `herdr-error'
-with code \"no_server\" when the socket is absent or refuses."
-  (let ((path (expand-file-name herdr-socket-path)))
+with code \"no_server\" when the socket is absent or refuses.
+
+CONNECTION comes first so a caller that forgets it gets a wrong-type
+error rather than a call against whichever server was ambient."
+  (let ((path (expand-file-name (herdr-connection-socket-path connection))))
     (condition-case err
         (make-network-process
          :name name :family 'local :service path
@@ -127,13 +196,14 @@ with code \"no_server\" when the socket is absent or refuses."
         (herdr-rpc--signal (alist-get 'code err) (alist-get 'message err))
       (alist-get 'result payload))))
 
-(defun herdr-rpc-call (method &optional params)
-  "Call METHOD with PARAMS synchronously and return its result alist.
+(defun herdr-rpc-call (connection method &optional params)
+  "Call METHOD with PARAMS on CONNECTION and return its result alist.
 Signals `herdr-error' on a server error, an unreachable socket, or a
 timeout."
   (let* ((chunks nil)
          (closed nil)
          (proc (herdr-rpc-connect
+                connection
                 (format "herdr-rpc-%s" method)
                 (lambda (_proc chunk) (push chunk chunks))
                 (lambda (_proc _event) (setq closed t)))))
@@ -160,8 +230,8 @@ timeout."
       (when (process-live-p proc)
         (delete-process proc)))))
 
-(defun herdr-rpc-call-async (method params callback &optional timeout)
-  "Call METHOD with PARAMS, invoking CALLBACK when the response arrives.
+(defun herdr-rpc-call-async (connection method params callback &optional timeout)
+  "Call METHOD with PARAMS on CONNECTION, invoking CALLBACK on the response.
 CALLBACK receives (RESULT ERROR), exactly one of them non-nil, and is
 called exactly once.  Returns the process, which may be deleted to
 abandon the call.  Nil TIMEOUT waits indefinitely.
@@ -195,6 +265,7 @@ instead leaves an armed TIMEOUT free to deliver a second callback."
                           `((code . "bad_response")
                             (message . ,(error-message-string err))))))))))
     (let ((proc (herdr-rpc-connect
+                 connection
                  (format "herdr-rpc-async-%s" method)
                  (lambda (_proc chunk) (push chunk chunks))
                  (lambda (_proc _event) (funcall finish)))))
