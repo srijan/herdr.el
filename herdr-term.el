@@ -280,7 +280,8 @@ terminal."
          ;; `herdr-pane-attach-args' refuses a pane with no
          ;; `terminal_id', and that refusal is about the server being
          ;; too old, not about this buffer.
-         (args (herdr-pane-attach-args pane nil))
+         (args (herdr-pane-attach-args
+                pane nil (herdr-connection-session connection)))
          (buffer (get-buffer-create
                   (herdr-term--unique-buffer-name state pane))))
     ;; Everything from here to the registry under one cleanup.  A buffer
@@ -296,7 +297,14 @@ terminal."
             ;; Before anything can go wrong: a buffer that reaches the
             ;; registry without its connection answers commands typed in
             ;; it against whichever server is current.
-            (setq herdr-buffer-connection connection))
+            (setq herdr-buffer-connection connection)
+            ;; And before the client starts, because `ghostel-exec' reads
+            ;; `default-directory' to decide which machine to spawn the
+            ;; pty on.  The host is the floor: a remote pane whose cwd
+            ;; says nothing must still spawn on its own machine, not
+            ;; here.
+            (when-let* ((host (herdr-connection-host-directory connection)))
+              (setq default-directory host)))
           ;; The buffer needs a window when the client starts: attaching
           ;; without displaying, or with a window that is deleted straight
           ;; afterwards, kills the client and ghostel then kills the
@@ -305,8 +313,11 @@ terminal."
           ;; persist.  Shown through `herdr-display-action' like every
           ;; other path.
           (herdr-term--show buffer)
-          (ghostel-exec buffer herdr-executable args)
+          ;; Before the exec, not after: the directory is what tells
+          ;; ghostel where to run, and setting it afterwards told it
+          ;; nothing and ran the client here.
           (herdr-term--set-directory connection buffer pane)
+          (ghostel-exec buffer herdr-executable args)
           (push (cons (herdr-term--key connection pane-id) buffer)
                 herdr-term--buffers))
       (error

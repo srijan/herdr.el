@@ -810,5 +810,80 @@ the buffer then names a local path of the same name."
                        (buffer-local-value 'default-directory buffer))))
       (kill-buffer buffer))))
 
+(ert-deftest herdr-term-a-remote-pane-spawns-on-its-own-machine ()
+  "`ghostel-exec' reads `default-directory' to decide which machine to
+spawn the pty on, so the buffer has to be remote before the client
+starts.  Setting the directory afterwards told it nothing and ran a
+remote pane's client here."
+  (let* ((remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
+         (state (herdr-state-from-snapshot
+                 '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (agent . "claude") (terminal_id . "t7")
+                              (cwd . "/srv/app")))))))
+         (at-exec nil))
+    (herdr-term-test--attaching
+        (lambda (buffer _program &optional _args)
+          (setq at-exec (buffer-local-value 'default-directory buffer))
+          t)
+      (let ((buffer (herdr-term--attach remote state
+                                        (herdr-state-pane state "w1:p1"))))
+        (unwind-protect
+            (progn
+              (should (equal "/ssh:shadow:/srv/app/" at-exec))
+              (should (file-remote-p at-exec)))
+          (when (buffer-live-p buffer) (kill-buffer buffer)))))))
+
+(ert-deftest herdr-term-a-remote-pane-with-no-cwd-still-spawns-remotely ()
+  "The host is the floor.  A pane whose cwd says nothing must not fall
+back to this machine, which is where the client would then attach — to a
+terminal id that exists on another server."
+  (let* ((remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
+         (state (herdr-state-from-snapshot
+                 '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (agent . "claude") (terminal_id . "t7")))))))
+         (at-exec nil))
+    (herdr-term-test--attaching
+        (lambda (buffer _program &optional _args)
+          (setq at-exec (buffer-local-value 'default-directory buffer))
+          t)
+      (let ((buffer (herdr-term--attach remote state
+                                        (herdr-state-pane state "w1:p1"))))
+        (unwind-protect
+            (should (equal "/ssh:shadow:" (file-remote-p at-exec)))
+          (when (buffer-live-p buffer) (kill-buffer buffer)))))))
+
+(ert-deftest herdr-term-a-local-pane-spawns-here ()
+  "The other half: nothing about a local connection becomes remote."
+  (let* ((local (herdr-connection--make :name "local"))
+         (state (herdr-state-from-snapshot
+                 '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                              (agent . "claude") (terminal_id . "t7")
+                              (cwd . "/tmp")))))))
+         (at-exec nil))
+    (herdr-term-test--attaching
+        (lambda (buffer _program &optional _args)
+          (setq at-exec (buffer-local-value 'default-directory buffer))
+          t)
+      (let ((buffer (herdr-term--attach local state
+                                        (herdr-state-pane state "w1:p1"))))
+        (unwind-protect
+            (progn
+              (should-not (file-remote-p at-exec))
+              (should (equal "/tmp/" at-exec)))
+          (when (buffer-live-p buffer) (kill-buffer buffer)))))))
+
+(ert-deftest herdr-term-a-named-session-reaches-the-attach ()
+  "`terminal attach' has no session option of its own, so a client for a
+named session says so globally or attaches to the default one — which on
+a host running two sessions is the wrong server's terminal."
+  (let ((pane '((pane_id . "w1:p1") (terminal_id . "t7"))))
+    (should (equal '("terminal" "attach" "t7")
+                   (herdr-pane-attach-args pane nil)))
+    (should (equal '("--session" "work" "terminal" "attach" "t7")
+                   (herdr-pane-attach-args pane nil "work")))
+    ;; The session goes before the subcommand; takeover stays after.
+    (should (equal '("--session" "work" "terminal" "attach" "t7" "--takeover")
+                   (herdr-pane-attach-args pane t "work")))))
+
 (provide 'herdr-term-test)
 ;;; herdr-term-test.el ends here
