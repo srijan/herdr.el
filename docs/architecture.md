@@ -9,7 +9,8 @@ Each file has one duty.
 | File | Duty |
 |---|---|
 | `herdr.el` | The entry points, and the protocol check. |
-| `herdr-rpc.el` | The transport for the socket API. |
+| `herdr-rpc.el` | The transport for the socket API, and the connection struct. |
+| `herdr-connection.el` | The connection registry and resolver, the SSH tunnel, the path boundary, and the machine catalog. |
 | `herdr-state.el` | The cache of the session, and the two event streams. |
 | `herdr-term.el` | The terminal buffers, and directory tracking. |
 | `herdr-cmd.el` | The curated commands. |
@@ -17,6 +18,7 @@ Each file has one duty.
 | `herdr-schema.el` | The reader for the JSON Schema of the server. |
 | `herdr-pane.el` | The pane record: its fields, and the two names built from them. |
 | `herdr-workspace.el` | The workspace record: its fields, and the two names built from them. |
+| `herdr-worktree.el` | The worktree record: its fields, and the ids that need a server. |
 | `herdr-select.el` | The `completing-read` pickers. |
 | `herdr-tree.el` | The dashboard tree, as data only. |
 | `herdr-dispatch.el` | The dashboard renderer, and its verbs. |
@@ -74,6 +76,12 @@ The event stream alone cannot keep the cache correct. Two faults break it:
    Through herdr 0.8.2 a replay of the server's event ring happened to cover that window, at the
    cost of creating panes and workspaces that closed long ago; 0.9.0 removed the replay, and the
    window with nothing covering it is what remains.
+
+Which server a call is for is never ambient. `herdr-connection.el` holds every connection being
+followed and answers `herdr-current-connection` at the point of action; anything deferred captures
+its connection when it is scheduled. A remote connection reaches its server through an SSH forward
+that same file owns, and reaches its terminals through TRAMP instead, because `make-network-process`
+has no file-handler support and `make-process` does.
 
 herdr.el therefore compares its cache against the server. Two functions do this:
 

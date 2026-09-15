@@ -41,14 +41,33 @@
 ;;; The registry
 
 (defun herdr-connection--host (path)
-  "Return the host part of PATH\\='s TRAMP prefix, or nil when it is local.
-The user is deliberately ignored: `/ssh:shadow:\\=' and
-`/ssh:me@shadow:\\=' name the same machine, and refusing a path because
-the two were spelled differently would be this package inventing a
-distinction TRAMP does not make."
+  "Return (USER . HOST) for PATH\\='s TRAMP prefix, or nil when it is local.
+USER is nil when the path does not name one, which is why
+`herdr-connection--same-host-p\\=' compares users only when both sides
+have one: `/ssh:shadow:\\=' and `/ssh:me@shadow:\\=' may well be the same
+machine, and refusing that would invent a distinction TRAMP does not
+make.  Two accounts that both name themselves are a different matter --
+they have different home directories and different herdr sockets."
   (when-let* ((remote (file-remote-p (or path ""))))
-    (let ((host (file-remote-p remote 'host)))
-      (and host (downcase host)))))
+    (when-let* ((host (file-remote-p remote 'host)))
+      (cons (file-remote-p remote 'user) (downcase host)))))
+
+(defun herdr-connection--host-name (host)
+  "Return HOST, as `herdr-connection--host\\=' returns it, for a message."
+  (cond ((null host) "this machine")
+        ((car host) (format "%s@%s" (car host) (cdr host)))
+        (t (cdr host))))
+
+(defun herdr-connection--same-host-p (a b)
+  "Return non-nil when A and B, as `herdr-connection--host\\=' returns them,
+name the same account.  Local matches local.  A host matches the same
+host, and the users must match too when both sides name one."
+  (cond
+   ((and (null a) (null b)))
+   ((or (null a) (null b)) nil)
+   ((not (equal (cdr a) (cdr b))) nil)
+   ((and (car a) (car b)) (equal (car a) (car b)))
+   (t t)))
 
 (defun herdr-connection-file-name (connection path)
   "Return PATH, which CONNECTION\\='s server named, as a file name Emacs can use.
@@ -79,13 +98,13 @@ guess here names a real directory on the wrong machine."
     (let ((path-host (herdr-connection--host path))
           (server-host (herdr-connection--host
                         (herdr-connection-host-directory connection))))
-      (unless (equal path-host server-host)
+      (unless (herdr-connection--same-host-p path-host server-host)
         (signal 'herdr-error
                 (list "wrong_host"
                       (format "%s is on %s; %s is on %s"
-                              path (or path-host "this machine")
+                              path (herdr-connection--host-name path-host)
                               (herdr-connection-name connection)
-                              (or server-host "this machine")))))
+                              (herdr-connection--host-name server-host)))))
       (file-local-name (expand-file-name path)))))
 
 (defvar herdr-connections nil
@@ -115,19 +134,36 @@ holding the same path became indistinguishable."
   (let ((server (herdr-connection--host
                  (herdr-connection-host-directory connection))))
     (seq-filter (lambda (root)
-                  (equal (herdr-connection--host root) server))
+                  (herdr-connection--same-host-p
+                   (herdr-connection--host root) server))
                 roots)))
 
 (defun herdr-connection-register (connection)
   "Add CONNECTION to the registry and return it.
+
 Replaces any connection of the same name in place, so that reconnecting
-under a name a user already knows does not leave two of them."
+under a name a user already knows does not leave two of them -- and
+stops the one it displaces, which replacing the cell alone did not.  An
+unregistered connection keeps its streams, its timers and its tunnel
+and is reachable by nothing, `herdr-disconnect\\=' included."
   (let ((name (herdr-connection-name connection)))
     (if-let* ((cell (assoc name herdr-connections)))
-        (setcdr cell connection)
+        (progn
+          (when-let* ((old (cdr cell)))
+            (unless (eq old connection)
+              (herdr-connection--retire old)))
+          (setcdr cell connection))
       (setq herdr-connections
             (append herdr-connections (list (cons name connection))))))
   connection)
+
+(defun herdr-connection--retire (connection)
+  "Stop CONNECTION and take its tunnel down, forgivingly.
+Called for a connection being displaced, where failing to tear down
+must not stop the one taking its place from registering."
+  (ignore-errors
+    (when (fboundp 'herdr-state-stop) (herdr-state-stop connection)))
+  (ignore-errors (herdr-connection--stop-tunnel connection)))
 
 (defun herdr-connection-forget (connection)
   "Drop CONNECTION from the registry."
@@ -161,9 +197,16 @@ to another: ambient context loses to an explicit answer.  Cleared from
   connection)
 
 (defun herdr-connection--unchoose ()
-  "Forget the chosen connection once its command is over."
-  (setq herdr-connection-chosen nil)
-  (remove-hook 'post-command-hook #'herdr-connection--unchoose))
+  "Forget the chosen connection once its command is over.
+
+Not while a minibuffer is open.  `post-command-hook\\=' runs for the
+commands inside a recursive edit too, so a command that picks a target
+and then asks `y-or-n-p\\=' used to lose its answer between the two and
+send the request to whatever resolved next.  Measured: the close went
+to the local server after picking a pane on the remote one."
+  (when (zerop (minibuffer-depth))
+    (setq herdr-connection-chosen nil)
+    (remove-hook 'post-command-hook #'herdr-connection--unchoose)))
 
 (defvar-local herdr-buffer-connection nil
   "The connection this buffer belongs to, when it belongs to one.
@@ -307,9 +350,11 @@ there — the one diagnosis the forward can never make, because OpenSSH
 dials the path it is given without inspecting what is behind it.
 
 Signals `herdr-error\=' with a code saying which part failed."
-  (with-temp-buffer
-    (let ((status (call-process
-                   "ssh" nil t nil "-o" "BatchMode=yes" target
+  (let ((stderr (make-temp-file "herdr-ssh-")))
+   (unwind-protect
+    (with-temp-buffer
+     (let ((status (call-process
+                   "ssh" nil (list t stderr) nil "-o" "BatchMode=yes" target
                    ;; Quoted here, because ssh joins its arguments into
                    ;; one string and the remote login shell re-parses
                    ;; it: an unquoted script loses its own `&&' to that
@@ -321,18 +366,42 @@ Signals `herdr-error\=' with a code saying which part failed."
         (signal 'herdr-error
                 (list "ssh_failed"
                       (format "%s: %s" target
-                              (string-trim (buffer-string))))))
+                              (herdr-connection--file-text stderr)))))
       (let* ((text (string-trim (buffer-string)))
              (newline (string-search "\n" text))
              (executable (and newline (string-trim (substring text 0 newline))))
              (json (and newline (substring text (1+ newline)))))
-        (unless (and executable json)
+        ;; Absolute, or it is not the answer.  `command -v' on an
+        ;; installed binary always answers a path; a login banner, a
+        ;; host-key warning or anything a remote shell echoes does not,
+        ;; and used to be taken as the binary to run.  ssh's own
+        ;; diagnostics go to STDERR above so they cannot reach here.
+        (unless (and executable json (string-prefix-p "/" executable))
           (signal 'herdr-error
                   (list "no_herdr"
                         (format "%s did not say where its herdr is" target))))
         (cons executable
-              (alist-get 'sessions
-                         (ignore-errors (herdr-rpc-decode json))))))))
+              (alist-get 'sessions (herdr-connection--decode target json))))))
+    (ignore-errors (delete-file stderr)))))
+
+(defun herdr-connection--file-text (path)
+  "Return the trimmed contents of PATH, or a note that it said nothing."
+  (let ((text (ignore-errors
+                (with-temp-buffer (insert-file-contents path)
+                                  (string-trim (buffer-string))))))
+    (if (and text (not (string-empty-p text))) text "no output")))
+
+(defun herdr-connection--decode (target json)
+  "Decode JSON from TARGET, reporting a parse failure as one.
+Swallowing it left SESSIONS nil, and the caller then reported a session
+that does not exist -- a cause inferred rather than the one observed."
+  (condition-case nil
+      (herdr-rpc-decode json)
+    (error
+     (signal 'herdr-error
+             (list "bad_answer"
+                   (format "%s answered, and its answer would not parse"
+                           target))))))
 
 (defun herdr-connection--session-socket (target sessions session)
   "Return the socket path SESSION listens on, from TARGET\='s SESSIONS."
@@ -400,10 +469,29 @@ streams use, so there is one retry mechanism rather than two."
       (setf (herdr-connection-tunnel connection) process)
       process)))
 
+(defun herdr-connection-ensure-tunnel (connection)
+  "Make sure CONNECTION\\='s forward is up, restarting it when it is not.
+
+Nil for a local connection, which has no tunnel.  The reconnect path
+calls this before it reopens the streams: a remote connection reaches
+its server through the forward, so a socket with no live `ssh\\=' behind
+it can be retried forever and never answer.  Signals the same
+`herdr-error\\=' codes the first connect does."
+  (when (and (herdr-connection-remote-p connection)
+             (not (process-live-p (herdr-connection-tunnel connection))))
+    (herdr-connection--start-tunnel connection)
+    (herdr-connection--await-tunnel connection)))
+
 (defun herdr-connection--tunnel-died (connection)
   "Note that CONNECTION\\='s tunnel exited, and retry if it is still wanted.
 Wanted means the session is running: `herdr-disconnect\\=' stops it first,
 so a deliberate teardown reaches here with nothing left to retry."
+  (when-let* ((process (herdr-connection-tunnel connection)))
+    ;; The stderr buffer goes with it.  Only `--stop-tunnel' killed it,
+    ;; and by the time that runs the slot is already nil, so every ssh
+    ;; that exited on its own left one hidden buffer behind.
+    (when (buffer-live-p (process-buffer process))
+      (kill-buffer (process-buffer process))))
   (setf (herdr-connection-tunnel connection) nil)
   (when (herdr-state-running-p connection)
     (herdr-state--schedule-reconnect connection)))
@@ -492,10 +580,19 @@ must not slow to a stack of timeouts for servers nobody asked about."
   (require 'herdr-state)
   (let ((connection (herdr-connection-register
                      (herdr-connection--make
-                      :name name :socket-path socket-path))))
-    (herdr-state-start connection)
-    (message "herdr: following %s" name)
-    connection))
+                      :name name :socket-path socket-path)))
+        (established nil))
+    ;; Rolled back like the remote path, which promises the registry
+    ;; holds nothing when any of it fails.  Registering before the
+    ;; fallible call left an entry nothing retried and nothing reached.
+    (unwind-protect
+        (progn
+          (herdr-state-start connection)
+          (setq established t)
+          (message "herdr: following %s" name)
+          connection)
+      (unless established
+        (herdr-connection-forget connection)))))
 
 ;;;###autoload
 (defun herdr-disconnect (name)

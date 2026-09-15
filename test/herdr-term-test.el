@@ -465,18 +465,18 @@ session, and the leak is invisible until something it touches is gone."
   (let ((cancelled nil)
         (debounce (run-at-time 3600 nil #'ignore)))
     (unwind-protect
-        (let ((herdr-term--directory-debounce-timer debounce))
+        (let ((herdr-term--directory-debounce-timers (list (cons 1 debounce))))
           (cl-letf (((symbol-function 'cancel-timer)
                      (lambda (timer) (push timer cancelled))))
             (herdr-term--cancel-directory-debounce))
           (should (equal (list debounce) cancelled))
-          (should-not herdr-term--directory-debounce-timer))
+          (should-not herdr-term--directory-debounce-timers))
       (cancel-timer debounce))))
 
 (ert-deftest herdr-term-cancel-directory-debounce-has-nothing-to-cancel-when-idle ()
   "Teardown runs whether or not tracking ever started, so a nil slot must
 not be handed to `cancel-timer', which signals on one."
-  (let ((herdr-term--directory-debounce-timer nil)
+  (let ((herdr-term--directory-debounce-timers nil)
         (cancelled nil))
     (cl-letf (((symbol-function 'cancel-timer)
                (lambda (timer) (push timer cancelled))))
@@ -488,15 +488,18 @@ not be handed to `cancel-timer', which signals on one."
   (let ((pending (run-at-time 3600 nil #'ignore))
         (cancelled nil))
     (unwind-protect
-        (let ((herdr-term-track-directory t)
-              (herdr-term--directory-debounce-timer pending))
+        (let* ((connection (herdr-current-connection))
+               (token (herdr-connection-token connection))
+               (herdr-term-track-directory t)
+               (herdr-term--directory-debounce-timers (list (cons token pending))))
           (cl-letf (((symbol-function 'cancel-timer)
                      (lambda (timer) (push timer cancelled)))
                     ((symbol-function 'run-at-time)
                      (lambda (&rest _) 'replacement)))
-            (herdr-term--schedule-directory-refresh (herdr-current-connection)))
+            (herdr-term--schedule-directory-refresh connection))
           (should (equal (list pending) cancelled))
-          (should (eq 'replacement herdr-term--directory-debounce-timer)))
+          (should (eq 'replacement
+                      (alist-get token herdr-term--directory-debounce-timers))))
       (cancel-timer pending))))
 
 (ert-deftest herdr-term-schedule-directory-refresh-reaches-the-repair ()
@@ -505,7 +508,7 @@ A `cd' produces no event herdr.el acts on, so a debounce that only
 synced buffers would show a directory the cache was never told about,
 degrading tracking from the debounce interval to the repair interval."
   (let ((herdr-term-track-directory t)
-        (herdr-term--directory-debounce-timer nil)
+        (herdr-term--directory-debounce-timers nil)
         (repaired nil)
         (callback nil))
     (cl-letf (((symbol-function 'run-at-time)
@@ -513,10 +516,13 @@ degrading tracking from the debounce interval to the repair interval."
               ((symbol-function 'herdr-state-repair)
                (lambda (_connection) (setq repaired t))))
       (herdr-term--schedule-directory-refresh (herdr-current-connection))
-      (should (eq 'armed herdr-term--directory-debounce-timer))
+      (should (eq 'armed (alist-get (herdr-connection-token
+                                     (herdr-current-connection))
+                                    herdr-term--directory-debounce-timers)))
       (funcall callback)
       (should repaired)
-      (should-not herdr-term--directory-debounce-timer))))
+      (should-not (alist-get (herdr-connection-token (herdr-current-connection))
+                                 herdr-term--directory-debounce-timers)))))
 
 ;;; Teardown must actually tear down
 
@@ -525,7 +531,7 @@ degrading tracking from the debounce interval to the repair interval."
 stale entry names a dead buffer that reconciliation would count as
 already attached."
   (let* ((herdr-state-change-functions (list #'herdr-term--on-state-change))
-         (herdr-term--directory-debounce-timer nil)
+         (herdr-term--directory-debounce-timers nil)
          (one (generate-new-buffer " *agent-one*"))
          (two (generate-new-buffer " *agent-two*"))
          (herdr-term--buffers (herdr-test-term-buffers (list (cons "w1:p1" one)
@@ -545,12 +551,13 @@ already attached."
         (cancelled nil))
     (unwind-protect
         (let ((herdr-term--buffers nil)
-              (herdr-term--directory-debounce-timer debounce))
+              (herdr-term--directory-debounce-timers (list (cons 1 debounce))))
           (cl-letf (((symbol-function 'cancel-timer)
                      (lambda (timer) (push timer cancelled))))
             (herdr-term-teardown))
           (should (equal (list debounce) cancelled))
-          (should-not herdr-term--directory-debounce-timer))
+          (should-not (alist-get (herdr-connection-token (herdr-current-connection))
+                                 herdr-term--directory-debounce-timers)))
       (cancel-timer debounce))))
 
 (ert-deftest herdr-term-a-reconcile-event-nudges-no-further-repair ()
@@ -559,7 +566,7 @@ debounce there sent a second repair 0.4s later that found nothing, so
 every real change cost two extra round trips on the main thread."
   (let ((herdr-term-track-directory t)
         (herdr-term--buffers nil)
-        (herdr-term--directory-debounce-timer nil)
+        (herdr-term--directory-debounce-timers nil)
         (armed 0))
     (cl-letf (((symbol-function 'run-at-time)
                (lambda (&rest _) (cl-incf armed) 'armed))

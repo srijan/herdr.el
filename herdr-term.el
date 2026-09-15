@@ -393,7 +393,12 @@ One `cd' emits dozens of `layout_updated' events."
   :type 'number
   :group 'herdr)
 
-(defvar herdr-term--directory-debounce-timer nil)
+(defvar herdr-term--directory-debounce-timers nil
+  "Alist of (TOKEN . TIMER) for the pending directory refreshes.
+One timer per connection, keyed like `herdr-term--buffers\\='.  A single
+global timer meant a chatty server cancelled a quiet one\\='s pending
+repair every time it fired, so the quiet server\\='s terminals kept a
+directory that had already changed.")
 
 (defun herdr-term--schedule-directory-refresh (connection)
   "Repair CONNECTION\='s cache shortly, coalescing bursts of events.
@@ -403,19 +408,26 @@ then points the buffers at it.
 The connection is the one that notified, carried into the timer rather
 than read when it fires: a timer callback runs in an empty extent."
   (when herdr-term-track-directory
-    (when herdr-term--directory-debounce-timer
-      (cancel-timer herdr-term--directory-debounce-timer))
-    (setq herdr-term--directory-debounce-timer
-          (run-at-time herdr-term-directory-debounce nil
-                       (lambda ()
-                         (setq herdr-term--directory-debounce-timer nil)
-                         (herdr-state-repair connection))))))
+    (let ((token (herdr-connection-token connection)))
+      (when-let* ((pending (alist-get token herdr-term--directory-debounce-timers)))
+        (cancel-timer pending))
+      (setf (alist-get token herdr-term--directory-debounce-timers)
+            (run-at-time herdr-term-directory-debounce nil
+                         (lambda ()
+                           (setf (alist-get token
+                                            herdr-term--directory-debounce-timers)
+                                 nil)
+                           (herdr-state-repair connection)))))))
 
-(defun herdr-term--cancel-directory-debounce ()
-  "Cancel a pending debounced refresh."
-  (when herdr-term--directory-debounce-timer
-    (cancel-timer herdr-term--directory-debounce-timer))
-  (setq herdr-term--directory-debounce-timer nil))
+(defun herdr-term--cancel-directory-debounce (&optional connection)
+  "Cancel CONNECTION\\='s pending debounced refresh, or every one."
+  (dolist (cell herdr-term--directory-debounce-timers)
+    (when (and (cdr cell)
+               (or (null connection)
+                   (equal (car cell) (herdr-connection-token connection))))
+      (cancel-timer (cdr cell))
+      (setcdr cell nil)))
+  (unless connection (setq herdr-term--directory-debounce-timers nil)))
 
 (defun herdr-term--set-directory (connection buffer pane)
   "Point BUFFER\='s `default-directory\=' at PANE\='s working directory.
@@ -476,7 +488,7 @@ The herdr server is left running.
 The hook comes off only when nothing is left for it to serve: one
 function serves every connection, so removing it because one stopped
 would leave the others' buffers unreaped."
-  (herdr-term--cancel-directory-debounce)
+  (herdr-term--cancel-directory-debounce connection)
   (dolist (cell (if connection
                     (herdr-term--buffers-for connection)
                   (herdr-term--live-buffers)))

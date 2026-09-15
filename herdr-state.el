@@ -556,12 +556,15 @@ emptied."
                          (herdr-connection-generation connection)))
              (funcall done nil))
             (t
-             ;; Only when the reply actually carries a list.  A reply
-             ;; with no `panes' in it is an answer to a different
-             ;; question, not an empty server, and folding it would
-             ;; close every pane in the cache.
-             (when-let* ((panes (alist-get 'panes result)))
-               (herdr-state--fold-panes connection panes known-ids))
+             ;; Presence, not truth.  A reply with no `panes' key is an
+             ;; answer to a different question and folding it would
+             ;; close every pane in the cache; a reply whose `panes' is
+             ;; `[]' is a server that has none, and it decodes to nil
+             ;; like the missing key does.  Asking `assq' tells them
+             ;; apart, so a server whose last pane closed now clears.
+             (when (assq 'panes result)
+               (herdr-state--fold-panes connection (alist-get 'panes result)
+                                        known-ids))
              (funcall done nil))))
          herdr-rpc-background-timeout)
       ;; Plain `error' as well as `herdr-error': the peer can close
@@ -588,10 +591,11 @@ disconnects keeps it forever."
            (when (and (null error)
                       (equal generation
                              (herdr-connection-generation connection)))
-             ;; See `herdr-state--reconcile-panes-async\=': a reply with
-             ;; no `workspaces' in it must not read as an empty server.
-             (when-let* ((workspaces (alist-get 'workspaces result)))
-               (herdr-state--fold-workspaces connection workspaces)))
+             ;; See `herdr-state--reconcile-panes-async\=': absent and
+             ;; empty are different answers and decode the same.
+             (when (assq 'workspaces result)
+               (herdr-state--fold-workspaces
+                connection (alist-get 'workspaces result))))
            (funcall done error))
          herdr-rpc-background-timeout)
       (error (funcall done `((code . "call_failed")
@@ -992,6 +996,10 @@ without changing what B should watch."
   (when (herdr-connection-running connection)
     (condition-case nil
         (progn
+          ;; Before the streams: a remote connection reaches its server
+          ;; through the forward, so reopening a socket whose `ssh' has
+          ;; exited retries a path that cannot answer.
+          (herdr-connection-ensure-tunnel connection)
           (herdr-state--open-streams connection)
           ;; A disconnect of any length loses events that are never
           ;; sent again — so this settle takes a full snapshot rather
@@ -1045,17 +1053,21 @@ the reply is in flight, and a reply built before that pane existed
 cannot pronounce it stale."
   (let ((known-ids (herdr-state-pane-ids (herdr-state-current connection)))
         (generation (herdr-connection-generation connection)))
-    (when-let* ((panes (condition-case nil
-                           (alist-get 'panes (herdr-rpc-call connection "pane.list"))
+    (when-let* ((reply (condition-case nil
+                           (herdr-rpc-call connection "pane.list")
                          (error (when (herdr-connection-running connection)
                                   (herdr-state--schedule-reconnect connection))
                                 nil)))
+                ;; Presence, not truth: a reply whose `panes' is `[]'
+                ;; decodes to nil exactly as a missing key does, and
+                ;; only one of the two means the server has none.
+                ((assq 'panes reply))
                 ;; The wait services due timers, so the session can stop
                 ;; underneath this call.  A reply from a session that is
                 ;; gone must not repopulate the cache `herdr-state-stop\='
                 ;; just emptied.
                 ((equal generation (herdr-connection-generation connection))))
-      (herdr-state--fold-panes connection panes known-ids))))
+      (herdr-state--fold-panes connection (alist-get 'panes reply) known-ids))))
 
 (defun herdr-state--fold-panes (connection panes known-ids)
   "Fold the authoritative PANES into CONNECTION\='s cache.
@@ -1157,8 +1169,8 @@ than one extra round trip."
     (herdr-state-current connection)))
 
 (defun herdr-state-resync (connection)
-  "Refetch the snapshot and rebuild per-pane subscriptions."
-  (interactive)
+  "Refetch CONNECTION\\='s snapshot and rebuild its per-pane subscriptions."
+  (interactive (list (herdr-current-connection)))
   (setf (herdr-connection-cache connection)
         (herdr-state-from-snapshot
          (alist-get 'snapshot (herdr-rpc-call connection "session.snapshot"))))

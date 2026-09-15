@@ -255,13 +255,43 @@ path needs no PATH at all."
   "SSH exiting non-zero has already said why on stderr.  Repeating it is
 the whole report; guessing past it is not."
   (cl-letf (((symbol-function 'call-process)
-             (lambda (_program _infile _buffer _display &rest _args)
-               (insert "ssh: Could not resolve hostname shadow\n")
+             (lambda (_program _infile buffer _display &rest _args)
+               ;; Where ssh actually writes it.  DESTINATION is now
+               ;; (STDOUT STDERR); stdout is the parsed channel and must
+               ;; not carry diagnostics, because its first line is taken
+               ;; as the path of a binary to run.
+               (write-region "ssh: Could not resolve hostname shadow\n"
+                             nil (cadr buffer) nil 'quiet)
                255)))
     (let ((err (should-error (herdr-connection--ask-remote "shadow")
                              :type 'herdr-error)))
       (should (equal "ssh_failed" (herdr-error-code err)))
       (should (string-match-p "Could not resolve" (herdr-error-message err))))))
+
+(ert-deftest herdr-connection-login-noise-is-not-mistaken-for-the-binary ()
+  "`command -v\\=' answers an absolute path.  A banner, a host-key warning
+or anything a remote shell echoes does not -- and the first line of the
+answer is exec\\='d on that host, so taking one would run whatever the
+noise named."
+  (cl-letf (((symbol-function 'call-process)
+             (lambda (_program _infile _buffer _display &rest _args)
+               (insert "Welcome to shadow. Unauthorized access prohibited.\n"
+                       "{\"sessions\":[]}")
+               0)))
+    (let ((err (should-error (herdr-connection--ask-remote "shadow")
+                             :type 'herdr-error)))
+      (should (equal "no_herdr" (herdr-error-code err))))))
+
+(ert-deftest herdr-connection-an-unparseable-answer-says-so ()
+  "Swallowing the decode left SESSIONS nil, and the caller then reported
+a session that does not exist -- a cause inferred rather than observed."
+  (cl-letf (((symbol-function 'call-process)
+             (lambda (_program _infile _buffer _display &rest _args)
+               (insert "/usr/bin/herdr\n" "{not json at all")
+               0)))
+    (let ((err (should-error (herdr-connection--ask-remote "shadow")
+                             :type 'herdr-error)))
+      (should (equal "bad_answer" (herdr-error-code err))))))
 
 (ert-deftest herdr-connection-a-forward-with-nothing-behind-it-says-so ()
   "OpenSSH binds the local socket at setup and only dials the remote when
@@ -544,6 +574,101 @@ one of its labels is read as a target and asked about in full."
     ;; The target typed at the machine prompt is not asked for again.
     (should-not (member "SSH target: " prompts))
     (should (member "Connection name: " prompts))))
+
+(ert-deftest herdr-connection-registering-a-name-retires-the-one-it-displaces ()
+  "Replacing the registry cell alone left the old connection running --
+its streams, its timers and its tunnel -- and reachable by nothing,
+`herdr-disconnect\=' included."
+  (let* ((old (herdr-connection--make :name "shadow" :socket-path "/tmp/a.sock"))
+         (new (herdr-connection--make :name "shadow" :socket-path "/tmp/b.sock"))
+         (herdr-connections (list (cons "shadow" old)))
+         (stopped nil))
+    (cl-letf (((symbol-function 'herdr-state-stop)
+               (lambda (connection) (push connection stopped))))
+      (herdr-connection-register new))
+    (should (equal (list old) stopped))
+    (should (eq new (herdr-connection-named "shadow")))
+    (should (equal 1 (length herdr-connections)))))
+
+(ert-deftest herdr-connection-re-registering-the-same-struct-does-not-stop-it ()
+  "The rename path re-registers the connection it is renaming."
+  (let* ((connection (herdr-connection--make :name "shadow"))
+         (herdr-connections (list (cons "shadow" connection)))
+         (stopped nil))
+    (cl-letf (((symbol-function 'herdr-state-stop)
+               (lambda (c) (push c stopped))))
+      (herdr-connection-register connection))
+    (should-not stopped)))
+
+(ert-deftest herdr-connection-a-failed-local-connect-leaves-no-entry ()
+  "`herdr-connect-remote\=' promises the registry holds nothing when any of
+it fails; the local entry point registered before the fallible call."
+  (let ((herdr-connections nil))
+    (cl-letf (((symbol-function 'herdr-state-start)
+               (lambda (_connection) (error "herdr: no server"))))
+      (should-error (herdr-connect "broken" "/tmp/definitely-absent.sock")))
+    (should-not (herdr-connection-named "broken"))
+    (should-not herdr-connections)))
+
+(ert-deftest herdr-connection-two-accounts-on-one-host-are-two-machines ()
+  "They have different home directories and different herdr sockets, so a
+path from one is not a path on the other -- but an unqualified path
+still matches, which is the leniency TRAMP itself has."
+  (let ((alice (herdr-connection--make :name "alice" :ssh-target "alice@shadow"))
+        (bob (herdr-connection--make :name "bob" :ssh-target "bob@shadow")))
+    (should-error (herdr-connection-server-path
+                   bob "/ssh:alice@shadow:/home/alice/src/")
+                  :type 'herdr-error)
+    (should (equal "/home/bob/src/"
+                   (herdr-connection-server-path
+                    bob "/ssh:bob@shadow:/home/bob/src/")))
+    ;; A target that names no user still matches either account.
+    (should (equal "/srv/x/"
+                   (herdr-connection-server-path alice "/ssh:shadow:/srv/x/")))
+    ;; And roots go only to the account whose host AND user they name.
+    (should (equal '("/ssh:alice@shadow:/home/alice/p/")
+                   (herdr-connection-roots-for
+                    alice '("/ssh:alice@shadow:/home/alice/p/"
+                            "/ssh:bob@shadow:/home/bob/p/"))))))
+
+(ert-deftest herdr-connection-a-choice-survives-a-confirmation-prompt ()
+  "`post-command-hook\= ' runs for the commands inside a recursive edit too,
+so a command that picked a target and then asked `y-or-n-p\=' lost its
+answer between the two.  Measured in a real frame: the close went to the
+local server after picking a pane on the remote one."
+  (let* ((one (herdr-connection--make :name "one"))
+         (two (herdr-connection--make :name "two"))
+         (herdr-connections (list (cons "one" one) (cons "two" two)))
+         (herdr-connection-chosen nil))
+    (herdr-connection-choose two)
+    ;; What the hook does while a minibuffer is open.
+    (cl-letf (((symbol-function 'minibuffer-depth) (lambda () 1)))
+      (herdr-connection--unchoose))
+    (should (eq two (herdr-current-connection)))
+    ;; And what it does once the command is actually over.
+    (cl-letf (((symbol-function 'minibuffer-depth) (lambda () 0)))
+      (herdr-connection--unchoose))
+    (should (eq one (herdr-current-connection)))))
+
+(ert-deftest herdr-connection-a-remote-reconnect-restarts-its-tunnel ()
+  "A remote connection reaches its server through the forward, so
+reopening a socket whose `ssh\=' has exited retries a path that cannot
+answer -- forever, with backoff, looking like it is trying."
+  (let ((connection (herdr-connection--make :name "shadow"
+                                            :ssh-target "shadow"))
+        (started nil))
+    (cl-letf (((symbol-function 'herdr-connection--start-tunnel)
+               (lambda (c) (push c started) nil))
+              ((symbol-function 'herdr-connection--await-tunnel) #'ignore))
+      (herdr-connection-ensure-tunnel connection))
+    (should (equal (list connection) started))))
+
+(ert-deftest herdr-connection-a-local-connection-has-no-tunnel-to-ensure ()
+  (let ((started nil))
+    (cl-letf (((symbol-function 'herdr-connection--start-tunnel)
+               (lambda (c) (push c started) nil)))
+      (herdr-connection-ensure-tunnel (herdr-connection-local)))
+    (should-not started)))
 
 (provide 'herdr-connection-test)
 ;;; herdr-connection-test.el ends here

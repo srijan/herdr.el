@@ -76,13 +76,21 @@ the terminal client. An absolute path needs no PATH at all.
 
 A connection is reported up only once a ping answers through the forward. The local socket
 appearing proves only that `ssh` bound it, which it does before speaking to the far host at
-all. There are three things herdr.el can tell you, and it does not guess past them:
+all. Each of these is something herdr.el observed, and it does not guess past them:
 
 | What you see | What it means |
 |---|---|
 | `ssh_failed`, with what `ssh` printed | SSH did not connect. Its own message is the diagnosis. |
+| `no_herdr` | SSH connected and the far host did not say where its herdr is. Usually herdr is not installed there. |
+| `bad_answer` | The far host answered and its answer would not parse. |
+| `no_such_session` | That host runs herdr, and has no session by that name. |
+| `ssh_exited` | The forward's `ssh` exited while the connection was being made. |
 | `no_answer` | The forward is up and the socket did not answer. Usually no herdr server is running on that host. |
 | `not_herdr` | Something answered on that socket and it was not a herdr server. |
+
+`wrong_host` is a different class: it means a path was about to cross to the wrong machine, and
+herdr.el refused rather than guess. Two accounts on one host count as two machines, because they
+have different home directories and different herdr sockets.
 
 On a host with SELinux enforcing — Fedora and RHEL by default — `sshd` is refused access to a
 socket in `~/.config`, which is where herdr puts it. The connection then reports `no_answer`

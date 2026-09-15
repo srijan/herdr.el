@@ -1467,7 +1467,8 @@ what opening the dashboard already costs."
   (interactive)
   (let ((buffer (get-buffer herdr-dispatch-buffer-name)))
     (unless buffer
-      (herdr-dispatch--forget-worktrees (herdr-current-connection))
+      (dolist (connection (herdr-connection-list))
+        (herdr-dispatch--forget-worktrees connection))
       (setq buffer (get-buffer-create herdr-dispatch-buffer-name)))
     (with-current-buffer buffer
       (unless (derived-mode-p 'herdr-dispatch-mode) (herdr-dispatch-mode))

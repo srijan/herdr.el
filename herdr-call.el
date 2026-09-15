@@ -71,7 +71,12 @@ only with a prefix argument; leaving a prompt empty omits it."
     (dolist (name wanted)
       (let ((value (herdr-call--read-value connection method name)))
         (when value (push (cons (intern name) value) params))))
-    (let ((result (herdr-rpc-call connection method (nreverse params))))
+    ;; Re-resolved, not reused.  A parameter prompt can be a pane picker
+    ;; offering every connection's panes, and choosing one says which
+    ;; server the call means -- which the binding made before the prompt
+    ;; cannot know.  Same rule the curated commands follow.
+    (let ((result (herdr-rpc-call (herdr-current-connection)
+                                  method (nreverse params))))
       (if (called-interactively-p 'any)
           (herdr-call--display method result)
         result))))

@@ -271,13 +271,37 @@ been primed."
 
 (ert-deftest herdr-stop-tears-down-both-halves ()
   "Stopping one half leaves either an event stream feeding buffers that
-are gone, or buffers attached to a stream that has stopped."
+are gone, or buffers attached to a stream that has stopped.
+
+Both halves take the SAME connection.  The stub used to take no
+argument, which matched a teardown call that reaped every connection\\='s
+buffers and so kept the defect green."
   (let (torn stopped)
-    (cl-letf (((symbol-function 'herdr-term-teardown) (lambda () (push t torn)))
-              ((symbol-function 'herdr-state-stop) (lambda (_connection) (push t stopped))))
+    (cl-letf (((symbol-function 'herdr-term-teardown)
+               (lambda (connection) (push connection torn)))
+              ((symbol-function 'herdr-state-stop)
+               (lambda (connection) (push connection stopped))))
       (herdr-stop))
-    (should torn)
-    (should stopped)))
+    (should (= 1 (length torn)))
+    (should (= 1 (length stopped)))
+    (should (herdr-connection-p (car torn)))
+    (should (eq (car torn) (car stopped)))))
+
+(ert-deftest herdr-project-every-bound-command-can-actually-run ()
+  "A command with a required argument and a bare `(interactive)\=' is a
+dead key: `herdr-state-resync\=' gained an argument and kept the spec, so
+`g\=' signalled wrong-number-of-arguments for every user."
+  (let (broken)
+    (map-keymap
+     (lambda (_event binding)
+       (when (and (symbolp binding) (commandp binding))
+         (let ((arity (func-arity binding))
+               (spec (cadr (interactive-form binding))))
+           ;; A required argument the interactive spec does not supply.
+           (when (and (> (car arity) 0) (null spec))
+             (push binding broken)))))
+     herdr-command-map)
+    (should-not broken)))
 
 (provide 'herdr-project-test)
 ;;; herdr-project-test.el ends here

@@ -80,11 +80,18 @@ some commands may misbehave"
 
 ;;;###autoload
 (defun herdr-stop ()
-  "Stop following herdr and kill its Emacs-side buffers.
-The herdr server keeps running; agents are unaffected."
+  "Stop following one herdr connection and kill its Emacs-side buffers.
+The herdr server keeps running; agents are unaffected.
+
+One connection, both halves.  The teardown used to be called with no
+argument, which kills every connection\\='s terminal buffers, beside a
+stop scoped to one — so stopping the local server reaped a remote
+server\\='s terminals and left that connection running.  Use
+`herdr-disconnect\\=' to stop a connection you named."
   (interactive)
-  (herdr-term-teardown)
-  (herdr-state-stop (herdr-current-connection)))
+  (let ((connection (herdr-current-connection)))
+    (herdr-term-teardown connection)
+    (herdr-state-stop connection)))
 
 ;;;###autoload
 (defun herdr-project ()

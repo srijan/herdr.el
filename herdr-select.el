@@ -128,15 +128,21 @@ server, so this is the surface that must show all of them."
   "Refresh each of CONNECTIONS, forgiving the ones that do not answer.
 
 Refreshing at all is the old reasoning: a picker listing panes that no
-longer exist is worse than one extra round trip.  Forgiving is the new
-one — a server that has gone quiet must cost the list nothing more than
-its own rows being stale, so the failure is swallowed and, when there
-is more than one server to wait on, the wait is the background bound
-rather than the full one."
-  (let ((herdr-rpc-timeout (min herdr-rpc-timeout
-                                herdr-rpc-background-timeout)))
+longer exist is worse than one extra round trip.
+
+Every connection is asked, running or not: a registered connection that
+is not being followed holds the empty cache `herdr-state-stop\\=' left, so
+skipping it offered no rows at all and the picker refused a list that
+worked before.  Failure is swallowed instead, which costs an
+unreachable server nothing but its own freshness.
+
+One deadline covers them all, not one each.  Waiting the background
+bound per connection made N quiet servers cost N times it, which is the
+compounding freeze R6 exists to forbid."
+  (let ((deadline (+ (float-time) herdr-rpc-background-timeout)))
     (dolist (connection connections)
-      (when (herdr-state-running-p connection)
+      (let ((herdr-rpc-timeout (min herdr-rpc-timeout
+                                    (max 0.05 (- deadline (float-time))))))
         (ignore-errors (herdr-state-refresh connection))))))
 
 (defun herdr-select--offer (connections ids candidate)
@@ -317,7 +323,14 @@ and moves only when something moves it."
 (defun herdr-select--embark-pane-target (type target)
   "Reduce embark TARGET of TYPE to the pane id it names.
 Every action on `herdr-select-pane-embark-map' takes an id, and a picker
-candidate is a whole row."
+candidate is a whole row.
+
+The row\\='s server is chosen on the way past.  An id alone cannot say
+which server it belongs to, so an action reduced to one used to reach
+whichever connection resolved next."
+  (when-let* ((connection (car (alist-get target herdr-select--rows
+                                          nil nil #'equal))))
+    (herdr-connection-choose connection))
   (cons type (herdr-select-row-id target)))
 
 (with-eval-after-load 'embark
