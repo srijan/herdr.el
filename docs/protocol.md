@@ -270,6 +270,18 @@ Writing `done` into `agent_status` would put it in `herdr-pane-significant-field
 `pane.list` reconcile would see cached `done` against a fresh `idle`, call it a change, and
 redraw the dashboard on the repair interval for as long as anything was finished.
 
+**There is no `agent_renamed` event.** The event schema carries `workspace_renamed` and
+`tab_renamed` and nothing for an agent, so `agent.rename` is announced only in its own reply, which
+returns the whole `AgentInfo`. A client caching names has to fold that in or wait for the next
+`session.snapshot` — and `agents`, the only array carrying a name, comes from the snapshot alone.
+
+**An absent `name` clears one.** `agent.rename` with only a target leaves the agent unnamed in the
+next snapshot, which is what the CLI's `--clear` does; an empty string is refused as
+`invalid_agent_name`. Names must start with a lowercase letter and hold only lowercase letters,
+digits, `-` or `_`, are 1-32 long, and are unique per server — a second agent taking one answers
+`agent_name_taken`. A cleared name stops resolving: the old name then answers `agent_not_found`.
+All measured on 0.9.0.
+
 **A blocked agent cannot be prompted.** `agent.prompt` answers `agent_blocked` — "agent NAME is
 blocked and requires interactive input" — and sends nothing. Measured on 0.9.0, and the check runs
 before the one below, so it is what a blocked agent answers whatever else is true of the pane.

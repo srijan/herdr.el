@@ -42,7 +42,8 @@
     (herdr-worktree-create       "worktree.create"      "branch" "base" "cwd" "focus")
     (herdr-worktree-remove       "worktree.remove"      "workspace_id" "force")
     (herdr-agent-prompt          "agent.prompt"         "target" "text")
-    (herdr-agent-send-keys       "agent.send_keys"      "target" "keys"))
+    (herdr-agent-send-keys       "agent.send_keys"      "target" "keys")
+    (herdr-agent-rename          "agent.rename"         "target" "name"))
   "Every curated command, with the method and parameters it uses.
 Each entry is (COMMAND METHOD PARAM...).  Verified against the live
 schema by the drift test.")
@@ -356,6 +357,34 @@ buries the rest of the message."
     (if (= lines 1)
         (format "%d characters" (length text))
       (format "%d lines" lines))))
+
+(defun herdr-agent-rename (name &optional target)
+  "Name the agent in TARGET NAME, or clear its name when NAME is empty.
+
+An agent\='s name is not its pane\='s label.  The label is what the pane is
+doing and moves as the work moves; the name is what you call the agent,
+and herdr takes one anywhere it takes a target - `agent.get\=', a prompt,
+a wait.  In Emacs it is also what stops a buffer name moving, since
+`herdr-pane-identity\=' prefers it over everything else.
+
+Clearing is sending no name at all, which is what the transport already
+does with a nil: herdr reads an absent `name\=' as `--clear\=', measured,
+while an empty string is refused as an invalid name.
+
+herdr requires a name to start with a lowercase letter and to hold only
+lowercase letters, digits, `-\=' or `_\=', and refuses one already in use
+with `agent_name_taken\='.  Both arrive as ordinary herdr errors naming
+the rule."
+  (interactive (list (read-string "Agent name (empty clears): ")))
+  (let* ((target (or target (herdr-select-agent "Rename agent: ")))
+         (name (unless (string-empty-p (string-trim name)) (string-trim name)))
+         (reply (herdr-rpc-call (herdr-current-connection) "agent.rename"
+                                `((target . ,target) (name . ,name)))))
+    (when-let* ((agent (alist-get 'agent reply)))
+      (herdr-state-note-agent (herdr-current-connection) agent))
+    (message "herdr: %s" (if name
+                             (format "named %s %s" target name)
+                           (format "cleared the name on %s" target)))))
 
 (defun herdr-agent-send-keys (keys &optional target)
   "Send KEYS to the agent in TARGET, as whitespace-separated key names.

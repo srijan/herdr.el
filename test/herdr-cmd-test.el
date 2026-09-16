@@ -74,7 +74,8 @@ worth arguing about now."
                    herdr-worktree-create
                    herdr-worktree-remove
                    herdr-agent-prompt
-                   herdr-agent-send-keys)
+                   herdr-agent-send-keys
+                   herdr-agent-rename)
                  (mapcar #'car herdr-cmd-methods))))
 
 (ert-deftest herdr-cmd-offers-no-surface-the-dashboard-does-not-use ()
@@ -120,6 +121,59 @@ deleting them safe."
   (should-not (herdr-cmd-read-truncated-p '((read . ((truncated . nil)))))))
 
 ;;; Focus must move Emacs, not just the server
+
+(ert-deftest herdr-agent-rename-clears-by-sending-no-name-at-all ()
+  "herdr reads an absent `name\\=' as `--clear\\=' and refuses an empty string.
+
+Measured on 0.9.0: `agent.rename\\=' with only a target leaves the agent
+with no name in the next snapshot, while `\"\"\\=' is refused as
+`invalid_agent_name\\='.  The transport already drops nil params rather
+than sending null, so clearing needs nothing of its own - which is the
+whole reason this is asserted rather than assumed."
+  (let (seen)
+    (cl-letf (((symbol-function 'message) #'ignore))
+      (herdr-test-with-state (:cache (herdr-state-empty))
+        (herdr-test-with-server
+            (lambda (req)
+              (setq seen req)
+              (cons (herdr-test-ok req '((type . "agent_info")
+                                         (agent . ((pane_id . "w1:p1")))))
+                    nil))
+          (herdr-agent-rename "   " "w1:p1"))))
+    (let ((params (alist-get 'params seen)))
+      (should (equal "w1:p1" (alist-get 'target params)))
+      (should-not (assq 'name params)))))
+
+(ert-deftest herdr-agent-rename-shows-the-new-name-without-waiting-for-a-snapshot ()
+  "herdr publishes no `agent_renamed\\=' event, so the reply is the only news.
+
+Its event schema carries `workspace_renamed\\=' and `tab_renamed\\=' and
+nothing for an agent, and the `agents\\=' array this reads comes from
+`session.snapshot\\=' alone - fetched on a resubscribe rather than on any
+timer.  Without folding the reply in, a name you just set stays
+invisible for as long as the pane set holds still."
+  (cl-letf (((symbol-function 'message) #'ignore))
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
+                                    '((panes . (((pane_id . "w1:p1")
+                                                 (agent . "claude")))))))
+      (should-not (herdr-state-agent-name (herdr-state-current) "w1:p1"))
+      (herdr-test-with-server
+          (lambda (req)
+            (cons (herdr-test-ok req '((type . "agent_info")
+                                       (agent . ((pane_id . "w1:p1")
+                                                 (name . "reviewer")))))
+                  nil))
+        (herdr-agent-rename "reviewer" "w1:p1"))
+      (should (equal "reviewer"
+                     (herdr-state-agent-name (herdr-state-current) "w1:p1")))
+      ;; And clearing it takes the name back off, by the same path.
+      (herdr-test-with-server
+          (lambda (req)
+            (cons (herdr-test-ok req '((type . "agent_info")
+                                       (agent . ((pane_id . "w1:p1")))))
+                  nil))
+        (herdr-agent-rename "" "w1:p1"))
+      (should-not (herdr-state-agent-name (herdr-state-current) "w1:p1")))))
 
 (ert-deftest herdr-agent-send-keys-sends-an-array-of-key-names ()
   "The verb for a blocked agent, which cannot be prompted at all.

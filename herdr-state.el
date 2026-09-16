@@ -220,6 +220,30 @@ calls `agent.rename\\='."
                                (herdr-state-agent-info state))))
     (alist-get 'name agent)))
 
+(defun herdr-state-note-agent (connection agent)
+  "Fold AGENT, an AgentInfo record, into CONNECTION\='s cache.
+
+For `agent.rename\=', whose reply is the only thing that will ever say a
+rename happened: herdr publishes no `agent_renamed\=' event.  Measured
+against 0.9.0, whose event schema carries `workspace_renamed\=' and
+`tab_renamed\=' and nothing at all for an agent, so a name set here would
+otherwise stay invisible until the next `session.snapshot\=' - which is
+fetched on a resubscribe rather than on any timer.
+
+Keyed by `pane_id\=', like the array `session.snapshot\=' builds this slot
+from.  A cleared name arrives as a record with no `name\=' key, which
+replaces the old one wholesale rather than merging, so clearing works
+by the same path as setting."
+  (when-let* ((pane-id (alist-get 'pane_id agent))
+              (state (herdr-state-current connection))
+              (next (herdr-state-copy state)))
+    (setf (herdr-state-agent-info next)
+          (herdr-state--upsert (herdr-state-agent-info state)
+                               'pane_id pane-id agent))
+    (setf (herdr-connection-cache connection) next)
+    (run-hook-with-args 'herdr-state-change-functions connection "rename" nil)
+    next))
+
 (defun herdr-state-workspace-directory (state workspace-id)
   "Return WORKSPACE-ID\\='s directory in STATE, or nil.
 

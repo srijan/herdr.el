@@ -144,6 +144,7 @@ server cannot find a repository that has no open workspace.
 |---|---|---|
 | `herdr-agent-prompt` | `agent.prompt` | Send a prompt to an agent. |
 | `herdr-agent-send-keys` | `agent.send_keys` | Send key presses to an agent. |
+| `herdr-agent-rename` | `agent.rename` | Name an agent, or clear its name. |
 
 `herdr-agent-prompt` sends the region when one is active, and the whole buffer under
 `C-u`. With neither, it asks you to type the prompt. This is the half of prompting that Emacs
@@ -160,6 +161,19 @@ whitespace-separated key names — `y`, `n`, `Enter`, `esc` — and sends them a
 herdr's canonical spelling for Escape, though it accepts `escape` too. From the dashboard, `a`
 names the agent in its prompt: this is the one verb that answers a question somebody else is
 being asked, and answering the wrong agent is the mistake worth making hard.
+
+`herdr-agent-rename` names an agent. **A name is not a label.** The pane's label is what the pane
+is *doing* and moves as the work moves; the agent's name is what you *call* it, and herdr takes one
+anywhere it takes a target — `agent.get`, a prompt, a wait. In Emacs it is also what stops a buffer
+name moving: `herdr-pane-identity` prefers it over everything else, so a named agent keeps
+`*herdr: reviewer*` however its terminal title churns.
+
+Clearing a name means giving an empty one. herdr requires a name to start with a lowercase letter
+and to hold only lowercase letters, digits, `-` or `_`, and refuses one already in use with
+`agent_name_taken`.
+
+herdr publishes no event when an agent is renamed, so the reply is the only news of one. herdr.el
+folds it into the cache itself; a name set outside Emacs appears at the next snapshot instead.
 
 To run an agent, open a terminal with `herdr-new-terminal` and run the agent in it. herdr detects
 the agent and names the pane a few seconds later. This is the mechanism the herdr TUI uses, and
