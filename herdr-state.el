@@ -6,7 +6,7 @@
 ;; Maintainer: Srijan Choudhary
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-;; Package-Requires: ((emacs "28.1"))
+;; Package-Requires: ((emacs "29.1"))
 
 ;;; Commentary:
 
@@ -159,8 +159,8 @@ answer is better than an arbitrary one."
   "Return PANE\\='s agent status in STATE, as this client sees it.
 
 `done\\=' never crosses the socket API - measured against a 0.9.0 server,
-which reports only `idle\\=', `working\\=', `blocked\\=' and `unknown\\=' on both
-`agent.list\\=' and the event stream, and puts no `seen\\=' field on any
+which reports only `idle\\=', `working\\=', `blocked\\=' and `unknown\\=' on
+both `agent.list\\=' and the event stream, and puts no `seen\\=' field on any
 record.  herdr keeps the seen state per client and says so: `idle\\=' and
 `done\\=' both mean ready for input, and each client tells them apart from
 what it has looked at.  So a completion nobody here has focused reads

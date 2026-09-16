@@ -8,7 +8,7 @@
 ;; Version: 0.1.0
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-;; Package-Requires: ((emacs "28.1") (magit-section "4.0") (ghostel "0"))
+;; Package-Requires: ((emacs "29.1") (magit-section "4.0") (ghostel "0"))
 
 ;; This file is not part of GNU Emacs.
 
@@ -48,9 +48,10 @@ because herdr bumped a minor is worse than one command misbehaving."
   :group 'herdr)
 
 (defun herdr--check-protocol (connection)
-  "Warn once if CONNECTION\\='s server speaks a protocol this package does not know.
+  "Warn once when CONNECTION\\='s server speaks an unknown protocol.
 
-Once per connection rather than once per package: a single flag let the
+Unknown meaning other than `herdr-protocol-version\\='.  Once per
+connection rather than once per package: a single flag let the
 first server's mismatch silence the check for every server after it, and
 the one most likely to disagree is the one added last."
   (unless (herdr-connection-protocol-warned connection)

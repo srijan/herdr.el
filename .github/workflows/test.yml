@@ -11,8 +11,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 28.1 is the floor this package and magit-section both declare.
-        emacs: ['28.1', '30.1']
+        # The floor this package declares, and the current release.  Both
+        # earn their place: 31.1 dropped checkdoc's 80-column check, so a
+        # lint clean on 31.1 alone is not a lint clean.
+        emacs: ['29.1', '31.1']
     name: emacs ${{ matrix.emacs }}
     steps:
       - uses: actions/checkout@v4

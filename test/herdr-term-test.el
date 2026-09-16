@@ -705,8 +705,8 @@ only kills would pass without the registration doing anything."
             (setq major-mode 'ghostel-mode))
           ;; Without herdr's own clause, however this file was loaded:
           ;; requiring project.el registers it, and another test may have.
-          ;; The PROJECT argument arrived after 28.1, which this package
-          ;; still supports, so the project comes through `project-current'.
+          ;; Pinned through `project-current' rather than passed, so the
+          ;; test says which project it means on every supported version.
           (cl-letf (((symbol-function 'project-current) (lambda (&rest _) project)))
             (let ((project-kill-buffer-conditions
                    (remq #'herdr-term-buffer-p project-kill-buffer-conditions)))

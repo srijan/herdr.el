@@ -39,7 +39,24 @@
       (with-temp-buffer
         (insert-file-contents file)
         (emacs-lisp-mode)
-        (let ((buffer-file-name (expand-file-name file))
+        (let (;; Pinned, every one of them.  These default differently
+              ;; across Emacs versions - the verb check is t on 28.1 and
+              ;; 30.1 and nil on 31.1 - so an unpinned target is as
+              ;; strict as whatever Emacs the author happens to run, and
+              ;; CI disagrees with the laptop that said it was clean.
+              (checkdoc-arguments-in-order-flag nil)
+              (checkdoc-force-docstrings-flag t)
+              (checkdoc-force-history-flag nil)
+              (checkdoc-permit-comma-termination-flag nil)
+              (checkdoc-spellcheck-documentation-flag nil)
+              ;; Off, and not for quiet.  All 13 it found here were
+              ;; false: it reads a verb anywhere in the first sentence,
+              ;; not the one the sentence opens with, so "Return the
+              ;; branch WORKTREE holds" is asked to say "hold" and
+              ;; "Return STATE with CHANGES merged" is asked to rename
+              ;; its own argument.  Emacs 31 turned it off by default.
+              (checkdoc-verb-check-experimental-flag nil)
+              (buffer-file-name (expand-file-name file))
               (checkdoc-diagnostic-buffer " *herdr-lint*")
               (checkdoc-create-error-function
                (lambda (text start _end &optional _unfixable)

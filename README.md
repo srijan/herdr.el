@@ -202,7 +202,7 @@ the SELinux relabelling Fedora and RHEL need.
 
 ## Requirements
 
-- Emacs 28.1+
+- Emacs 29.1+
 - [herdr](https://herdr.dev) 0.9.0 (protocol 22)
 - `ghostel`, `magit-section`
 
