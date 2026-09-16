@@ -30,25 +30,23 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
   (seq-filter (lambda (node) (eq type (nth 0 node))) nodes))
 
 (defun herdr-tree-test--worktree-rows (children)
-  "Return the worktree nodes among CHILDREN, a workspace node\\='s children.
-By type, not position: the `main\\=' group is conditional now, so
-\"everything after the first child\" named the second pane onwards and
-every should-not on this helper passed for the wrong reason."
+  "Return the worktree rows a workspace node\\='s CHILDREN hold.
+
+They sit under one `herdr-worktrees\\=' heading now rather than beside the
+panes, so this looks inside it.  A nested workspace is spliced in where
+its worktree row would have gone, so it counts as one too."
   (seq-filter (lambda (node)
                 (memq (nth 0 node) '(herdr-worktree herdr-workspace)))
-              children))
-
-(defun herdr-tree-test--main-group (children)
-  "Return the `main\\=' group among CHILDREN, or nil when there is none."
-  (car (herdr-tree-test--nodes-of-type 'herdr-panes children)))
+              (seq-mapcat (lambda (node)
+                            (if (eq 'herdr-worktrees (nth 0 node))
+                                (nth 3 node)
+                              (list node)))
+                          children)))
 
 (defun herdr-tree-test--pane-nodes (workspace)
   "Return the pane nodes of WORKSPACE, a node from `herdr-tree-build\\='.
-Its own children, unless it has worktrees — then inside the `main\\=' group."
-  (let ((children (nth 3 workspace)))
-    (if-let* ((group (herdr-tree-test--main-group children)))
-        (nth 3 group)
-      (herdr-tree-test--nodes-of-type 'herdr-pane children))))
+Always its own children now: there is no tab group between them."
+  (herdr-tree-test--nodes-of-type 'herdr-pane (nth 3 workspace)))
 
 (defun herdr-tree-test--types (nodes)
   "Return the nested (TYPE . CHILD-TYPES) shape of NODES."
@@ -104,7 +102,7 @@ replaced never fired and the heading rendered with no name at all."
                    (panes . (((pane_id . "w2F:p1") (workspace_id . "w2F")
                               (tab_id . "w2F:t1") (agent . "claude")))))))
          (line (nth 2 (car (herdr-tree-build state nil)))))
-    (should (string-match-p "\\`w2F (1)" line))))
+    (should (string-match-p "\\`w2F" line))))
 
 (ert-deftest herdr-tree-workspace-line-names-a-labelled-workspace-by-its-label ()
   (let* ((state (herdr-state-from-snapshot
@@ -113,7 +111,7 @@ replaced never fired and the heading rendered with no name at all."
                    (panes . (((pane_id . "w2F:p1") (workspace_id . "w2F")
                               (tab_id . "w2F:t1") (agent . "claude")))))))
          (line (nth 2 (car (herdr-tree-build state nil)))))
-    (should (string-match-p "\\`web (1)" line))
+    (should (string-match-p "\\`web" line))
     (should-not (string-match-p "w2F" line))))
 
 (ert-deftest herdr-tree-workspace-line-abbreviates-a-home-relative-directory ()
@@ -141,20 +139,23 @@ the leaf rows, which own nothing.  Both halves are asserted: the count is
 in parentheses on the label, and the column it replaced is gone rather
 than duplicated beside it.
 
-Each row counts what it owns: the workspace owns checkouts, the `main\\='
-group owns panes.  Counting panes on both would have said one number
-twice and left the other unsaid."
+Each row counts what it owns.  The workspace row itself owns no count
+any more: it names the workspace, the branch and the directory, which is
+what herdr\\='s own sidebar shows, and the checkouts it used to count are
+behind the `worktrees (N)\\=' heading that actually holds them."
   (let* ((worktrees '(("w1" . ((worktrees . (((path . "/tmp/wt")
                                 (is_linked_worktree . t)
                                 (branch . "feat/x"))))))))
          (workspace (car (herdr-tree-build (herdr-tree-test--state) worktrees)))
          (children (nth 3 workspace)))
-    ;; Two checkouts on the workspace row -- its own and the worktree --
-    ;; and the three panes counted one level down, on the group that
-    ;; actually holds them.
-    (should (string-match-p "herdr\\.el (2)" (nth 2 workspace)))
-    (should (string-match-p "main (3)"
-                            (nth 2 (herdr-tree-test--main-group children))))
+    ;; No count on the workspace row; the one worktree is counted on the
+    ;; heading that holds it.
+    (should (string-match-p "herdr\\.el" (nth 2 workspace)))
+    (should-not (string-match-p "herdr\\.el (" (nth 2 workspace)))
+    (should (seq-find (lambda (node)
+                        (and (eq 'herdr-worktrees (nth 0 node))
+                             (string-match-p "worktrees (1)" (nth 2 node))))
+                      children))
     (should-not (string-match-p "panes" (nth 2 workspace)))))
 
 (ert-deftest herdr-tree-workspace-rollup-omits-idle ()
@@ -751,9 +752,10 @@ the repository it is a worktree of, while that repository's worktrees
 section drew a dimmed pointer at it -- the same worktree twice.  The
 workspace now takes the pointer's place, panes and all."
   (should (equal '((herdr-workspace
-                    (herdr-panes (herdr-pane))
-                    (herdr-workspace (herdr-pane))
-                    (herdr-worktree)))
+                    (herdr-pane)
+                    (herdr-worktrees
+                     (herdr-workspace (herdr-pane))
+                     (herdr-worktree))))
                  (herdr-tree-test--types
                   (herdr-tree-build (herdr-tree-test--worktree-state "w1" "w2")
                                     (herdr-tree-test--repository-cache "w1" "w2"))))))
@@ -776,8 +778,8 @@ deeper would file every worktree of the repository under every other one."
   "Nothing to nest under means nothing moves, and the workspace keeps the
 worktrees section it draws for its own siblings."
   (should (equal '((herdr-workspace
-                    (herdr-panes (herdr-pane))
-                    (herdr-worktree)))
+                    (herdr-pane)
+                    (herdr-worktrees (herdr-worktree))))
                  (herdr-tree-test--types
                   (herdr-tree-build (herdr-tree-test--worktree-state "w2")
                                     (herdr-tree-test--repository-cache "w2"))))))
@@ -851,5 +853,21 @@ then working, then done — regardless of the order agents were created in."
                      (herdr-tree-test--status-state
                       '("w1:p1" "claude" "idle"))))))
 
-;;; Known projects with no workspace open
+(ert-deftest herdr-tree-workspace-row-shows-the-branch-it-is-on ()
+  "herdr\\='s own sidebar names a workspace and the branch its checkout is
+on.  Only a `worktree.list\\=' reply carries a branch — no snapshot field
+does — and the entry naming this workspace as its open workspace is the
+checkout to read it from, not whichever entry happens to come first."
+  (let* ((tree (herdr-tree-build (herdr-tree-test--worktree-state "w1" "w2")
+                                 (herdr-tree-test--repository-cache "w1" "w2")))
+         (line (nth 2 (car tree))))
+    ;; w1's own checkout is on `main'; `feat' belongs to the worktree.
+    (should (string-match-p "main" line))
+    (should-not (string-match-p "feat" line))))
 
+(ert-deftest herdr-tree-workspace-row-has-no-branch-before-the-reply-lands ()
+  "A workspace whose listing has not arrived, or whose directory is not a
+repository at all, shows no branch rather than a placeholder."
+  (let ((line (nth 2 (car (herdr-tree-build (herdr-tree-test--state) nil)))))
+    (should (string-match-p "herdr\\.el" line))
+    (should-not (string-match-p "main" line))))

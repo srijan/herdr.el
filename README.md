@@ -29,11 +29,11 @@ example-api (1)              ~/src/example-api/
   · shell       idle      w4:p1   npm run watch
   ✓ claude      done      w4:p5   Add the pagination endpoint
 
-herdr.el (2)                 ~/src/herdr.el/
-  main (1)
-    ▶ claude    working   w7:p1   Fix the reconcile order
-  feat-dispatch (1)          ~/src/herdr.el-worktrees/feat-dispatch/ ▶
+herdr.el       main          ~/src/herdr.el/
+  ▶ claude      working   w7:p1   Fix the reconcile order
+  feat-dispatch feat/nest   ~/src/herdr.el-worktrees/feat-dispatch/ ▶
     ▶ claude    working   w9:p1   Nest worktrees under their repository
+  ▸ worktrees (2)
 ```
 
 The dashboard opens in the selected window and leaves your other windows alone. `q` restores the

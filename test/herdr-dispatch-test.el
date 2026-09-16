@@ -31,20 +31,18 @@ workspace with an entry but no worktrees still reads as nil here and
      ,@body))
 
 (defconst herdr-dispatch-test--nodes
-  '((herdr-workspace "w1" "herdr.el  /tmp/herdr.el  2 panes"
-     ((herdr-panes "w1" "main 2"
-       ((herdr-pane "w1:p1" "> claude working w1:p1" nil)
-        (herdr-pane "w1:p2" "| codex blocked w1:p2" nil)))
-      (herdr-worktree "/tmp/herdr.el-fix" "fix  open as w2" nil)))
-    (herdr-workspace "w2" "api  /tmp/api  2 panes"
+  '((herdr-workspace "w1" "herdr.el  main  /tmp/herdr.el"
+     ((herdr-pane "w1:p1" "> claude working w1:p1" nil)
+      (herdr-pane "w1:p2" "| codex blocked w1:p2" nil)
+      (herdr-worktrees "w1" "worktrees (1)"
+       ((herdr-worktree "/tmp/herdr.el-fix" "fix  open as w2" nil)))))
+    (herdr-workspace "w2" "api  main  /tmp/api"
      ((herdr-pane "w2:p1" "> claude working w2:p1" nil)
       (herdr-pane "w2:p2" "· gemini idle w2:p2" nil))))
   "One workspace of each shape `herdr-tree-build' emits.
-`w1' has worktrees, so its own panes sit in a `main (N)' group and the
-worktree hangs off the workspace beside it; `w2' has none, so its panes
-sit directly under it.  There is no tab level in either —
-`herdr-tree-build' never nests a pane under one — so between them every
-node type the renderer must handle still appears.")
+Panes hang directly off a workspace in both; `w1' also has a
+`worktrees (N)' heading over its other checkouts and `w2' has none, so
+between them every node type the renderer must handle appears.")
 
 (defun herdr-dispatch-test--section-at (text)
   "Return the section whose line contains TEXT."
@@ -79,33 +77,32 @@ also where the reason both exist is written down."
       (should (equal "w1:p1" (oref section value))))))
 
 (ert-deftest herdr-dispatch-nests-panes-under-their-workspace ()
-  "A workspace without worktrees holds its panes directly; one with them
-holds them in the `main' group, which is itself a child of the
-workspace.  Either way a pane is inside its own workspace and nothing
-else."
+  "A pane sits directly inside its own workspace, worktrees or not.
+There is no level between them any more: the `main' group that used to
+hold the panes of a workspace with worktrees is gone, and the
+`worktrees (N)' heading beside them holds checkouts, never panes."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "w2:p1")
-    (should (eq 'herdr-workspace
-                (oref (oref (magit-current-section) parent) type)))
+    (dolist (pane '("w2:p1" "w1:p1"))
+      (goto-char (point-min))
+      (search-forward pane)
+      (let ((parent (oref (magit-current-section) parent)))
+        (should (eq 'herdr-workspace (oref parent type)))))
     (goto-char (point-min))
     (search-forward "w1:p1")
-    (let ((group (oref (magit-current-section) parent)))
-      (should (eq 'herdr-panes (oref group type)))
-      (should (eq 'herdr-workspace (oref (oref group parent) type)))
-      (should (equal "w1" (oref (oref group parent) value))))))
+    (should (equal "w1" (oref (oref (magit-current-section) parent) value)))))
 
 (ert-deftest herdr-dispatch-renders-every-node-type ()
   "Every node type must reach a branch of its own.
 
 The `pcase' in `herdr-dispatch--insert-nodes' has no fallback clause, so
-a mistyped branch head — `herdr-worktree' where `herdr-panes' was
+a mistyped branch head — `herdr-worktree' where `herdr-worktrees' was
 meant — drops that node and everything under it without signalling.
 herdr-tree-test covers the model emitting these types; this covers the
 renderer consuming them, which is the seam such a typo would hide in."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (should (eq 'herdr-workspace (herdr-dispatch-test--type-at "herdr.el")))
     (should (eq 'herdr-pane      (herdr-dispatch-test--type-at "w1:p1")))
-    (should (eq 'herdr-panes     (herdr-dispatch-test--type-at "main 2")))
+    (should (eq 'herdr-worktrees (herdr-dispatch-test--type-at "worktrees (1)")))
     (should (eq 'herdr-worktree  (herdr-dispatch-test--type-at "open as w2")))))
 
 (defun herdr-dispatch-test--indent-at (text)
@@ -150,7 +147,7 @@ heading keymap, `magit-section-content-p' — keys on it, so it is the
 assertion that catches a leaf promoted back to a heading no matter how
 the promotion is spelled."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (dolist (text '("herdr.el" "api" "main 2"))
+    (dolist (text '("herdr.el" "api" "worktrees (1)"))
       (should (oref (herdr-dispatch-test--section-at text) content)))
     (dolist (text '("w1:p1" "w2:p2" "open as w2"))
       (should-not (oref (herdr-dispatch-test--section-at text) content)))))
@@ -162,7 +159,7 @@ A heading whose face said nothing was the reported problem, so the
 difference is asserted where it shows: `magit-section-heading' begins a
 container line and does not begin a leaf line."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (dolist (text '("herdr.el" "api" "main 2"))
+    (dolist (text '("herdr.el" "api" "worktrees (1)"))
       (should (eq 'magit-section-heading (herdr-dispatch-test--face-at text))))
     (dolist (text '("w1:p1" "w2:p2" "open as w2"))
       (should-not (eq 'magit-section-heading
@@ -327,7 +324,7 @@ pair is the entire interface the verbs have to the tree."
     (dolist (spec '(("herdr.el"    herdr-workspace "w1")
                     ("w1:p1"       herdr-pane      "w1:p1")
                     ("w2:p2"       herdr-pane      "w2:p2")
-                    ("main 2"      herdr-panes     "w1")
+                    ("worktrees (1)" herdr-worktrees "w1")
                     ("open as w2"  herdr-worktree  "/tmp/herdr.el-fix")))
       (let ((section (herdr-dispatch-test--section-at (nth 0 spec))))
         (should (eq (nth 1 spec) (oref section type)))
@@ -494,7 +491,7 @@ this a test of a redraw again rather than a test of the skip."
     (goto-char (point-min))
     (search-forward "w1:p2")
     (let ((ident (magit-section-ident (magit-current-section))))
-      ;; No `herdr-panes' level: the fixture has no worktrees.  The
+      ;; No `herdr-worktrees' heading: the fixture has no worktrees.  The
       ;; ident is what point is restored through, so pin it.
       (should (equal '((herdr-pane . "w1:p2")
                        (herdr-workspace . "w1") (herdr-root))
@@ -904,8 +901,8 @@ workspace arm to notice.  The innermost section is the heading itself,
 which is why a `pcase' over the type cannot be mis-ordered."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (goto-char (point-min))
-    (search-forward "main")
-    (should (eq 'herdr-panes
+    (search-forward "worktrees (1)")
+    (should (eq 'herdr-worktrees
                 (herdr-dispatch-target-type (herdr-dispatch-target-at-point))))))
 
 (ert-deftest herdr-dispatch-aimed-at-errors-with-a-specific-message ()
@@ -1223,7 +1220,7 @@ to redraw."
                             (branch . "feat/x")
                             (open_workspace_id . nil))))))
         (sit-for 0.2)
-        (should (string-match-p "main (" (buffer-string)))
+        (should (string-match-p "worktrees (" (buffer-string)))
         (should (string-match-p "feat/x" (buffer-string)))))))
 
 (ert-deftest herdr-dispatch-several-replies-cost-one-redraw ()
@@ -1701,9 +1698,9 @@ closes that gap."
         (with-current-buffer buffer
           (herdr-dispatch-mode)
           (herdr-dispatch-refresh)
-          (should (string-match-p "main (" (buffer-string)))
-          (should (eq 'herdr-panes
-                      (herdr-dispatch-test--type-at "main (")))
+          (should (string-match-p "worktrees (" (buffer-string)))
+          (should (eq 'herdr-worktrees
+                      (herdr-dispatch-test--type-at "worktrees (")))
           (should (eq 'herdr-worktree
                       (herdr-dispatch-test--type-at "feat/x"))))
       (kill-buffer buffer))))))
@@ -2264,7 +2261,7 @@ checkout, which is a different problem with a different fix."
 
 ;;; The main group heading
 
-(ert-deftest herdr-dispatch-close-refuses-the-main-heading ()
+(ert-deftest herdr-dispatch-close-refuses-a-grouping-heading ()
   "`k' on `main (N)' must not close the enclosing workspace.
 
 There was no `cond' arm for `herdr-worktrees', and
@@ -2273,7 +2270,7 @@ not fail — it found `w1' and closed it.  Nothing may reach the server,
 which is what tells a refusal apart from a fall-through that happened to
 be harmless."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "main 2")
+    (search-forward "worktrees (1)")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
                        (herdr-pane-close herdr-workspace-close
@@ -2281,11 +2278,11 @@ be harmless."
                      (should-error (herdr-dispatch-close)
                                    :type 'user-error))))))
 
-(ert-deftest herdr-dispatch-rename-refuses-the-main-heading ()
+(ert-deftest herdr-dispatch-rename-refuses-a-grouping-heading ()
   "`R' on `main (N)' must not rename the enclosing workspace, giving
 the workspace a name the user had aimed at a group of its panes."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "main 2")
+    (search-forward "worktrees (1)")
     (should (equal nil
                    (cl-letf (((symbol-function 'read-string)
                               (lambda (&rest _) "new")))
@@ -2295,7 +2292,7 @@ the workspace a name the user had aimed at a group of its panes."
                        (should-error (herdr-dispatch-rename)
                                      :type 'user-error)))))))
 
-(ert-deftest herdr-dispatch-visit-refuses-the-main-heading ()
+(ert-deftest herdr-dispatch-visit-refuses-a-grouping-heading ()
   "`RET' on `main (N)' must not focus and follow the enclosing
 workspace.
 
@@ -2304,7 +2301,7 @@ object under this heading to go to, and sending `RET' to the enclosing
 workspace would be the old fall-through dressed up as an answer.  The
 message points at TAB, which is the heading's one real action."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "main 2")
+    (search-forward "worktrees (1)")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
                        (herdr-pane-focus herdr-workspace-focus
@@ -2317,15 +2314,14 @@ message points at TAB, which is the heading's one real action."
                                  :type 'user-error))))))
 
 (defconst herdr-dispatch-test--nested-nodes
-  '((herdr-workspace "w1" "herdr.el  /tmp/herdr.el  1 pane"
-     ((herdr-panes "w1" "main 1"
-       ((herdr-pane "w1:p1" "> claude working w1:p1" nil)))
-      (herdr-workspace "w2" "project-el  /tmp/herdr.el-feat  1 pane"
-       ((herdr-pane "w2:p1" "- shell idle w2:p1" nil))))))
+  '((herdr-workspace "w1" "herdr.el  main  /tmp/herdr.el"
+     ((herdr-pane "w1:p1" "> claude working w1:p1" nil)
+      (herdr-worktrees "w1" "worktrees (1)"
+       ((herdr-workspace "w2" "project-el  feat  /tmp/herdr.el-feat"
+         ((herdr-pane "w2:p1" "- shell idle w2:p1" nil))))))))
   "The shape `herdr-tree-build' emits for a worktree open as a workspace.
-`w2' is a child of `w1' rather than a sibling, and `w1''s own panes sit
-in the `main' group beside it -- so a pane has a heading or a second
-workspace above it either way.")
+`w2' takes the place its worktree row would have had, inside `w1''s
+`worktrees (N)' heading, while `w1''s own pane hangs directly off it.")
 
 (ert-deftest herdr-dispatch-close-closes-a-pane-inside-a-nested-workspace ()
   "The heading arms used to walk up, and a pane two levels inside a
@@ -2356,7 +2352,7 @@ reach the repository it is nested under."
   "Aiming the refusal at the section under point rather than at an
 ancestor must not stop it firing when point really is on the heading."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nested-nodes
-    (search-forward "main 1")
+    (search-forward "worktrees (1)")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
                        (herdr-pane-close herdr-workspace-close
@@ -2588,7 +2584,7 @@ Real state rather than mocked accessors, for the reason given in
 pointing past."
   (herdr-dispatch-test-with-buffer
       '((herdr-workspace "w1" "herdr.el (2)"
-         ((herdr-panes "w1" "main (1)" ((herdr-pane "w1:p1" "claude" nil)))
+         ((herdr-worktrees "w1" "worktrees (1)" ((herdr-pane "w1:p1" "claude" nil)))
           (herdr-worktree "/tmp/herdr.el-fix/" "fix" nil))))
     (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((workspaces . (((workspace_id . "w1"))))
@@ -2904,3 +2900,20 @@ a row that vanishes when a laptop sleeps tells you the wrong one."
     (should (eq one (herdr-dispatch-target-connection
                      (herdr-dispatch-target-at-point))))))
 
+(ert-deftest herdr-dispatch-worktrees-start-folded ()
+  "A repository's other checkouts are worth one line until asked for.
+Through `magit-section-initial-visibility-alist\\=' rather than a hidden
+slot set by hand, so a redraw keeps whatever the reader has since
+toggled instead of folding it shut under them again."
+  (herdr-dispatch-test-with-buffer
+      '((herdr-workspace "w1" "web  main  /tmp/web"
+         ((herdr-pane "w1:p1" "> claude working w1:p1" nil)
+          (herdr-worktrees "w1" "worktrees (1)"
+           ((herdr-worktree "/tmp/web-feat" "feat/x  /tmp/web-feat" nil))))))
+    (should (eq 'hide (alist-get 'herdr-worktrees
+                                 magit-section-initial-visibility-alist)))
+    (let ((section (herdr-dispatch-test--section-at "worktrees (")))
+      (should section)
+      (should (oref section hidden)))
+    ;; The panes beside it are not folded away with them.
+    (should-not (oref (herdr-dispatch-test--section-at "claude") hidden))))

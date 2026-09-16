@@ -71,28 +71,28 @@ removed the cause. For the explanation, see
 
 ## Step 4: Read the dashboard
 
-The dashboard shows the session as a tree. The top level is one row per repository. A workspace
-with worktrees holds its own panes in a `main` group, and hangs its worktrees off itself beside
-that group. A workspace with no worktrees hangs its panes off its own row.
+The dashboard shows the session as a tree. Each workspace row names the workspace, the branch its
+own checkout is on, and its directory — the three things herdr's own sidebar shows. Its panes hang
+directly off it.
 
 ```
-herdr.el (2)                          ~/src/herdr.el/
-  main (2)
-    · claude    working   wS:p1       Fix the reconcile order
-      shell     idle      wS:p2
-  feat-dispatch (1)                   ~/src/herdr.el-worktrees/feat-dispatch/
+herdr.el        main                  ~/src/herdr.el/
+  · claude      working   wS:p1       Fix the reconcile order
+    shell       idle      wS:p2
+  feat-dispatch feat/nest             ~/src/herdr.el-worktrees/feat-dispatch/
     · claude    idle      w19:p1      Nest worktrees under their repository
+  ▸ worktrees (2)
 
-example-api (1)                       ~/src/example-api/
+example-api     main                  ~/src/example-api/
   · shell       idle      wA:p1       npm run watch
 ```
 
-Read the counts this way. A repository row counts its checkouts: its own, plus one for each
-worktree. Where a `main` group is drawn, it counts the panes it holds.
+A repository's other checkouts sit under one `worktrees (N)` heading, folded until you press `TAB`
+on it. A worktree that is open as a workspace is drawn in full in that list rather than as a
+one-line pointer, which is why `feat-dispatch` shows its pane above.
 
-Here `herdr.el` has two checkouts, itself and the worktree `feat-dispatch`. That worktree is open
-as a workspace, so it is drawn in full rather than as a one-line pointer. `example-api` has one
-checkout and no worktrees, so it has no `main` group and its pane sits directly under it.
+The branch comes from herdr's `worktree.list`, the only reply that carries one, so it is blank
+until that answer lands and for a directory that is not a git repository.
 
 A closed section shows the worst status inside it. A closed section therefore never hides a
 blocked agent.

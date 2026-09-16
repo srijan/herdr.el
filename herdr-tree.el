@@ -328,14 +328,30 @@ whole workspace, that extra level put a running agent three deep."
                   (herdr-tree--worktree-node worktree width)))
             found)))
 
-(defun herdr-tree--main-node (workspace-id panes)
-  "Return the `main (N)\\=' node holding PANES, the panes of WORKSPACE-ID.
-Drawn only for a workspace that has worktrees, where it is what tells
-this repository\\='s own panes from the checkouts beside them.  `main\\=' is
-git\\='s word for the checkout the worktrees hang off."
-  (list 'herdr-panes workspace-id
-        (format "main (%s)" (length panes))
-        panes))
+(defun herdr-tree--worktrees-node (workspace-id nodes)
+  "Return the foldable `worktrees (N)\\=' heading over NODES.
+
+One heading rather than a run of sibling rows.  The run was affordable
+only while a `main (N)\\=' tab group sat beside it; with that level gone a
+container costs no extra depth, and it is what lets a repository with a
+dozen checkouts stay one line until asked.  Collapsed by default through
+`magit-section-initial-visibility-alist\\='."
+  (list 'herdr-worktrees workspace-id
+        (format "worktrees (%s)" (length nodes))
+        nodes))
+
+(defun herdr-tree--workspace-branch (workspace-id worktrees)
+  "Return the branch WORKSPACE-ID\\='s own checkout is on, or nil.
+
+Only a `worktree.list\\=' reply carries a branch — no snapshot field does —
+so this is nil until that reply lands, and stays nil for a workspace
+whose directory is not a git repository.  The entry naming WORKSPACE-ID
+as its open workspace is that workspace\\='s own checkout."
+  (when-let* ((listing (cdr (assoc workspace-id worktrees))))
+    (seq-some (lambda (worktree)
+                (and (herdr-tree-own-workspace-p worktree workspace-id)
+                     (herdr-worktree-branch worktree)))
+              (herdr-worktree-listing-worktrees listing))))
 
 (defun herdr-tree--workspace-node (state workspace worktrees width worktree-width
                                          &optional nested)
@@ -344,21 +360,14 @@ WIDTH and WORKTREE-WIDTH are the agent and branch column widths,
 computed once in `herdr-tree-build\\='.  NESTED passes through to
 `herdr-tree--worktree-nodes\\='.
 
-A workspace with worktrees holds its own panes in a `main (N)\\=' group
-and its worktrees beside it:
+The row names the workspace, the branch its own checkout is on and its
+directory — what herdr\\='s own sidebar shows for a workspace.  Panes hang
+directly off it; its other checkouts sit under one foldable
+`worktrees (N)\\=' heading.
 
-    herdr.el (3)
-      main (2)
-        claude
-        shell
-      project-el (1)
-        claude
-
-With no worktrees there is no group and the panes hang off the workspace
-row, which is the ordinary case and the shape a plugin workspace needs.
-
-The count in parentheses is checkouts, not panes: its own plus one per
-worktree.  The pane count sits on `main (N)\\=' where that group is drawn.
+There is no tab level.  `main\\=' on this screen is a branch, and it used
+to also be the name of a tab group two rows above it, which is the one
+collision worth removing before any other.
 
 The directory goes through `abbreviate-file-name\\='."
   (let* ((id (herdr-workspace-id workspace))
@@ -367,27 +376,25 @@ The directory goes through `abbreviate-file-name\\='."
                                                      worktree-width nested)))
     (list 'herdr-workspace id
           (string-trim-right
-           (format "%-28s %-30s %s"
-                   (format "%s (%s)"
-                           (herdr-workspace-identity workspace)
-                           (1+ (length worktree-nodes)))
+           (format (format "%%-28s %%-%ds %%-30s %%s" worktree-width)
+                   (herdr-workspace-identity workspace)
+                   (or (herdr-tree--workspace-branch id worktrees) "")
                    (herdr-tree--faced
                     (abbreviate-file-name
                      (or (herdr-state-workspace-directory state id) ""))
                     'font-lock-comment-face)
                    (herdr-tree--rollup (herdr-workspace-status workspace))))
-          ;; The `main (N)' group only where there are worktrees to tell
-          ;; the panes apart from; see `herdr-tree--main-node'.
           (if worktree-nodes
-              (cons (herdr-tree--main-node id panes) worktree-nodes)
+              (append panes
+                      (list (herdr-tree--worktrees-node id worktree-nodes)))
             panes))))
 
 (defun herdr-tree-build (state worktrees)
   "Return the dispatcher tree for STATE.
 
 Each node is the list (TYPE VALUE LINE CHILDREN).  TYPE is one of
-`herdr-workspace\\=', `herdr-pane\\=', `herdr-panes\\=',
-`herdr-worktree\\=' or `herdr-panes\\=';
+`herdr-workspace\\=', `herdr-pane\\=', `herdr-worktree\\=' or
+`herdr-worktrees\\=';
 VALUE is the id a command needs; LINE is the rendered text; CHILDREN is a
 list of nodes.
 

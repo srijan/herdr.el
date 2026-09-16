@@ -110,6 +110,13 @@ frame."
               (lambda (&rest _) (herdr-dispatch-refresh t)))
   (setq-local magit-section-visibility-indicators
               (herdr-dispatch--fold-indicators))
+  ;; A repository's other checkouts are worth one line until asked for.
+  ;; magit's own mechanism rather than a hidden slot set by hand: it is
+  ;; consulted by `magit-insert-section\=', so a redraw keeps whatever the
+  ;; reader has since toggled instead of folding it shut again.
+  (setq-local magit-section-initial-visibility-alist
+              (cons '(herdr-worktrees . hide)
+                    magit-section-initial-visibility-alist))
   ;; Two columns: one for the indicator, one of air between it and the
   ;; text.  A margin of zero width silently drops margin overlays, which
   ;; would leave the indicators configured and invisible.
@@ -251,7 +258,7 @@ foldable headings."
 ;;; The object at point
 
 (defconst herdr-dispatch-target-types
-  '(herdr-server herdr-workspace herdr-panes herdr-pane herdr-worktree)
+  '(herdr-server herdr-workspace herdr-pane herdr-worktree herdr-worktrees)
   "The section types a verb can be aimed at.
 Every type `herdr-tree-build\\=' draws.  A section of any other type - the
 buffer\\='s root, the header - is not a target, and the verbs say so.")
@@ -796,9 +803,9 @@ heading has nowhere to go; see `herdr-dispatch--refuse-heading\\='."
       ('herdr-workspace
        (herdr-workspace-focus (herdr-dispatch-target-value target)))
       ('herdr-worktree (herdr-dispatch-open-worktree target))
-      ('herdr-panes
+      ('herdr-worktrees
        (herdr-dispatch--refuse-heading
-        "a workspace's main group is not somewhere to go"))
+        "a grouping heading is not somewhere to go"))
       (_ (user-error "herdr: nothing at point")))))
 
 (herdr-dispatch-defverb herdr-dispatch-prompt ()
@@ -834,9 +841,9 @@ them; see `herdr-dispatch--refuse-heading\\='."
       ('herdr-worktree
        (user-error
         "herdr: a worktree cannot be renamed; rename its branch with git"))
-      ('herdr-panes
+      ('herdr-worktrees
        (herdr-dispatch--refuse-heading
-        "a workspace's main group cannot be renamed"))
+        "a grouping heading cannot be renamed"))
       (_ (user-error "herdr: nothing at point to rename")))))
 
 (herdr-dispatch-defverb herdr-dispatch-close ()
@@ -860,9 +867,9 @@ the same reason and with more at stake; see
       ('herdr-worktree
        (herdr-worktree-remove
         (herdr-dispatch--worktree-workspace target)))
-      ('herdr-panes
+      ('herdr-worktrees
        (herdr-dispatch--refuse-heading
-        "a workspace's main group cannot be closed"))
+        "a grouping heading cannot be closed"))
       (_ (user-error "herdr: nothing at point to close")))))
 
 ;;; The create verbs
