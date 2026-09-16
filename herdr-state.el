@@ -155,7 +155,7 @@ answer is better than an arbitrary one."
             (herdr-state-panes state)))
 
 (defun herdr-state-pane-status (state pane)
-  "Return PANE\\='s agent status as this client sees it.
+  "Return PANE\\='s agent status in STATE, as this client sees it.
 
 `done\\=' never crosses the socket API - measured against a 0.9.0 server,
 which reports only `idle\\=', `working\\=', `blocked\\=' and `unknown\\=' on both

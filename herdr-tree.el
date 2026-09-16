@@ -208,7 +208,7 @@ argument, spelled once here so every comparison in this file agrees."
 
 Nil unless all four things hold: WORKSPACE-ID's own `worktree.list\\='
 reply has been fetched, it names a main checkout, that checkout is some
-directory other than WORKSPACE-ID's own, and a workspace is open there.
+directory other than WORKSPACE-ID's own, and STATE has one open there.
 Anything less and the workspace has no repository on screen to sit
 under, so it stays where it is.
 
@@ -229,8 +229,8 @@ here, it is moved, and the caller needs to know where to."
   "Return an alist of (WORKSPACE-ID . PARENT-ID) for WORKSPACES that nest.
 
 Only workspaces that actually move appear: a workspace with no
-repository open elsewhere is absent, and so is one whose repository is
-itself nested.
+repository open elsewhere in STATE is absent, and so is one whose
+repository is itself nested.
 
 That second exclusion is a guard rather than a case anyone will meet.
 A worktree's main checkout is the repository, so every worktree of one
@@ -300,6 +300,7 @@ commands send it to the server."
 
 (defun herdr-tree--worktree-nodes (workspace-id worktrees width &optional nested)
   "Return a node per worktree of WORKSPACE-ID, or nil when it has none.
+WORKTREES holds the cached `worktree.list\\=' reply per workspace, and
 WIDTH is the worktree branch column width.
 
 NESTED is an alist of (WORKSPACE-ID . NODE) for the workspaces that are
@@ -329,7 +330,7 @@ whole workspace, that extra level put a running agent three deep."
             found)))
 
 (defun herdr-tree--worktrees-node (workspace-id nodes)
-  "Return the foldable `worktrees (N)\\=' heading over NODES.
+  "Return the foldable `worktrees (N)\\=' heading over WORKSPACE-ID\\='s NODES.
 
 One heading rather than a run of sibling rows.  The run was affordable
 only while a `main (N)\\=' tab group sat beside it; with that level gone a
@@ -344,9 +345,9 @@ dozen checkouts stay one line until asked.  Collapsed by default through
   "Return the branch WORKSPACE-ID\\='s own checkout is on, or nil.
 
 Only a `worktree.list\\=' reply carries a branch — no snapshot field does —
-so this is nil until that reply lands, and stays nil for a workspace
-whose directory is not a git repository.  The entry naming WORKSPACE-ID
-as its open workspace is that workspace\\='s own checkout."
+so this is nil until WORKTREES holds that reply, and stays nil for a
+workspace whose directory is not a git repository.  The entry naming
+WORKSPACE-ID as its open workspace is that workspace\\='s own checkout."
   (when-let* ((listing (cdr (assoc workspace-id worktrees))))
     (seq-some (lambda (worktree)
                 (and (herdr-tree-own-workspace-p worktree workspace-id)
@@ -562,10 +563,10 @@ reached, and the row names the thing.
 Drawn only when more than one is connected, so that nobody following one
 sees a level that says nothing.
 
-A machine that is not reachable is drawn as itself, dimmed and labelled,
-rather than left out.  An empty dashboard and an unreachable machine are
-different facts, and a row that disappears when a laptop sleeps tells you
-the wrong one."
+A machine that REACHABLE reports as down is drawn as itself, dimmed and
+labelled, rather than left out.  An empty dashboard and an unreachable
+machine are different facts, and a row that disappears when a laptop
+sleeps tells you the wrong one."
   (list 'herdr-machine name
         (herdr-tree--faced
          (if reachable

@@ -45,9 +45,9 @@ TIMEOUT      := $(shell command -v timeout 2>/dev/null || \
 TEST_TIMEOUT ?= 300
 DEADLINE     := $(if $(and $(TIMEOUT),$(TEST_TIMEOUT)),$(TIMEOUT) $(TEST_TIMEOUT))
 
-.PHONY: test test-live compile clean all
+.PHONY: test test-live compile lint clean all
 
-all: compile test
+all: compile lint test
 
 ## Run the hermetic suite (no herdr server required).
 test:
@@ -66,3 +66,8 @@ compile:
 
 clean:
 	rm -f *.elc test/*.elc
+
+## Documentation checks: checkdoc, minus two documented house styles,
+## plus the escape check that 49 docstrings once failed silently.
+lint:
+	$(BATCH) -l test/herdr-lint.el -f herdr-lint-batch

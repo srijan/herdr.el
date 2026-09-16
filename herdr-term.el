@@ -74,9 +74,10 @@ that fetches what it needs from one."
                         state (herdr-pane-workspace-id pane))))
 
 (defun herdr-term--unique-buffer-name (state pane)
-  "Return a unique buffer name for PANE, from `herdr-term-buffer-name'.
-Uniquify before creating, not after: `get-buffer-create\\=' on a colliding
-name hands back another pane\\='s buffer rather than a fresh one."
+  "Return a unique buffer name for PANE in STATE.
+The name itself comes from `herdr-term-buffer-name'.  Uniquify before
+creating, not after: `get-buffer-create\\=' on a colliding name hands back
+another pane\\='s buffer rather than a fresh one."
   (generate-new-buffer-name (herdr-term-buffer-name state pane)))
 
 (defun herdr-term--buffer-name-sans-uniquify-suffix (name)
@@ -479,7 +480,7 @@ at a local path of the same name."
 
 (defun herdr-term--on-state-change (connection kind _data)
   "Resync CONNECTION\\='s terminal buffers after its cache changed.
-Nudges a repair for every event but \"reconcile\", which is a repair
+Nudges a repair for every KIND but \"reconcile\", which is a repair
 reporting what it just changed: nudging another one there pays two round
 trips to be told nothing moved."
   (herdr-term--sync-buffers connection)

@@ -59,9 +59,10 @@ they have different home directories and different herdr sockets."
         (t (cdr host))))
 
 (defun herdr-connection--same-host-p (a b)
-  "Return non-nil when A and B, as `herdr-connection--host\\=' returns them,
-name the same account.  Local matches local.  A host matches the same
-host, and the users must match too when both sides name one."
+  "Return non-nil when A and B name the same account.
+A and B are what `herdr-connection--host\\=' returns.  Local matches
+local.  A host matches the same host, and the users must match too when
+both sides name one."
   (and (equal (cdr a) (cdr b))
        (or (null (car a)) (null (car b)) (equal (car a) (car b)))))
 
@@ -739,7 +740,8 @@ server nobody established was there."
     (herdr-connection--open-remote name target session machine-id)))
 
 (defun herdr-connection--open-remote (name target session machine-id)
-  "Open, await and register the connection `herdr-connect-remote\\=' asked for."
+  "Open, await and register the connection `herdr-connect-remote\\=' asked for.
+NAME, TARGET, SESSION and MACHINE-ID are that command\\='s own arguments."
   (let ((connection (herdr-connection-remote name target session machine-id))
         (established nil))
     (unwind-protect
