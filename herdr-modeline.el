@@ -37,7 +37,8 @@
   "Agent statuses that raise a desktop notification.
 Nil means never.  A sensible opt-in is (\"blocked\" \"done\")."
   :type '(repeat string)
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 ;;; Modeline segment
 

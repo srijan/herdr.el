@@ -63,17 +63,20 @@ started inside a `herdr --session work' pane used to talk to the
 default session instead of the one around it - a server that may not be
 running, and that holds none of the panes on screen."
   :type 'file
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defcustom herdr-executable "herdr"
   "Name of, or path to, the herdr executable."
   :type 'string
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defcustom herdr-rpc-timeout 10.0
   "Seconds to wait for a synchronous RPC response."
   :type 'number
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defcustom herdr-rpc-background-timeout 2.0
   "Seconds a background RPC gets before it forfeits its answer.
@@ -81,7 +84,8 @@ Asynchronous callers pass it as their deadline; the few synchronous
 ones a timer or a keystroke can reach bind `herdr-rpc-timeout' down to
 it.  A server too slow to answer forfeits that refresh, not the UI."
   :type 'number
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (define-error 'herdr-error "herdr error")
 

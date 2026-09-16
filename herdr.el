@@ -45,7 +45,8 @@
 A mismatch warns once rather than refusing to run: declining to work
 because herdr bumped a minor is worse than one command misbehaving."
   :type 'integer
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defun herdr--check-protocol (connection)
   "Warn once when CONNECTION\\='s server speaks an unknown protocol.

@@ -36,7 +36,8 @@
 (defcustom herdr-dispatch-buffer-name "*herdr-agents*"
   "Name of the dispatcher buffer."
   :type 'string
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defcustom herdr-dispatch-display-action
   '(display-buffer-same-window)
@@ -44,7 +45,8 @@
 The default reuses the selected window and leaves the rest of the frame
 alone.  Nil lets `display-buffer' choose another window."
   :type 'sexp
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defcustom herdr-dispatch-refresh-debounce 0.2
   "Seconds to coalesce dispatcher redraws triggered by events.
@@ -57,7 +59,8 @@ indefinitely.)  Short enough
 that the dashboard still reads as live.  Only the hook is debounced:
 \\[herdr-dispatch-refresh] redraws immediately."
   :type 'number
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defvar herdr-dispatch--refresh-timer nil
   "Timer for the pending debounced redraw, or nil when none is pending.")

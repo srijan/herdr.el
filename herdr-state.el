@@ -59,12 +59,14 @@
 (defcustom herdr-state-reconnect-min 1.0
   "Initial delay, in seconds, before retrying a dropped event stream."
   :type 'number
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defcustom herdr-state-reconnect-max 30.0
   "Longest delay, in seconds, between event stream reconnect attempts."
   :type 'number
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defvar herdr-state-change-functions nil
   "Abnormal hook run after a connection\\='s cache changes.
@@ -594,7 +596,8 @@ that replay landed inside it.  0.9.0 removed the replay; the value is
 kept because the reconcile it schedules is now the only thing closing
 the gap, and delaying that further buys nothing."
   :type 'number
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defcustom herdr-state-repair-interval 5.0
   "Seconds between periodic cache repairs, or nil for none.
@@ -604,7 +607,8 @@ answering.  A tick arriving while the last one is still in flight
 declines, so a server slower than this interval is polled no faster
 than it answers."
   :type '(choice number (const :tag "Never repair" nil))
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defun herdr-state-current (&optional connection)
   "Return CONNECTION\\='s cache, or the current connection\\='s.

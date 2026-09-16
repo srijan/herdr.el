@@ -44,7 +44,8 @@ reuses the current window and leaves the frame alone.
 
     (setq herdr-display-action \\='(display-buffer-full-frame))"
   :type 'sexp
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defun herdr-term--show (buffer)
   "Show BUFFER according to `herdr-display-action' and select it."
@@ -53,7 +54,8 @@ reuses the current window and leaves the frame alone.
 (defcustom herdr-server-start-timeout 15.0
   "Seconds to wait for a freshly launched herdr server to answer."
   :type 'number
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 ;;; Naming and argument construction — pure, so they are testable
 
@@ -408,13 +410,15 @@ directory: a `cd' produces only unrelated `layout_updated' traffic, so
 there is nothing to subscribe to.  A directory therefore reaches the
 cache only through a repair; see `herdr-state-repair'."
   :type 'boolean
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defcustom herdr-term-directory-debounce 0.4
   "Seconds to coalesce directory refreshes triggered by events.
 One `cd' emits dozens of `layout_updated' events."
   :type 'number
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defvar herdr-term--directory-debounce-timers nil
   "Alist of (TOKEN . TIMER) for the pending directory refreshes.

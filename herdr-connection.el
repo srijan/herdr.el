@@ -264,12 +264,14 @@ caps a unix socket path at 104 bytes and its temporary directory spends
 about half of that before the file name starts.  Per-uid, because /tmp is
 shared."
   :type 'directory
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defcustom herdr-connection-tunnel-timeout 10.0
   "Seconds to wait for a forwarded socket to answer before giving up."
   :type 'number
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defun herdr-connection--socket-name (name)
   "Return the file name of the local socket for the connection called NAME.

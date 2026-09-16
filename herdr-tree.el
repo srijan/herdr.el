@@ -546,12 +546,14 @@ and asserted without a buffer or a server."
 (defface herdr-tree-machine
   '((t :inherit magit-section-heading))
   "Face for the row naming a machine, drawn only when there are several."
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defface herdr-tree-machine-down
   '((t :inherit shadow))
   "Face for the row naming a machine that is not being followed."
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defun herdr-tree-machine-node (name reachable children)
   "Return the node holding CHILDREN, the tree of the machine called NAME.
