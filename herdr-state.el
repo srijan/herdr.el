@@ -1277,6 +1277,7 @@ than one extra round trip."
     (run-hook-with-args 'herdr-state-change-functions connection "refresh" nil)
     (herdr-state-current connection)))
 
+;;;###autoload
 (defun herdr-state-resync (connection)
   "Refetch CONNECTION\\='s snapshot and rebuild its per-pane subscriptions."
   (interactive (list (herdr-current-connection)))

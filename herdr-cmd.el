@@ -125,6 +125,7 @@ result greppable."
 
 ;;; Panes
 
+;;;###autoload
 (defun herdr-pane-close (&optional pane-id)
   "Close PANE-ID, or the pane being acted on."
   (interactive)
@@ -139,6 +140,7 @@ result greppable."
           (message "herdr: closed %s" description))
       (message "herdr: %s left open" description))))
 
+;;;###autoload
 (defun herdr-pane-rename (label &optional pane-id)
   "Rename PANE-ID, or the focused pane, to LABEL."
   (interactive (list (read-string "Pane label: ")))
@@ -149,6 +151,7 @@ result greppable."
     (herdr-rpc-call (herdr-current-connection) "pane.rename"
                     `((pane_id . ,pane) (label . ,label)))))
 
+;;;###autoload
 (defun herdr-pane-focus (&optional pane-id)
   "Focus PANE-ID, prompting when not given, and select its buffer.
 
@@ -212,6 +215,7 @@ test is enough."
     (pop-to-buffer buffer)
     buffer))
 
+;;;###autoload
 (defun herdr-pane-read (&optional pane-id source lines)
   "Read PANE-ID's output from SOURCE into a buffer, at most LINES lines."
   (interactive)
@@ -227,11 +231,13 @@ test is enough."
 
 ;;; Workspaces
 
+;;;###autoload
 (defun herdr-workspace-create (cwd &optional label)
   "Create a workspace rooted at CWD called LABEL."
   (interactive (list (read-directory-name "Workspace directory: ")))
   (herdr-cmd--follow-new-pane (herdr-cmd--create-workspace-pane cwd label)))
 
+;;;###autoload
 (defun herdr-workspace-close (&optional workspace-id)
   "Close WORKSPACE-ID, prompting when not given.
 
@@ -270,6 +276,7 @@ this without a race, which a preflight cannot."
                (message "herdr: closed workspace group %s" description))
            (message "herdr: workspace %s left open" description)))))))
 
+;;;###autoload
 (defun herdr-workspace-focus (&optional workspace-id)
   "Focus WORKSPACE-ID, prompting when not given, and follow it in Emacs."
   (interactive)
@@ -278,6 +285,7 @@ this without a race, which a preflight cannot."
                     `((workspace_id . ,workspace))))
   (herdr-cmd--follow-focus))
 
+;;;###autoload
 (defun herdr-workspace-rename (label &optional workspace-id)
   "Rename WORKSPACE-ID to LABEL."
   (interactive (list (read-string "New workspace label: ")))
@@ -287,6 +295,7 @@ this without a race, which a preflight cannot."
 
 ;;; Worktrees
 
+;;;###autoload
 (defun herdr-worktree-create (branch &optional base cwd)
   "Create a git worktree for BRANCH off BASE and open it as a workspace.
 CWD is the repository as the server names it; nil means the current
@@ -301,6 +310,7 @@ directory."
                                        connection default-directory)))
                       (focus . t)))))
 
+;;;###autoload
 (defun herdr-worktree-remove (&optional workspace-id force)
   "Remove the worktree workspace WORKSPACE-ID, forcing when FORCE."
   (interactive)
@@ -331,6 +341,7 @@ and retyping it into a pane is what the region is for."
     (buffer-substring-no-properties (region-beginning) (region-end)))
    (t (read-string "Prompt: "))))
 
+;;;###autoload
 (defun herdr-agent-prompt (text &optional target)
   "Send TEXT as a prompt to the agent in TARGET.
 
@@ -358,6 +369,7 @@ buries the rest of the message."
         (format "%d characters" (length text))
       (format "%d lines" lines))))
 
+;;;###autoload
 (defun herdr-agent-rename (name &optional target)
   "Name the agent in TARGET NAME, or clear its name when NAME is empty.
 
@@ -386,6 +398,7 @@ the rule."
                              (format "named %s %s" target name)
                            (format "cleared the name on %s" target)))))
 
+;;;###autoload
 (defun herdr-agent-send-keys (keys &optional target)
   "Send KEYS to the agent in TARGET, as whitespace-separated key names.
 
@@ -460,6 +473,7 @@ as N full-width tabs beats N slivers of one tab."
       (herdr-cmd--new-tab-pane (herdr-workspace-id open))
     (herdr-cmd--create-workspace-pane directory)))
 
+;;;###autoload
 (defun herdr-new-terminal (&optional place)
   "Open a terminal in PLACE, a workspace id or a directory, and go to it."
   (interactive)
