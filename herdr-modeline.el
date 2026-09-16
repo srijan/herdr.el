@@ -147,12 +147,12 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
    (t (message "%s: %s" title body))))
 
 (defun herdr-notify--maybe (connection &rest _)
-  "Notify about CONNECTION\='s agents that just entered a watched status.
-The statuses worth notifying about are `herdr-notify-statuses\='.
+  "Notify about CONNECTION\\='s agents that just entered a watched status.
+The statuses worth notifying about are `herdr-notify-statuses\\='.
 
-Keyed by the connection\='s token beside the pane id: ids are per-server
-counters, so a bare one would have two machines' `w1:p1\=' share a last
-status — one agent going idle suppressing the other\='s notification, and
+Keyed by the connection\\='s token beside the pane id: ids are per-server
+counters, so a bare one would have two machines' `w1:p1\\=' share a last
+status — one agent going idle suppressing the other\\='s notification, and
 its next status firing one that never happened."
   (when herdr-notify-statuses
     (let ((state (herdr-state-current connection)))

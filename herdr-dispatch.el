@@ -693,13 +693,13 @@ on an event that fires when a workspace closes and at no other time."
 
 A worktree section carries only its path as its value; the branch, and
 whether herdr has already opened it as a workspace, live in the cached
-record.  Resolved once, into the RECORD of `herdr-dispatch-target\=', so
+record.  Resolved once, into the RECORD of `herdr-dispatch-target\\=', so
 two verbs on the same row cannot disagree about which worktree it names.
 
-Searches CONNECTION\='s listings flattened together, because a row knows
-its path and not which listing answered for it.  One connection\='s, not
-every connection\='s: a path is a path on some machine, and two servers
-can each hold a `~/workspace/repo\=' that is not the same directory and
+Searches CONNECTION\\='s listings flattened together, because a row knows
+its path and not which listing answered for it.  One connection\\='s, not
+every connection\\='s: a path is a path on some machine, and two servers
+can each hold a `~/workspace/repo\\=' that is not the same directory and
 not the same repository."
   (seq-find (lambda (candidate)
               (equal path (herdr-worktree-path candidate)))

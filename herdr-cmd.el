@@ -242,12 +242,12 @@ test is enough."
   "Close WORKSPACE-ID, prompting when not given.
 
 Since herdr 0.9.0 a workspace with linked worktree workspaces cannot be
-closed alone: the server answers `workspace_group_close_required\=' and
+closed alone: the server answers `workspace_group_close_required\\=' and
 closes nothing.  That refusal is what asks the second question.
 
-Asking first, with a `worktree.list\=' before the prompt, is the obvious
-alternative and it is worse.  A main checkout\='s own entry carries an
-`open_workspace_id\=' naming the workspace being closed, so a listing
+Asking first, with a `worktree.list\\=' before the prompt, is the obvious
+alternative and it is worse.  A main checkout\\='s own entry carries an
+`open_workspace_id\\=' naming the workspace being closed, so a listing
 cannot tell a group from a lone workspace; it would cost a round trip on
 every close including the ones that need nothing; and the server decides
 this without a race, which a preflight cannot."
@@ -373,19 +373,19 @@ buries the rest of the message."
 (defun herdr-agent-rename (name &optional target)
   "Name the agent in TARGET NAME, or clear its name when NAME is empty.
 
-An agent\='s name is not its pane\='s label.  The label is what the pane is
+An agent\\='s name is not its pane\\='s label.  The label is what the pane is
 doing and moves as the work moves; the name is what you call the agent,
-and herdr takes one anywhere it takes a target - `agent.get\=', a prompt,
+and herdr takes one anywhere it takes a target - `agent.get\\=', a prompt,
 a wait.  In Emacs it is also what stops a buffer name moving, since
-`herdr-pane-identity\=' prefers it over everything else.
+`herdr-pane-identity\\=' prefers it over everything else.
 
 Clearing is sending no name at all, which is what the transport already
-does with a nil: herdr reads an absent `name\=' as `--clear\=', measured,
+does with a nil: herdr reads an absent `name\\=' as `--clear\\=', measured,
 while an empty string is refused as an invalid name.
 
 herdr requires a name to start with a lowercase letter and to hold only
-lowercase letters, digits, `-\=' or `_\=', and refuses one already in use
-with `agent_name_taken\='.  Both arrive as ordinary herdr errors naming
+lowercase letters, digits, `-\\=' or `_\\=', and refuses one already in use
+with `agent_name_taken\\='.  Both arrive as ordinary herdr errors naming
 the rule."
   (interactive (list (read-string "Agent name (empty clears): ")))
   (let* ((target (or target (herdr-select-agent "Rename agent: ")))
@@ -402,13 +402,13 @@ the rule."
 (defun herdr-agent-send-keys (keys &optional target)
   "Send KEYS to the agent in TARGET, as whitespace-separated key names.
 
-The one thing a prompt cannot do.  herdr refuses `agent.prompt\=' to a
-blocked agent with `agent_blocked\=' and sends nothing, so an approval or
+The one thing a prompt cannot do.  herdr refuses `agent.prompt\\=' to a
+blocked agent with `agent_blocked\\=' and sends nothing, so an approval or
 a question waiting on screen has to be answered with the keys
-themselves: `y\=', `n\=', `Enter\=', `esc\='.
+themselves: `y\\=', `n\\=', `Enter\\=', `esc\\='.
 
-`esc\=' is herdr\='s canonical spelling for Escape; it accepts `escape\='
-too.  A vector, because `keys\=' is a JSON array and a list would be
+`esc\\=' is herdr\\='s canonical spelling for Escape; it accepts `escape\\='
+too.  A vector, because `keys\\=' is a JSON array and a list would be
 serialized as one object."
   (interactive (list (read-string "Keys: ")))
   (let ((target (or target (herdr-select-agent "Send keys to agent: "))))

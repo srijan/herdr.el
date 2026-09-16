@@ -318,18 +318,18 @@ Returns (EXECUTABLE . SESSIONS).  One round trip, because each one is an
 SSH handshake and this runs before a user has anything to look at.
 
 Both answers have to come from the remote host.  The socket path must,
-because the default contains a `~\=' and a macOS client expanding it
-locally would forward to a `/Users/...\=' path on a Linux server.  The
+because the default contains a `~\\=' and a macOS client expanding it
+locally would forward to a `/Users/...\\=' path on a Linux server.  The
 executable must for a different reason: TRAMP runs remote commands under
-its own `tramp-remote-path\=', not the login PATH, so a herdr installed
-in `~/.local/bin\=' is on the PATH for `ssh host herdr\=' and not on the
+its own `tramp-remote-path\\=', not the login PATH, so a herdr installed
+in `~/.local/bin\\=' is on the PATH for `ssh host herdr\\=' and not on the
 one the terminal client would get.  An absolute path needs neither.
 
 Asking at all doubles as the explicit check that herdr is installed
 there — the one diagnosis the forward can never make, because OpenSSH
 dials the path it is given without inspecting what is behind it.
 
-Signals `herdr-error\=' with a code saying which part failed."
+Signals `herdr-error\\=' with a code saying which part failed."
   (let ((stderr (make-temp-file "herdr-ssh-")))
    (unwind-protect
     (with-temp-buffer
@@ -382,7 +382,7 @@ that does not exist -- a cause inferred rather than the one observed."
                            target))))))
 
 (defun herdr-connection--session-socket (target sessions session)
-  "Return the socket path SESSION listens on, from TARGET\='s SESSIONS."
+  "Return the socket path SESSION listens on, from TARGET\\='s SESSIONS."
   (let* ((wanted (or session "default"))
          (found (seq-find (lambda (entry) (equal wanted (alist-get 'name entry)))
                           sessions)))
@@ -397,8 +397,8 @@ that does not exist -- a cause inferred rather than the one observed."
                               target wanted))))))
 
 (defun herdr-connection-executable (connection)
-  "Return the herdr binary CONNECTION\='s commands should run.
-The absolute path resolved on a remote host, and `herdr-executable\=' for
+  "Return the herdr binary CONNECTION\\='s commands should run.
+The absolute path resolved on a remote host, and `herdr-executable\\=' for
 a local one."
   (or (herdr-connection-remote-executable connection) herdr-executable))
 

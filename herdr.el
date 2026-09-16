@@ -47,7 +47,7 @@ because herdr bumped a minor is worse than one command misbehaving."
   :group 'herdr)
 
 (defun herdr--check-protocol (connection)
-  "Warn once if CONNECTION\='s server speaks a protocol this package does not know.
+  "Warn once if CONNECTION\\='s server speaks a protocol this package does not know.
 
 Once per connection rather than once per package: a single flag let the
 first server's mismatch silence the check for every server after it, and

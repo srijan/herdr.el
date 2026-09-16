@@ -40,7 +40,7 @@
 (defun herdr-pane--said (string)
   "Return STRING when it says something, nil when it is empty or absent.
 The server sends an empty label for a pane nobody has named, and an
-empty string is a name that reads as a missing one - `claude@\=' for a
+empty string is a name that reads as a missing one - `claude@\\=' for a
 workspace labelled \"\" was a real buffer name."
   (unless (or (null string) (string-empty-p string)) string))
 
@@ -229,7 +229,7 @@ cache has not caught up with still tells two panes apart rather than
 collapsing them onto one name.
 
 An empty string counts as absent at every step, so this is never empty:
-a pane the server labelled \"\" reads as `claude@web\=', not as nothing.
+a pane the server labelled \"\" reads as `claude@web\\=', not as nothing.
 
 Not unique.  Two unnamed panes of the same kind in one workspace have
 the same identity, so callers that name a buffer with it must uniquify."

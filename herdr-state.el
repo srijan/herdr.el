@@ -221,17 +221,17 @@ calls `agent.rename\\='."
     (alist-get 'name agent)))
 
 (defun herdr-state-note-agent (connection agent)
-  "Fold AGENT, an AgentInfo record, into CONNECTION\='s cache.
+  "Fold AGENT, an AgentInfo record, into CONNECTION\\='s cache.
 
-For `agent.rename\=', whose reply is the only thing that will ever say a
-rename happened: herdr publishes no `agent_renamed\=' event.  Measured
-against 0.9.0, whose event schema carries `workspace_renamed\=' and
-`tab_renamed\=' and nothing at all for an agent, so a name set here would
-otherwise stay invisible until the next `session.snapshot\=' - which is
+For `agent.rename\\=', whose reply is the only thing that will ever say a
+rename happened: herdr publishes no `agent_renamed\\=' event.  Measured
+against 0.9.0, whose event schema carries `workspace_renamed\\=' and
+`tab_renamed\\=' and nothing at all for an agent, so a name set here would
+otherwise stay invisible until the next `session.snapshot\\=' - which is
 fetched on a resubscribe rather than on any timer.
 
-Keyed by `pane_id\=', like the array `session.snapshot\=' builds this slot
-from.  A cleared name arrives as a record with no `name\=' key, which
+Keyed by `pane_id\\=', like the array `session.snapshot\\=' builds this slot
+from.  A cleared name arrives as a record with no `name\\=' key, which
 replaces the old one wholesale rather than merging, so clearing works
 by the same path as setting."
   (when-let* ((pane-id (alist-get 'pane_id agent))
@@ -606,7 +606,7 @@ than it answers."
   :group 'herdr)
 
 (defun herdr-state-current (&optional connection)
-  "Return CONNECTION\='s cache, or the current connection\='s.
+  "Return CONNECTION\\='s cache, or the current connection\\='s.
 The optional argument is what lets a renderer ask for one server while
 a command asks for whichever it is acting on."
   (let ((connection (or connection (herdr-current-connection))))
@@ -636,8 +636,8 @@ removed the replay, so there is nothing left to absorb either."
   "Ask CONNECTION for the pane set and fold the reply when it lands.
 
 DONE is called exactly once, with the RPC error or nil.  Exactly once
-including the paths that never reach a reply: `herdr-rpc-connect\=' can
-signal before the request goes out, and the caller\='s in-flight guard
+including the paths that never reach a reply: `herdr-rpc-connect\\=' can
+signal before the request goes out, and the caller\\='s in-flight guard
 would stay set for the session if that escaped.
 
 Also the liveness watchdog, as the synchronous reconcile is: a failure
@@ -685,11 +685,11 @@ emptied."
 (defun herdr-state--reconcile-workspaces-async (connection done)
   "Ask CONNECTION for the workspace set and fold the reply when it lands.
 DONE is called exactly once, with the RPC error or nil.  Unlike the pane
-half this is not a watchdog: `herdr-state--reconcile-panes-async\=' has
+half this is not a watchdog: `herdr-state--reconcile-panes-async\\=' has
 already spoken for the socket by the time this runs.
 
 Workspaces need this as much as panes do and have nowhere else to get
-it: a missed `workspace.closed\=' leaves a ghost in the cache until the
+it: a missed `workspace.closed\\=' leaves a ghost in the cache until the
 next full resync, which only fires on reconnect, so a session that never
 disconnects keeps it forever."
   (let ((generation (herdr-connection-generation connection)))
@@ -711,7 +711,7 @@ disconnects keeps it forever."
                              (message . ,(error-message-string err))))))))
 
 (defun herdr-state-repair (connection &optional done)
-  "Reconcile CONNECTION\='s cached pane set, then its workspace set.
+  "Reconcile CONNECTION\\='s cached pane set, then its workspace set.
 
 Asynchronous, which is the whole point of it.  A server that is
 unreachable fails immediately, but one that accepts the connection and
@@ -723,7 +723,7 @@ too slow forfeits that round of freshness and nothing else.
 Returns non-nil when it started.  DONE, when given, runs after the pair
 has finished and is not run at all when the repair declines to start or
 when the session moved on underneath it: a caller with work that
-depends on the reconciled pane set — `herdr-state--settle\=' is the one —
+depends on the reconciled pane set — `herdr-state--settle\\=' is the one —
 must not do it against a set nothing settled.
 
 The in-flight guard is a slot rather than a binding, so every path out
@@ -879,10 +879,10 @@ continuation, which is the whole reason the repair takes one."
            (herdr-state--schedule-settle connection resync)))))))
 
 (defun herdr-state--settle-hydrate (connection resync done)
-  "Replace CONNECTION\='s cache from a fresh snapshot, then call DONE.
+  "Replace CONNECTION\\='s cache from a fresh snapshot, then call DONE.
 
 Does nothing but call DONE when RESYNC is nil, which is the start path:
-`herdr-state-start\=' has just snapshotted.
+`herdr-state-start\\=' has just snapshotted.
 
 Asynchronous for the reason the repair is.  This runs on a timer after
 a disconnect, which is exactly when the server is most likely to be
@@ -1179,7 +1179,7 @@ cannot pronounce it stale."
       (herdr-state--fold-panes connection (alist-get 'panes reply) known-ids))))
 
 (defun herdr-state--fold-panes (connection panes known-ids)
-  "Fold the authoritative PANES into CONNECTION\='s cache.
+  "Fold the authoritative PANES into CONNECTION\\='s cache.
 
 KNOWN-IDS is the cached pane set as it stood when the request went out.
 A pane that has appeared since cannot be pronounced stale by a reply
@@ -1233,7 +1233,7 @@ how the list is obtained."
     changed))
 
 (defun herdr-state--fold-workspaces (connection workspaces)
-  "Fold the authoritative WORKSPACES into CONNECTION\='s cache.
+  "Fold the authoritative WORKSPACES into CONNECTION\\='s cache.
 Returns non-nil when anything changed."
   (let* ((live-ids (mapcar #'herdr-workspace-id workspaces))
          (stale (seq-remove

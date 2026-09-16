@@ -172,7 +172,7 @@ so grouping rows by tab would explain nothing and cost a level."
 
 (defun herdr-tree-own-workspace-p (worktree workspace-id)
   "Return non-nil when WORKTREE is WORKSPACE-ID rather than one of its worktrees.
-An entry whose open workspace is WORKSPACE-ID is the section\='s own
+An entry whose open workspace is WORKSPACE-ID is the section\\='s own
 workspace: already on screen as the heading above, and the object a verb
 on the row would destroy.  A linked worktree opened as a workspace comes
 back in its own listing exactly this way.
@@ -181,9 +181,9 @@ Bare ids on both sides, which is sound because every caller compares
 a record against the workspace of the listing it came from, on one
 connection.
 
-Apply this AND `herdr-worktree-linked-p\='.  Neither subsumes the other.
+Apply this AND `herdr-worktree-linked-p\\='.  Neither subsumes the other.
 This asks \"is this row the workspace it is nested under?\"; that asks
-\"is this a worktree at all?\", which still matters because a pane `cd\='d
+\"is this a worktree at all?\", which still matters because a pane `cd\\='d
 into another repository yields a listing whose main checkout names some
 other workspace, or none."
   (let ((open (herdr-worktree-open-workspace-id worktree)))
@@ -456,18 +456,18 @@ sections different widths."
     ("unknown" . "UNKNOWN"))
   "Agent statuses as the queue heads them, worst-first.
 
-herdr\='s own words where it has one and the queue\='s where it reads
-better.  `done\=' is headed READY because that is what it means: herdr
-says `idle\=' and `done\=' both mean ready for input and uses its seen
-state to tell them apart, so `done\=' is work finished that nobody has
-looked at yet.  `unknown\=' keeps a heading of its own rather than
+herdr\\='s own words where it has one and the queue\\='s where it reads
+better.  `done\\=' is headed READY because that is what it means: herdr
+says `idle\\=' and `done\\=' both mean ready for input and uses its seen
+state to tell them apart, so `done\\=' is work finished that nobody has
+looked at yet.  `unknown\\=' keeps a heading of its own rather than
 joining IDLE — herdr says it does not prove completion, so it must not
 read as nothing to do.")
 
 (defun herdr-tree--queue-row (state pane machine width)
   "Return the queue row for PANE in STATE, its agent column WIDTH wide.
 
-A `herdr-pane\=' node like any other, so every verb already aimed at a
+A `herdr-pane\\=' node like any other, so every verb already aimed at a
 pane row works here with no arm of its own.
 
 MACHINE, when given, is the name of the machine the pane is on, carried
@@ -497,7 +497,7 @@ around it and a reconnect replaces the struct."
   "Return the attention queue over ENTRIES, one (MACHINE-NAME . STATE) each.
 
 One section per status that has agents in it, worst first, and inside a
-section the highest `state_change_seq\=' first — the most recent news at
+section the highest `state_change_seq\\=' first — the most recent news at
 the top of the group that wants you most.  That counter is the only
 ordering a pane record carries; no field says when a change happened.
 
@@ -554,8 +554,8 @@ and asserted without a buffer or a server."
 (defun herdr-tree-machine-node (name reachable children)
   "Return the node holding CHILDREN, the tree of the machine called NAME.
 
-A machine, which is herdr\='s own word for it: `herdr machine\=' is the
-catalog these names come from, and the TUI heads this level `machines\='.
+A machine, which is herdr\\='s own word for it: `herdr machine\\=' is the
+catalog these names come from, and the TUI heads this level `machines\\='.
 The connection is how the package reaches one; the machine is the thing
 reached, and the row names the thing.
 

@@ -93,25 +93,25 @@ bounded wait every socket RPC already uses."
           (delete-process proc))))))
 
 (defun herdr-schema--pong (connection)
-  "Return CONNECTION\='s answer to a ping, or nil if unreachable."
+  "Return CONNECTION\\='s answer to a ping, or nil if unreachable."
   (ignore-errors (herdr-rpc-call connection "ping")))
 
 (defun herdr-schema-protocol (connection)
-  "Return the protocol CONNECTION\='s loaded schema declares.
+  "Return the protocol CONNECTION\\='s loaded schema declares.
 This is the binary's answer, not the server's."
   (alist-get 'protocol (or (herdr-connection-schema connection)
                            (herdr-schema connection))))
 
 (defun herdr-schema-matches-server-p (connection &optional pong)
-  "Return non-nil when the loaded schema describes CONNECTION\='s server.
-PONG is the server\='s ping answer, asked for when not given.
+  "Return non-nil when the loaded schema describes CONNECTION\\='s server.
+PONG is the server\\='s ping answer, asked for when not given.
 
 There is no socket method for the schema, so it can only come from a
-`herdr\=' binary.  When that binary is a different build from the running
+`herdr\\=' binary.  When that binary is a different build from the running
 server the schema describes an API nobody is talking to, and every check
 made against it answers the wrong question.
 
-An unreachable server is not a mismatch.  `herdr-call\=' reads the
+An unreachable server is not a mismatch.  `herdr-call\\=' reads the
 schema with no server running, and reporting that as a disagreement
 would warn on every one of those."
   (let ((server (alist-get 'protocol (or pong (herdr-schema--pong connection))))
@@ -119,7 +119,7 @@ would warn on every one of those."
     (or (null server) (null schema) (equal server schema))))
 
 (defun herdr-schema--warn-on-mismatch (connection pong)
-  "Say once when the schema and CONNECTION\='s ping answer PONG disagree.
+  "Say once when the schema and CONNECTION\\='s ping answer PONG disagree.
 A nil PONG is an unreachable server, which is not a disagreement."
   (unless (or (herdr-connection-schema-mismatch-warned connection)
               (null pong)
@@ -134,7 +134,7 @@ schema-driven prompts and drift checks describe the binary, not the server"
      (alist-get 'protocol pong))))
 
 (defun herdr-schema (connection)
-  "Return CONNECTION\='s API schema, fetching it if needed.
+  "Return CONNECTION\\='s API schema, fetching it if needed.
 The schema is held for as long as the server reports the version it
 was captured from: `herdr update' mid-session drops it, so the drift
 test cannot check yesterday's schema and report no drift.
