@@ -2705,10 +2705,15 @@ arguments, and was the last transient prefix in the package."
 
 (ert-deftest herdr-dispatch-offers-no-second-way-to-create-a-place-to-run-in ()
   "`a\\=' called `agent.start\\=', asking for a kind and a name that herdr\\='s
-own TUI never asks for."
-  (should-not (lookup-key herdr-dispatch-mode-map "a"))
+own TUI never asks for.
+
+The key is bound again, to answering a blocked agent, so the absent verb
+is what this asserts.  Pinning the keystroke only ever pinned where the
+cut verb happened to live."
   (should-not (fboundp 'herdr-dispatch-create-agent))
-  (should-not (fboundp 'herdr-agent-start)))
+  (should-not (fboundp 'herdr-agent-start))
+  (should (eq 'herdr-dispatch-send-keys
+              (lookup-key herdr-dispatch-mode-map "a"))))
 
 ;;; The worktree cache answers questions
 

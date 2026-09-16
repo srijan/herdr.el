@@ -63,6 +63,7 @@ buffer that window held before.
 | `w` / `n` / `%` | create workspace / terminal / worktree |
 | `p` | prompt the agent at point |
 | `r` | read the pane at point into a buffer |
+| `a` | answer the agent at point with key presses |
 | `R` | rename the thing at point |
 | `k` | close or remove the thing at point |
 | `g` | refresh from the cache |

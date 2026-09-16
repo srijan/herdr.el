@@ -73,7 +73,8 @@ worth arguing about now."
                    herdr-workspace-rename
                    herdr-worktree-create
                    herdr-worktree-remove
-                   herdr-agent-prompt)
+                   herdr-agent-prompt
+                   herdr-agent-send-keys)
                  (mapcar #'car herdr-cmd-methods))))
 
 (ert-deftest herdr-cmd-offers-no-surface-the-dashboard-does-not-use ()
@@ -119,6 +120,37 @@ deleting them safe."
   (should-not (herdr-cmd-read-truncated-p '((read . ((truncated . nil)))))))
 
 ;;; Focus must move Emacs, not just the server
+
+(ert-deftest herdr-agent-send-keys-sends-an-array-of-key-names ()
+  "The verb for a blocked agent, which cannot be prompted at all.
+
+`keys\\=' is a JSON array, and the package sends vectors for arrays
+everywhere: `json-serialize\\=' reads a list as an alist and signals
+`Wrong type argument: symbolp\\=' on a list of plain strings.  The fake
+server decodes arrays back to lists, so that is what arrives here."
+  (let (seen)
+    (cl-letf (((symbol-function 'message) #'ignore))
+      (herdr-test-with-server
+          (lambda (req)
+            (setq seen req)
+            (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-agent-send-keys "y Enter" "w1:p1")))
+    (should (equal "agent.send_keys" (alist-get 'method seen)))
+    (let ((params (alist-get 'params seen)))
+      (should (equal "w1:p1" (alist-get 'target params)))
+      ;; An array on the wire: several key names, not one string.
+      (should (equal '("y" "Enter") (alist-get 'keys params))))))
+
+(ert-deftest herdr-agent-send-keys-splits-on-whitespace-and-drops-nothing ()
+  "Key names arrive as one string and go out as several."
+  (let (seen)
+    (cl-letf (((symbol-function 'message) #'ignore))
+      (herdr-test-with-server
+          (lambda (req)
+            (setq seen req)
+            (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-agent-send-keys "  esc   y  " "w1:p1")))
+    (should (equal '("esc" "y") (alist-get 'keys (alist-get 'params seen))))))
 
 (ert-deftest herdr-agent-prompt-takes-the-region-the-buffer-or-a-typed-string ()
   "The point of prompting from Emacs: the prompt is usually already here.

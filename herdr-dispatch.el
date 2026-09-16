@@ -76,6 +76,7 @@ tells itself apart from a redraw of an empty session.")
     (define-key map "q" #'quit-window)
     (define-key map (kbd "RET") #'herdr-dispatch-visit)
     (define-key map "p" #'herdr-dispatch-prompt)
+    (define-key map "a" #'herdr-dispatch-send-keys)
     (define-key map "r" #'herdr-dispatch-read)
     (define-key map "R" #'herdr-dispatch-rename)
     (define-key map "k" #'herdr-dispatch-close)
@@ -831,6 +832,18 @@ heading has nowhere to go; see `herdr-dispatch--refuse-heading\\='."
   (let ((pane (herdr-dispatch--aimed-at (herdr-dispatch-target-at-point)
                                         'herdr-pane "an agent")))
     (herdr-agent-prompt (read-string "Prompt: ") pane)))
+
+(herdr-dispatch-defverb herdr-dispatch-send-keys ()
+  "Answer the agent at point with key presses.
+
+Named in the prompt, because this is the one verb that answers a
+question somebody else is being asked, and answering the wrong agent is
+the mistake worth making hard."
+  (let ((pane (herdr-dispatch--aimed-at (herdr-dispatch-target-at-point)
+                                        'herdr-pane "an agent")))
+    (herdr-agent-send-keys
+     (read-string (format "Keys for %s: " (herdr-cmd--pane-description pane)))
+     pane)))
 
 (herdr-dispatch-defverb herdr-dispatch-read ()
   "Read the pane at point into a buffer."

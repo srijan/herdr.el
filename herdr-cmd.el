@@ -41,7 +41,8 @@
     (herdr-workspace-rename      "workspace.rename"     "workspace_id" "label")
     (herdr-worktree-create       "worktree.create"      "branch" "base" "cwd" "focus")
     (herdr-worktree-remove       "worktree.remove"      "workspace_id" "force")
-    (herdr-agent-prompt          "agent.prompt"         "target" "text"))
+    (herdr-agent-prompt          "agent.prompt"         "target" "text")
+    (herdr-agent-send-keys       "agent.send_keys"      "target" "keys"))
   "Every curated command, with the method and parameters it uses.
 Each entry is (COMMAND METHOD PARAM...).  Verified against the live
 schema by the drift test.")
@@ -355,6 +356,24 @@ buries the rest of the message."
     (if (= lines 1)
         (format "%d characters" (length text))
       (format "%d lines" lines))))
+
+(defun herdr-agent-send-keys (keys &optional target)
+  "Send KEYS to the agent in TARGET, as whitespace-separated key names.
+
+The one thing a prompt cannot do.  herdr refuses `agent.prompt\=' to a
+blocked agent with `agent_blocked\=' and sends nothing, so an approval or
+a question waiting on screen has to be answered with the keys
+themselves: `y\=', `n\=', `Enter\=', `esc\='.
+
+`esc\=' is herdr\='s canonical spelling for Escape; it accepts `escape\='
+too.  A vector, because `keys\=' is a JSON array and a list would be
+serialized as one object."
+  (interactive (list (read-string "Keys: ")))
+  (let ((target (or target (herdr-select-agent "Send keys to agent: "))))
+    (herdr-rpc-call (herdr-current-connection) "agent.send_keys"
+                    `((target . ,target)
+                      (keys . ,(vconcat (split-string keys nil t)))))
+    (message "herdr: sent %s to %s" keys target)))
 
 ;;; Opening a place to run something
 

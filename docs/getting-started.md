@@ -122,6 +122,7 @@ stopped being asked.
 | Create a terminal | `n` |
 | Send a prompt to the agent at point | `p` |
 | Read the output of the pane at point | `r` |
+| Answer the blocked agent at point | `a` |
 | Rename the item at point | `R` |
 | Close the item at point | `k` |
 | Create a git worktree | `%` |
