@@ -88,7 +88,7 @@ is always on screen stops being read.")
 and the dispatcher header so the two surfaces cannot disagree."
   (let ((counts nil))
     (dolist (pane (herdr-state-agents state))
-      (let ((status (or (herdr-pane-status pane) "unknown")))
+      (let ((status (or (herdr-state-pane-status state pane) "unknown")))
         (setf (alist-get status counts nil nil #'equal)
               (1+ (or (alist-get status counts nil nil #'equal) 0)))))
     counts))
@@ -146,7 +146,7 @@ column a colour strip you can read down without reading any of the
 words."
   (let* ((id (herdr-pane-id pane))
          (shell (not (herdr-pane-agent pane)))
-         (status (if shell "" (or (herdr-pane-status pane) "")))
+         (status (if shell "" (or (herdr-state-pane-status state pane) "")))
          (face (herdr-tree-status-face status)))
     (list 'herdr-pane id
           (string-trim-right
@@ -476,7 +476,7 @@ not by machine, so a row has no machine heading above it to be read off.
 A name rather than a connection, because a section outlives the redraws
 around it and a reconnect replaces the struct."
   (let* ((id (herdr-pane-id pane))
-         (status (or (herdr-pane-status pane) "unknown"))
+         (status (or (herdr-state-pane-status state pane) "unknown"))
          (face (herdr-tree-status-face status))
          (name (herdr-pane-name pane))
          (line (string-trim-right
@@ -521,8 +521,10 @@ and asserted without a buffer or a server."
                                (lambda (pane) (cons (car entry) pane))
                                (seq-filter
                                 (lambda (pane)
-                                  (equal status (or (herdr-pane-status pane)
-                                                    "unknown")))
+                                  (equal status
+                                         (or (herdr-state-pane-status
+                                              (cdr entry) pane)
+                                             "unknown")))
                                 (herdr-state-agents (cdr entry)))))
                             entries)
                            (lambda (a b)

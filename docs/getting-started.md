@@ -101,6 +101,17 @@ until that answer lands and for a directory that is not a git repository.
 A closed section shows the worst status inside it. A closed section therefore never hides a
 blocked agent.
 
+`READY` is where an agent lands when it finishes: it was working, it went idle, and nobody has
+looked at it yet. Going to it — `RET` on the row, or focusing it from anywhere else — is what
+marks it seen and drops it to `IDLE`. Reading its output with `r` does not, so you can look
+through what finished without emptying the list you are working from.
+
+That distinction is herdr's own, and the seen half of it is herdr.el's: the server never sends
+`done` and keeps no seen state for this client, so a completion is noticed here or nowhere. An
+agent that was already idle when Emacs connected is not a completion, and neither is one that
+went from `blocked` to `idle` — herdr cannot tell a question somebody answered from one that
+stopped being asked.
+
 ## Step 5: Do the first tasks
 
 | Task | Keys |

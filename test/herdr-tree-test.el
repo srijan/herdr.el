@@ -873,14 +873,30 @@ repository at all, shows no branch rather than a placeholder."
     (should-not (string-match-p "main" line))))
 
 (defun herdr-tree-test--queue-state (&rest specs)
-  "Return a state whose agents are SPECS, each (ID STATUS SEQ)."
-  (herdr-state-from-snapshot
-   `((workspaces . (((workspace_id . "w1") (label . "web"))))
-     (panes . ,(mapcar (lambda (spec)
-                         `((pane_id . ,(nth 0 spec)) (workspace_id . "w1")
-                           (agent . "claude") (agent_status . ,(nth 1 spec))
-                           (state_change_seq . ,(nth 2 spec))))
-                       specs)))))
+  "Return a state whose agents are SPECS, each (ID STATUS SEQ).
+
+A spec of `done\\=' seeds the record as `idle\\=' and marks the pane unseen,
+because that is the only shape the server can produce: `done\\=' never
+crosses the wire, and a fixture writing it into `agent_status\\=' would
+test a record herdr cannot send."
+  (let ((state (herdr-state-from-snapshot
+                `((workspaces . (((workspace_id . "w1") (label . "web"))))
+                  (panes . ,(mapcar
+                             (lambda (spec)
+                               `((pane_id . ,(nth 0 spec))
+                                 (workspace_id . "w1")
+                                 (agent . "claude")
+                                 (agent_status
+                                  . ,(if (equal (nth 1 spec) "done")
+                                         "idle"
+                                       (nth 1 spec)))
+                                 (state_change_seq . ,(nth 2 spec))))
+                             specs))))))
+    (setf (herdr-state-done-panes state)
+          (mapcar (lambda (spec) (nth 0 spec))
+                  (seq-filter (lambda (spec) (equal (nth 1 spec) "done"))
+                              specs)))
+    state))
 
 (ert-deftest herdr-tree-queue-heads-the-worst-first-and-omits-what-is-empty ()
   "Worst first, so the section that wants you most is the one you land on.
@@ -895,6 +911,31 @@ that never says anything."
                    (mapcar (lambda (node) (nth 2 node)) nodes)))
     (should (equal '(herdr-queue herdr-queue herdr-queue)
                    (mapcar (lambda (node) (nth 0 node)) nodes)))))
+
+(ert-deftest herdr-tree-queue-heads-a-real-completion-ready ()
+  "The whole path, from the event herdr sends to the heading you read.
+
+Every other queue test sets the done mark by hand.  This one drives the
+only thing the server actually emits - working, then idle - so a change
+that leaves the mark unset, or that reads the record instead of the
+projection, cannot pass by agreeing with a fixture."
+  (let* ((state (herdr-tree-test--queue-state '("w1:p1" "idle" 1)))
+         (done (herdr-state-reduce
+                (herdr-state-reduce state "pane.agent_status_changed"
+                                    '((pane_id . "w1:p1")
+                                      (agent_status . "working")))
+                "pane.agent_status_changed"
+                '((pane_id . "w1:p1") (agent_status . "idle")))))
+    (should (equal '("READY (1)")
+                   (mapcar (lambda (node) (nth 2 node))
+                           (herdr-tree-queue-nodes (list (cons nil done))))))
+    ;; Looking at it puts it back under IDLE.
+    (should (equal '("IDLE (1)")
+                   (mapcar (lambda (node) (nth 2 node))
+                           (herdr-tree-queue-nodes
+                            (list (cons nil (herdr-state-reduce
+                                             done "pane_focused"
+                                             '((pane_id . "w1:p1")))))))))))
 
 (ert-deftest herdr-tree-queue-reads-done-as-ready-and-keeps-unknown-apart ()
   "herdr says `idle\\=' and `done\\=' both mean ready for input and uses its

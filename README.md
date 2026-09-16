@@ -48,6 +48,11 @@ worst first, and inside one the most recent news leads. `MACHINES` below is the 
 machine, workspace, branch, directory. A workspace opens to its panes and checkouts when you
 press `TAB` on it — the queue already lists every agent, so nothing is shown twice.
 
+`READY` holds agents that finished while you were elsewhere. Going to one marks it seen and drops
+it to `IDLE`; reading its output with `r` does not, so you can look through what finished without
+emptying the list. herdr keeps that seen state per client and never sends it, so herdr.el works it
+out from the transitions it watches.
+
 The dashboard opens in the selected window and leaves your other windows alone. `q` restores the
 buffer that window held before.
 

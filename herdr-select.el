@@ -45,7 +45,8 @@
 
 (defun herdr-select--annotate-pane (pane-id &optional connection)
   "Return the annotation string for PANE-ID on CONNECTION."
-  (let ((pane (herdr-state-pane (herdr-state-current connection) pane-id)))
+  (let* ((state (herdr-state-current connection))
+         (pane (herdr-state-pane state pane-id)))
     (if (not pane)
         ""
       ;; `herdr-pane-name' rather than the terminal title alone, so a
@@ -55,7 +56,7 @@
       ;; row and the confirmations, so no two surfaces can disagree
       ;; about what a pane is called.
       (let ((agent (herdr-pane-agent pane))
-            (status (herdr-pane-status pane))
+            (status (herdr-state-pane-status state pane))
             (title (herdr-pane-name pane))
             (cwd (herdr-pane-cwd pane)))
         (concat "  "

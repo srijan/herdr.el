@@ -120,6 +120,29 @@ deleting them safe."
 
 ;;; Focus must move Emacs, not just the server
 
+(ert-deftest herdr-pane-read-does-not-focus-what-it-reads ()
+  "herdr\\='s rule, and the half of it that is an absence.
+
+Focus marks an agent seen and a read does not, so a read that focused
+on the way past would quietly clear the READY mark on the work it was
+showing you - and the dashboard would empty as you looked through it.
+Nothing here forwards focus today; this is what keeps it that way."
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+                                  '((panes . (((pane_id . "w1:p1")
+                                               (workspace_id . "w1")
+                                               (agent . "claude")
+                                               (agent_status . "idle")))))))
+    (let ((wire nil))
+      (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
+        (herdr-test-with-server
+            (lambda (req)
+              (push (alist-get 'method req) wire)
+              (cons (herdr-test-ok
+                     req '((type . "pane_read") (read . ((text . "hi")))))
+                    nil))
+          (herdr-pane-read "w1:p1" "recent_unwrapped" 10)))
+      (should (equal '("pane.read") wire)))))
+
 (ert-deftest herdr-pane-focus-selects-the-buffer-for-that-pane ()
   "Focusing is server-side and nothing repaints, so
 Emacs has to be moved to match or the command looks like a no-op."

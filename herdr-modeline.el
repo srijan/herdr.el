@@ -155,20 +155,21 @@ counters, so a bare one would have two machines' `w1:p1\=' share a last
 status — one agent going idle suppressing the other\='s notification, and
 its next status firing one that never happened."
   (when herdr-notify-statuses
-    (dolist (pane (herdr-state-agents (herdr-state-current connection)))
-      (let* ((id (herdr-pane-id pane))
-             (key (cons (herdr-connection-token connection) id))
-             (status (herdr-pane-status pane))
-             (previous (gethash key herdr-notify--last-status)))
-        (unless (equal status previous)
-          (puthash key status herdr-notify--last-status)
-          (when (and previous (member status herdr-notify-statuses))
-            (herdr-notify--send
-             (format "herdr: %s is %s" (or (herdr-pane-agent pane) id) status)
-             ;; `herdr-pane-name', not the bare title: the agent kind
-             ;; alone does not tell two Claudes apart.
-             (let ((name (herdr-pane-name pane)))
-               (if (string-empty-p name) id name)))))))))
+    (let ((state (herdr-state-current connection)))
+      (dolist (pane (herdr-state-agents state))
+        (let* ((id (herdr-pane-id pane))
+               (key (cons (herdr-connection-token connection) id))
+               (status (herdr-state-pane-status state pane))
+               (previous (gethash key herdr-notify--last-status)))
+          (unless (equal status previous)
+            (puthash key status herdr-notify--last-status)
+            (when (and previous (member status herdr-notify-statuses))
+              (herdr-notify--send
+               (format "herdr: %s is %s" (or (herdr-pane-agent pane) id) status)
+               ;; `herdr-pane-name', not the bare title: the agent kind
+               ;; alone does not tell two Claudes apart.
+               (let ((name (herdr-pane-name pane)))
+                 (if (string-empty-p name) id name))))))))))
 
 (add-hook 'herdr-state-change-functions #'herdr-notify--maybe)
 
