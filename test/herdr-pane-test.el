@@ -167,7 +167,7 @@ kind would not."
 (ert-deftest herdr-pane-identity-treats-an-empty-string-as-absent ()
   "The server sends \"\" for a pane nobody named, and an empty name reads
 as a missing one.  Before this, a pane labelled \"\" was called nothing at
-all, and a workspace labelled \"\" made every pane in it `claude@\='."
+all, and a workspace labelled \"\" made every pane in it `claude@'."
   (should (equal "claude@web"
                  (herdr-pane-identity
                   '((pane_id . "w1:p1") (label . "") (agent . "claude"))

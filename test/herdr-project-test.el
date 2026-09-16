@@ -288,9 +288,9 @@ buffers and so kept the defect green."
     (should (eq (car torn) (car stopped)))))
 
 (ert-deftest herdr-project-every-bound-command-can-actually-run ()
-  "A command with a required argument and a bare `(interactive)\=' is a
-dead key: `herdr-state-resync\=' gained an argument and kept the spec, so
-`g\=' signalled wrong-number-of-arguments for every user."
+  "A command with a required argument and a bare `(interactive)' is a
+dead key: `herdr-state-resync' gained an argument and kept the spec, so
+`g' signalled wrong-number-of-arguments for every user."
   (let (broken)
     (map-keymap
      (lambda (_event binding)

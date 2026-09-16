@@ -572,9 +572,9 @@ event."
   "The startup window loses events and no replay covers it any more.
 
 herdr 0.9.0 starts a subscription at the sequence its request arrived
-on, so anything the server announced between `session.snapshot\=' and
-the subscribe is gone.  `pane.list\=' repairs panes; without a
-`workspace.list\=' beside it a workspace renamed in that window stays
+on, so anything the server announced between `session.snapshot' and
+the subscribe is gone.  `pane.list' repairs panes; without a
+`workspace.list' beside it a workspace renamed in that window stays
 wrong until something else happens to reconcile."
   (let (methods)
     (herdr-test-with-server
@@ -634,7 +634,7 @@ settled first.  Recorded in reverse, so the list reads newest first."
           (herdr-state--close (herdr-connection-pane-process (herdr-current-connection)))))))))
 
 (ert-deftest herdr-state-settle-keeps-the-cache-when-workspace-list-fails ()
-  "An unanswerable `workspace.list\=' must not read as an empty server.
+  "An unanswerable `workspace.list' must not read as an empty server.
 
 The reconcile already refuses to treat nil as an answer; the settle must
 not defeat that by calling it somewhere the refusal cannot take effect."

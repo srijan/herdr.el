@@ -610,11 +610,11 @@ close asks a second question whose answer must differ from the first."
 
 (ert-deftest herdr-workspace-close-offers-the-group-when-the-server-refuses ()
   "herdr 0.9.0 refuses to close a workspace that would take linked
-worktree workspaces with it, answering `workspace_group_close_required\='
+worktree workspaces with it, answering `workspace_group_close_required'
 and closing nothing.  The refusal is what asks the second question.
 
-Not a `worktree.list\=' before the first one: a main checkout's own entry
-carries an `open_workspace_id\=' naming the workspace being closed, so a
+Not a `worktree.list' before the first one: a main checkout's own entry
+carries an `open_workspace_id' naming the workspace being closed, so a
 listing cannot tell a group from a lone workspace, and the server
 decides this without a race."
   (herdr-cmd-test--group-close '(t t) (herdr-cmd-test--group-required-once) wire said
@@ -633,7 +633,7 @@ decides this without a race."
     (should (string-match-p "left open" (or said "")))))
 
 (ert-deftest herdr-workspace-close-does-not-swallow-other-errors ()
-  "Only the group refusal is handled.  Reading every `herdr-error\=' as a
+  "Only the group refusal is handled.  Reading every `herdr-error' as a
 group question would turn a permission failure into a second prompt and
 then a close the user never asked for."
   (herdr-cmd-test--group-close '(t t)
@@ -644,7 +644,7 @@ then a close the user never asked for."
 
 (ert-deftest herdr-workspace-close-sends-no-group-flag-for-a-lone-workspace ()
   "The common case must cost nothing: the same request as before, with
-no extra round trip and no `close_group\=' key at all."
+no extra round trip and no `close_group' key at all."
   (herdr-cmd-test--group-close '(t)
       (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
       wire said

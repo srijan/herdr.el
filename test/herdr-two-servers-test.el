@@ -243,7 +243,7 @@ that server however the registry is ordered."
 ;;; The pickers and the modeline
 
 (ert-deftest herdr-two-servers-a-picker-qualifies-its-rows ()
-  "Both servers answer for `w1:p1\='.  Unqualified the picker offers one
+  "Both servers answer for `w1:p1'.  Unqualified the picker offers one
 row twice, and whichever the user means, the id it hands back is the
 same string."
   (herdr-two-servers-test--with
@@ -263,7 +263,7 @@ same string."
 
 (ert-deftest herdr-two-servers-picking-says-which-server-a-command-means ()
   "The row chosen outranks the buffer the command was typed in.  With
-both servers holding `w1:p1\=', resolving from the buffer would send
+both servers holding `w1:p1', resolving from the buffer would send
 every command to whichever terminal happened to be on screen."
   (herdr-two-servers-test--with
     (herdr-state-start one)
@@ -283,7 +283,7 @@ every command to whichever terminal happened to be on screen."
 
 (ert-deftest herdr-two-servers-a-quiet-one-does-not-empty-the-picker ()
   "R6.  A server that stops answering costs the picker its own freshness
-and nothing else: its rows go stale, the other server\='s do not, and the
+and nothing else: its rows go stale, the other server\\='s do not, and the
 list is still offered."
   (herdr-two-servers-test--with
     (herdr-state-start one)
@@ -305,7 +305,7 @@ list is still offered."
 
 (ert-deftest herdr-two-servers-the-modeline-counts-both ()
   "The segment used to read whichever connection resolved, so a second
-server\='s blocked agent was invisible until you went looking."
+server\\='s blocked agent was invisible until you went looking."
   (herdr-two-servers-test--with
     (herdr-state-start one)
     (herdr-state-start two)

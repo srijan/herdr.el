@@ -89,14 +89,20 @@ One backslash too few renders as an equals sign rather than a quote."
     (nreverse found)))
 
 (defun herdr-lint-batch ()
-  "Run every check over the package sources, then exit."
-  (let* ((files (seq-remove (lambda (f) (string-suffix-p "-autoloads.el" f))
-                           (file-expand-wildcards "herdr*.el")))
-         (findings (append (herdr-lint--stray-equals files)
-                           (herdr-lint--checkdoc files))))
+  "Run every check, then exit non-zero on a finding.
+
+The escape check covers the tests too: an ert docstring is rendered by
+`ert-describe-test' and mangles the same way.  checkdoc does not.  It
+asks for package documentation conventions that a test suite has no
+reason to follow - 325 findings, none of them a defect."
+  (let* ((sources (seq-remove (lambda (f) (string-suffix-p "-autoloads.el" f))
+                              (file-expand-wildcards "herdr*.el")))
+         (tests (file-expand-wildcards "test/*.el"))
+         (findings (append (herdr-lint--stray-equals (append sources tests))
+                           (herdr-lint--checkdoc sources))))
     (dolist (finding findings) (princ (concat finding "\n")))
     (princ (format "herdr-lint: %d finding(s) in %d files\n"
-                   (length findings) (length files)))
+                   (length findings) (+ (length sources) (length tests))))
     (kill-emacs (if findings 1 0))))
 
 (provide 'herdr-lint)

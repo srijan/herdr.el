@@ -405,7 +405,7 @@ R10: the single-connection picker is exactly what it was."
 
 (ert-deftest herdr-select-a-place-root-is-offered-by-its-own-host-only ()
   "A root is a path on a machine.  Asking every connection about every
-root is how one server\='s projects reached another, and how two servers
+root is how one server\\='s projects reached another, and how two servers
 holding the same path became indistinguishable."
   (let* ((here (herdr-test-connection (herdr-state-empty)))
          (there (herdr-test-connection (herdr-state-empty)))

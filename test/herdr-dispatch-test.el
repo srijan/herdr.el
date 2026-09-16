@@ -957,7 +957,7 @@ which is why a `pcase' over the type cannot be mis-ordered."
   "Return a function recording each call to it as (NAME . ARGS).
 A leading connection is dropped.  These assertions are about which
 command ran with which parameters; that a connection was passed at all
-is `herdr-rpc-call-refuses-to-guess-a-connection\='s job."
+is `herdr-rpc-call-refuses-to-guess-a-connection\\='s job."
   (lambda (&rest args)
     (push (cons name (if (herdr-connection-p (car args)) (cdr args) args))
           herdr-dispatch-test--calls)
@@ -2923,10 +2923,10 @@ whose subtree the row sits in, not whichever the resolver would answer."
 (ert-deftest herdr-dispatch-a-queue-row-resolves-to-its-own-machine ()
   "The same guard for the queue, which is where it is hardest: a queue is
 ordered by attention, so a row has no machine heading above it to walk up
-to, and both machines here issued `w1:p1\='.
+to, and both machines here issued `w1:p1'.
 
 The row carries the machine name on its own line instead, which is what
-`herdr-dispatch--row-connection\=' reads when there is no heading.  A name
+`herdr-dispatch--row-connection' reads when there is no heading.  A name
 rather than the connection, because a section outlives the redraws around
 it and a reconnect replaces the struct."
   (herdr-dispatch-test--with-two-servers
