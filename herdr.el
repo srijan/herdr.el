@@ -50,7 +50,7 @@ because herdr bumped a minor is worse than one command misbehaving."
 (defun herdr--check-protocol (connection)
   "Warn once when CONNECTION\\='s server speaks an unknown protocol.
 
-Unknown meaning other than `herdr-protocol-version\\='.  Once per
+Unknown meaning other than `herdr-protocol-version'.  Once per
 connection rather than once per package: a single flag let the
 first server's mismatch silence the check for every server after it, and
 the one most likely to disagree is the one added last."
@@ -89,7 +89,7 @@ One connection, both halves.  The teardown used to be called with no
 argument, which kills every connection\\='s terminal buffers, beside a
 stop scoped to one — so stopping the local server reaped a remote
 server\\='s terminals and left that connection running.  Use
-`herdr-disconnect\\=' to stop a connection you named."
+`herdr-disconnect' to stop a connection you named."
   (interactive)
   (let ((connection (herdr-current-connection)))
     (herdr-term-teardown connection)
@@ -110,7 +110,7 @@ server\\='s terminals and left that connection running.  Use
 (defun herdr ()
   "Start herdr if needed and open the dispatcher.
 The one entry point that runs the start sequence first, which is why
-`s\\=' in `herdr-command-map\\=' is bound here and not to `herdr-agents\\='."
+`s' in `herdr-command-map' is bound here and not to `herdr-agents'."
   (interactive)
   (herdr-start)
   (herdr-agents))
@@ -132,7 +132,7 @@ The one entry point that runs the start sequence first, which is why
     (define-key global-map (kbd \"C-c H\") herdr-command-map)
 
 The letters are the dashboard\\='s letters; the target comes from a picker
-here and from point there.  No help key: `C-h\\=' after the prefix lists
+here and from point there.  No help key: `C-h' after the prefix lists
 these bindings.")
 
 (provide 'herdr)

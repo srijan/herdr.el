@@ -26,7 +26,7 @@
 ;;; Snapshot hydration
 
 (ert-deftest herdr-state-workspace-finds-one-by-id ()
-  "The workspace counterpart of `herdr-state-pane\\=', and the way a
+  "The workspace counterpart of `herdr-state-pane', and the way a
 caller holding one string tells a workspace id from a directory: only
 one of the two is in the cache under that name."
   (let ((state (herdr-state-from-snapshot
@@ -198,10 +198,10 @@ rather than signal."
 (ert-deftest herdr-state-a-finished-agent-nobody-looked-at-is-done ()
   "The queue's whole premise, and it cannot come from the record.
 
-Measured against a 0.9.0 server: `agent.list\\=' and the event stream both
+Measured against a 0.9.0 server: `agent.list' and the event stream both
 report only idle, working, blocked and unknown, and no reply carries a
-`seen\\=' field.  herdr keeps that per client and says so, so an agent
-that worked and went idle is `done\\=' here or nowhere."
+`seen' field.  herdr keeps that per client and says so, so an agent
+that worked and went idle is `done' here or nowhere."
   (let ((next (herdr-state-test--finish (herdr-state-test--seed) "w1:p2")))
     ;; The record still says exactly what the server said.
     (should (equal "idle" (herdr-pane-status (herdr-state-pane next "w1:p2"))))
@@ -211,7 +211,7 @@ that worked and went idle is `done\\=' here or nowhere."
   "herdr\\='s own rule: focus commands mark the target seen, reads do not.
 
 The read half is an absence, which is why it is asserted rather than
-assumed: `pane.read\\=' and `agent.read\\=' were measured against a 0.9.0
+assumed: `pane.read' and `agent.read' were measured against a 0.9.0
 server and emit no event at all, so every event herdr can deliver about
 a pane nobody focused has to leave it done."
   (let ((done (herdr-state-test--finish (herdr-state-test--seed) "w1:p2")))
@@ -235,7 +235,7 @@ a pane nobody focused has to leave it done."
   "The reduce is pure, and the done set is the easy place to lose that.
 
 The new set starts out as the very list the old state holds, so
-clearing a mark with a destructive `delete\\=' would edit that state in
+clearing a mark with a destructive `delete' would edit that state in
 place: a caller still holding it - the dashboard comparing against the
 tree it last drew, a test asserting what a step produced - would find
 its own copy quietly rewritten."
@@ -256,7 +256,7 @@ its own copy quietly rewritten."
 (ert-deftest herdr-state-refocusing-the-focused-pane-still-marks-it-seen ()
   "Why the clear reads the event rather than comparing the focused id.
 
-herdr emits `pane_focused\\=' even for a pane that already holds focus -
+herdr emits `pane_focused' even for a pane that already holds focus -
 measured - and pressing RET on the row you are already sitting on is
 exactly how you look at the thing that just finished.  A clear keyed on
 the focused id moving would do nothing here."
@@ -274,9 +274,9 @@ the focused id moving would do nothing here."
   "An idle pane is not news; herdr cannot read the two other arrivals.
 
 A snapshot is mostly panes that were already idle, and flagging those
-would head the queue READY with everything that exists.  `blocked\\=' to
-`idle\\=' is a question that stopped being asked, which herdr cannot tell
-from one somebody answered, and `unknown\\=' does not prove completion on
+would head the queue READY with everything that exists.  `blocked' to
+`idle' is a question that stopped being asked, which herdr cannot tell
+from one somebody answered, and `unknown' does not prove completion on
 herdr\\='s own account."
   (let ((seed (herdr-state-test--seed)))
     ;; Arrived idle, never worked.
@@ -302,9 +302,9 @@ land on whatever pane is called that next."
       (should (equal "idle" (herdr-state-test--shown reborn "w1:p2"))))))
 
 (ert-deftest herdr-state-one-machines-done-mark-does-not-answer-for-another ()
-  "Pane ids are per-server counters, so two machines both have a `w1:p1\\='.
+  "Pane ids are per-server counters, so two machines both have a `w1:p1'.
 
-`herdr-state-merged\\=' folds each state\\='s own marks into the records it
+`herdr-state-merged' folds each state\\='s own marks into the records it
 contributes before merging, rather than merging the id lists - which
 would let the machine that finished answer for the one that did not."
   (let* ((a (herdr-state-test--finish (herdr-state-test--seed) "w1:p1"))
@@ -325,15 +325,15 @@ would let the machine that finished answer for the one that did not."
   (file-name-directory
    (directory-file-name
     (file-name-directory (or load-file-name buffer-file-name))))
-  "The package root, found from this file rather than from `default-directory\\='.")
+  "The package root, found from this file rather than from `default-directory'.")
 
 (ert-deftest herdr-state-only-the-cache-reads-a-raw-agent-status ()
   "A surface reading the record shows idle for what the queue heads READY.
 
-`done\\=' is not in any record - herdr keeps the seen state per client -
-so it exists only in the projection `herdr-state-pane-status\\=' applies.
+`done' is not in any record - herdr keeps the seen state per client -
+so it exists only in the projection `herdr-state-pane-status' applies.
 Every file that shows a status therefore has to go through that one,
-and `herdr-pane.el\\=' and `herdr-state.el\\=' are the only two with reason
+and `herdr-pane.el' and `herdr-state.el' are the only two with reason
 to touch the raw field: one defines it, the other projects it and
 copies it out of a snapshot."
   (let (offenders)
@@ -427,13 +427,13 @@ riding along on it."
 (ert-deftest herdr-state-reduce-workspace-moved-counts-the-index-with-the-entry-in ()
   "MEASURED against herdr 0.9.0, not assumed.
 
-`insert_index\\=' counts against the list with the moved workspace STILL IN
+`insert_index' counts against the list with the moved workspace STILL IN
 IT, so w2 to index 3 of (w1 w2 w3 w4) gives (w1 w3 w2 w4).  Counting
 against the list with w2 already taken out gives (w1 w3 w4 w2), which is
 what this package used to do.  Only a forward move tells them apart.
 
-Provoked on a throwaway session: four workspaces, `workspace.move\\=' with
-insert_index 3, then `workspace.list\\='.  Backward moves agree under both
+Provoked on a throwaway session: four workspaces, `workspace.move' with
+insert_index 3, then `workspace.list'.  Backward moves agree under both
 readings, which is why the other tests here never caught it."
   (let ((next (herdr-state-reduce
                (herdr-state-test--ws-seed) "workspace_moved"
@@ -444,7 +444,7 @@ readings, which is why the other tests here never caught it."
 (ert-deftest herdr-state-reduce-workspace-moved-to-the-length-goes-last ()
   "MEASURED: an index equal to the length is the last valid one and puts
 the workspace at the end.  One past it is refused by the server with
-`workspace_move_failed\\=', so no event carries it."
+`workspace_move_failed', so no event carries it."
   (let ((next (herdr-state-reduce
                (herdr-state-test--ws-seed) "workspace_moved"
                `((workspace_id . "w1") (insert_index . 4)
@@ -468,7 +468,7 @@ the workspace at the end.  One past it is refused by the server with
 
 (ert-deftest herdr-state-reduce-workspace-moved-clamps-a-past-the-end-index ()
   "Defensive, not a spec: herdr refuses such a move with
-`workspace_move_failed\\=' and sends no event.  A reducer must not signal
+`workspace_move_failed' and sends no event.  A reducer must not signal
 on a payload it did not expect, so it clamps."
   (let ((next (herdr-state-reduce
                (herdr-state-test--ws-seed) "workspace_moved"
@@ -921,7 +921,7 @@ stop on one server drop an answer meant for another."
     (should (= 0 (herdr-connection-generation two)))))
 
 (ert-deftest herdr-state-reconcile-drops-a-reply-from-a-stopped-session ()
-  "`herdr-rpc-call\\=' services due timers while it waits, so the session can
+  "`herdr-rpc-call' services due timers while it waits, so the session can
 stop underneath a reconcile.  A reply that lands afterwards must not
 repopulate the cache the stop just emptied, or the modeline advertises
 the dead session's agents until the mode is toggled."
@@ -959,8 +959,8 @@ stop can land between the pane reply and the workspace one."
         (should-not (herdr-state-workspaces (herdr-state-current connection)))))))
 
 (ert-deftest herdr-state-repair-skips-workspaces-when-panes-just-failed ()
-  "A `pane.list\\=' that failed has scheduled a reconnect.  Asking
-`workspace.list\\=' over the same wedged socket spends a second background
+  "A `pane.list' that failed has scheduled a reconnect.  Asking
+`workspace.list' over the same wedged socket spends a second background
 timeout on an answer that is not coming, doubling the freeze this
 function binds the timeout to avoid."
   (herdr-state-test--with-quiet-session
@@ -979,7 +979,7 @@ function binds the timeout to avoid."
 
 (ert-deftest herdr-state-repair-reconciles-workspaces-during-a-pending-reconnect ()
   "Only the tick that schedules the reconnect skips.  A backoff already
-pending says nothing about whether this tick's `pane.list\\=' answered, and
+pending says nothing about whether this tick's `pane.list' answered, and
 suppressing the workspace half through the whole backoff would stop
 repairing workspaces exactly when the cache is most likely wrong."
   (herdr-state-test--with-quiet-session
@@ -995,7 +995,7 @@ repairing workspaces exactly when the cache is most likely wrong."
         (should workspaces-called)))))
 
 (ert-deftest herdr-state-subscribe-closes-its-process-when-the-send-fails ()
-  "`process-send-string\\=' signals when the peer closes between connect and
+  "`process-send-string' signals when the peer closes between connect and
 send.  Until the subscribe returns, the process is in no variable, so
 nothing downstream could close it and a failed start leaked one."
   (let ((closed nil))

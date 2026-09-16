@@ -48,7 +48,7 @@ Never empty, because it is a column."
 
 (defun herdr-worktree-linked-p (worktree)
   "Return non-nil when WORKTREE is a linked worktree, not the main checkout.
-`is_linked_worktree\\=' is the only field that can tell them apart.
+`is_linked_worktree' is the only field that can tell them apart.
 
 Absent reads as not linked.  The field is required, so absence means a
 reply the schema does not describe: treating it as the main checkout
@@ -62,16 +62,16 @@ would do to the repository."
 ;; naming the repository the listing was taken from.
 
 (defun herdr-worktree-listing-worktrees (listing)
-  "Return the WorktreeInfo records in a `worktree.list\\=' LISTING."
+  "Return the WorktreeInfo records in a `worktree.list' LISTING."
   (alist-get 'worktrees listing))
 
 (defun herdr-worktree-listing-repo-root (listing)
   "Return the main checkout of the repository LISTING was taken from.
 
-`worktree.list\\=' states this in its `source\\=' object, so it is read
+`worktree.list' states this in its `source' object, so it is read
 rather than inferred.  Scanning the array for the entry that is not a
 linked worktree answers the same question only while such an entry is
-present — a bare repository has none — whereas `repo_root\\=' is required."
+present — a bare repository has none — whereas `repo_root' is required."
   (alist-get 'repo_root (alist-get 'source listing)))
 
 (defun herdr-worktree-open-workspace-id (worktree)

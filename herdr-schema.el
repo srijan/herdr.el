@@ -108,11 +108,11 @@ This is the binary's answer, not the server's."
 PONG is the server\\='s ping answer, asked for when not given.
 
 There is no socket method for the schema, so it can only come from a
-`herdr\\=' binary.  When that binary is a different build from the running
+`herdr' binary.  When that binary is a different build from the running
 server the schema describes an API nobody is talking to, and every check
 made against it answers the wrong question.
 
-An unreachable server is not a mismatch.  `herdr-call\\=' reads the
+An unreachable server is not a mismatch.  `herdr-call' reads the
 schema with no server running, and reporting that as a disagreement
 would warn on every one of those."
   (let ((server (alist-get 'protocol (or pong (herdr-schema--pong connection))))

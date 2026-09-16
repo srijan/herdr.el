@@ -43,7 +43,7 @@ connections answering to it, one of them dead."
 
 (ert-deftest herdr-current-connection-registers-a-local-one-when-empty ()
   "The single-server path needs no setup: asking with nothing registered
-is how `herdr-start\\=' gets its connection."
+is how `herdr-start' gets its connection."
   (let ((herdr-connections nil))
     (let ((connection (herdr-current-connection)))
       (should (herdr-connection-p connection))
@@ -249,7 +249,7 @@ the whole report; guessing past it is not."
       (should (string-match-p "Could not resolve" (herdr-error-message err))))))
 
 (ert-deftest herdr-connection-login-noise-is-not-mistaken-for-the-binary ()
-  "`command -v\\=' answers an absolute path.  A banner, a host-key warning
+  "`command -v' answers an absolute path.  A banner, a host-key warning
 or anything a remote shell echoes does not -- and the first line of the
 answer is exec\\='d on that host, so taking one would run whatever the
 noise named."

@@ -40,9 +40,9 @@
 
 (defcustom herdr-dispatch-display-action
   '(display-buffer-same-window)
-  "How the dispatcher buffer is shown, as a `display-buffer\\=' ACTION.
+  "How the dispatcher buffer is shown, as a `display-buffer' ACTION.
 The default reuses the selected window and leaves the rest of the frame
-alone.  Nil lets `display-buffer\\=' choose another window."
+alone.  Nil lets `display-buffer' choose another window."
   :type 'sexp
   :group 'herdr)
 
@@ -51,7 +51,7 @@ alone.  Nil lets `display-buffer\\=' choose another window."
 Events arrive in bursts — a reconcile folds many pane changes back to
 back, and a settle does it for panes and workspaces at once — so
 redrawing per event meant erasing and rebuilding the buffer many times
-for one visible change.  (When `pane.updated\\=' was still subscribed, a
+for one visible change.  (When `pane.updated' was still subscribed, a
 single working agent kept that up at ten redraws a second
 indefinitely.)  Short enough
 that the dashboard still reads as live.  Only the hook is debounced:
@@ -99,7 +99,7 @@ Lowercase letters are the read-only verbs; each acts on whatever the
 line under point names, so no key needs a target of its own.")
 
 (defun herdr-dispatch--fold-indicators ()
-  "Return `magit-section-visibility-indicators\\=' for the current frame.
+  "Return `magit-section-visibility-indicators' for the current frame.
 The same margin character in graphical and terminal frames, asked on
 mode entry rather than at load so a daemon answers against a real
 frame."
@@ -137,27 +137,27 @@ frame."
     (set-window-margins window left-margin-width right-margin-width)))
 
 (defun herdr-dispatch--heading (line)
-  "Return LINE with `magit-section-heading\\=' on its unfaced characters.
+  "Return LINE with `magit-section-heading' on its unfaced characters.
 
-`magit-insert-heading\\=' faces the whole string it is given, but only
+`magit-insert-heading' faces the whole string it is given, but only
 when no part of it is faced already: hand it a line carrying one
 propertised field and it inserts every character unchanged, so a single
 dimmed directory would cost the heading its heading face entirely.
 Filling in the gaps first makes the two compose — the fields herdr-tree
 faced keep their faces, and everything else reads as a heading.
 
-Both `face\\=' and `font-lock-face\\=', for the reason given in
-`herdr-tree--faced\\=': `face\\=' does not survive the first fontification
-of the line, and `font-lock-face\\=' renders as nothing while
-`font-lock-mode\\=' is off.  Writing only one of them made the whole
+Both `face' and `font-lock-face', for the reason given in
+`herdr-tree--faced': `face' does not survive the first fontification
+of the line, and `font-lock-face' renders as nothing while
+`font-lock-mode' is off.  Writing only one of them made the whole
 restyle invisible, once each way round.
 
-The gaps are found by scanning `font-lock-face\\=' alone, and that is
+The gaps are found by scanning `font-lock-face' alone, and that is
 safe only because the two properties are written together everywhere:
-`herdr-tree--faced\\=' sets both or neither, so the boundaries either
+`herdr-tree--faced' sets both or neither, so the boundaries either
 property reports are the same boundaries.  Scanning the wrong one used
-to matter — over a line faced with `font-lock-face\\=' only, a scan for
-`face\\=' finds no fields at all and paints the heading face straight
+to matter — over a line faced with `font-lock-face' only, a scan for
+`face' finds no fields at all and paints the heading face straight
 over every one of them.  If a field ever carries just one property, this
 scan is where that shows up."
   (let ((line (copy-sequence line))
@@ -182,7 +182,7 @@ scan is where that shows up."
 
 Containers — workspaces, tabs, the worktrees group — are the only nodes
 that get a heading.  A heading is what magit-section makes foldable and
-what carries the `magit-section-heading\\=' face, so making every node one
+what carries the `magit-section-heading' face, so making every node one
 spent both on nothing: the face said \"heading\" on every line in the
 buffer and therefore said nothing, and the fold indicator appeared
 beside leaves that have nothing to fold."
@@ -192,35 +192,35 @@ beside leaves that have nothing to fold."
 (defun herdr-dispatch--insert-leaf (line depth)
   "Insert LINE at DEPTH as the body of the section being inserted.
 
-Plainly, without `magit-insert-heading\\=': a pane row and a worktree row
+Plainly, without `magit-insert-heading': a pane row and a worktree row
 are the content of the section above them, and it is the contrast with
 that section\\='s heading that makes the tree read as a tree.  The section
 itself is still created around this line, with its own type and value,
 because every verb resolves the object under point by walking up from
-`magit-current-section\\=' — a leaf folded into its parent\\='s section would
-answer `RET\\=', `k\\=' and `R\\=' with its parent."
+`magit-current-section' — a leaf folded into its parent\\='s section would
+answer `RET', `k' and `R' with its parent."
   (insert (herdr-dispatch--indent line depth) ?\n))
 
 (defun herdr-dispatch--apply-fold (section)
-  "Give SECTION the appearance its `hidden\\=' slot already claims.
-Returns SECTION, so that it can wrap the `magit-insert-section\\=' that
+  "Give SECTION the appearance its `hidden' slot already claims.
+Returns SECTION, so that it can wrap the `magit-insert-section' that
 produced it.
 
-`magit-insert-section\\=' restores that slot from
-`magit-section-visibility-cache\\=', but nothing acts on it: the
+`magit-insert-section' restores that slot from
+`magit-section-visibility-cache', but nothing acts on it: the
 invisibility overlay and the fold indicator are written by
-`magit-section-hide\\=' and `magit-section-show\\=', and a redraw calls
+`magit-section-hide' and `magit-section-show', and a redraw calls
 neither.  So a folded workspace came back from every redraw with its
 panes on screen and its slot still claiming it was folded, which made
 the next \\[magit-section-toggle] on it appear to do nothing — it hid a
 section the buffer had already forgotten was open.  Adding the fold
 indicator without this would have made that visible rather than fixed:
-a `▸\\=' beside a heading whose children are plainly listed under it.
+a `▸' beside a heading whose children are plainly listed under it.
 
 Magit itself does not need this because its inserters defer hidden
-bodies through `magit-insert-section-body\\='.  That is not available
+bodies through `magit-insert-section-body'.  That is not available
 here: a body that is never inserted has no sections in it, and
-`herdr-dispatch--position-restore\\=' has to find the section point was in
+`herdr-dispatch--position-restore' has to find the section point was in
 whether or not its parent is folded."
   (if (oref section hidden)
       (magit-section-hide section)
@@ -267,7 +267,7 @@ foldable headings."
   '(herdr-machine herdr-machines herdr-queue
                   herdr-workspace herdr-pane herdr-worktree herdr-worktrees)
   "The section types a verb can be aimed at.
-Every type `herdr-tree-build\\=' draws.  A section of any other type - the
+Every type `herdr-tree-build' draws.  A section of any other type - the
 buffer\\='s root, the header - is not a target, and the verbs say so.")
 
 (cl-defstruct (herdr-dispatch-target
@@ -275,23 +275,23 @@ buffer\\='s root, the header - is not a target, and the verbs say so.")
                (:copier nil))
   "What a verb is aimed at: one row, resolved once.
 
-Each of the four verbs used to re-derive this in a hand-ordered `cond\\='
+Each of the four verbs used to re-derive this in a hand-ordered `cond'
 of its own, and the order was the interface - the heading arms had to
 sit above the pane and workspace arms or a heading swallowed its own
 children, a fix that had to be applied in four places at once.
 Resolving to the INNERMOST section carrying a herdr type answers the
-question once, and a `pcase\\=' over the answer cannot be mis-ordered.
+question once, and a `pcase' over the answer cannot be mis-ordered.
 
-TYPE is one of `herdr-dispatch-target-types\\='.  VALUE is the identifier
+TYPE is one of `herdr-dispatch-target-types'.  VALUE is the identifier
 the row carries.  RECORD is what the cache knows VALUE by - the pane,
 the workspace, the WorktreeInfo - and nil for a heading, for a row
 naming only a path, and for a row the cache has not caught up with.
 WORKSPACE is the workspace section the row sits INSIDE, which is not its
 own value: a worktree row sits inside the repository whose list it was
-expanded from, and reaching for one when you meant the other is how `k\\='
+expanded from, and reaching for one when you meant the other is how `k'
 came to remove the workspace point was standing in.  Nesting only - a
-pane\\='s own `workspace_id\\=' is a different question, asked by
-`herdr-dispatch--terminal-workspace\\=' and by nothing else, because the
+pane\\='s own `workspace_id' is a different question, asked by
+`herdr-dispatch--terminal-workspace' and by nothing else, because the
 verbs that create things must refuse a row that names no workspace on
 screen rather than reach through a record for one.
 
@@ -325,7 +325,7 @@ on whichever server the user looked at next."
     (_ nil)))
 
 (defun herdr-dispatch-target-at-point ()
-  "Return what point is on as a `herdr-dispatch-target\\=', or nil.
+  "Return what point is on as a `herdr-dispatch-target', or nil.
 The connection is resolved here with everything else the row means, so
 that a verb acts on the server the row came from rather than on whatever
 the resolver would answer by the time the verb runs."
@@ -342,9 +342,9 @@ the resolver would answer by the time the verb runs."
        :connection connection))))
 
 (defun herdr-dispatch--resolve-connection ()
-  "Answer `herdr-current-connection\\=' from the row at point.
-On `herdr-connection-resolvers\\=', so that a verb invoked by name rather
-than through `herdr-dispatch-target-at-point\\=' still reaches the server
+  "Answer `herdr-current-connection' from the row at point.
+On `herdr-connection-resolvers', so that a verb invoked by name rather
+than through `herdr-dispatch-target-at-point' still reaches the server
 the row came from.  Nil anywhere but the dashboard, and nil on a row
 carrying nothing, so the resolver falls through."
   (when (derived-mode-p 'herdr-dispatch-mode)
@@ -356,7 +356,7 @@ carrying nothing, so the resolver falls through."
 (defun herdr-dispatch--row-connection (section)
   "Return the connection SECTION\\='s row came from.
 
-The enclosing `herdr-machine\\=' row names it.  With one connection there
+The enclosing `herdr-machine' row names it.  With one connection there
 is no such row — nothing draws a level that says nothing — and the sole
 connection is the answer.
 
@@ -382,7 +382,7 @@ both sides still agree on."
 
 (defun herdr-dispatch--target-type (target)
   "Return TARGET\\='s type, or nil when point is on no row at all.
-The nil arm is what every verb\\='s `pcase\\=' ends on."
+The nil arm is what every verb\\='s `pcase' ends on."
   (and target (herdr-dispatch-target-type target)))
 
 (defun herdr-dispatch--aimed-at (target type what)
@@ -392,10 +392,10 @@ The nil arm is what every verb\\='s `pcase\\=' ends on."
     (user-error "herdr: point is not on %s" what)))
 
 (defun herdr-dispatch--protect (fn)
-  "Call FN, reporting a `herdr-error\\=' rather than letting it escape.
+  "Call FN, reporting a `herdr-error' rather than letting it escape.
 
 A stale cache is the usual cause — the pane closed while you were
-looking at it — so `not_found\\=' reconciles and redraws before reporting.
+looking at it — so `not_found' reconciles and redraws before reporting.
 Seeing a correct tree alongside the message is the difference between
 \"that pane is gone\" and an opaque failure."
   (condition-case err
@@ -412,7 +412,7 @@ Seeing a correct tree alongside the message is the difference between
 
 (defmacro herdr-dispatch-defverb (name args docstring &rest body)
   "Define NAME as an interactive command taking ARGS, running BODY.
-BODY is wrapped in `herdr-dispatch--protect\\=', so a server error is
+BODY is wrapped in `herdr-dispatch--protect', so a server error is
 reported rather than raised.  DOCSTRING documents the command."
   (declare (indent 3) (doc-string 3))
   `(defun ,name ,args
@@ -444,7 +444,7 @@ The marker is what stops the next of many refreshes asking again."
 
 (defun herdr-dispatch--worktrees-unanswered-reason (connection key)
   "Return why KEY was cached without an answer, or nil.
-`error\\=' waits for \\[herdr-dispatch-refresh]; `no-directory\\=' is retried
+`error' waits for \\[herdr-dispatch-refresh]; `no-directory' is retried
 as soon as a directory exists.  Collapsing the two loses that."
   (alist-get key (herdr-connection-worktrees-unanswered connection)
              nil nil #'equal))
@@ -497,11 +497,11 @@ the whole cache is invalidated."
                           (herdr-connection-worktrees-unanswered connection))))
 
 (defun herdr-dispatch--worktrees-received (connection key generation listing error)
-  "Cache LISTING as KEY\\='s `worktree.list\\=' reply and ask for a redraw.
+  "Cache LISTING as KEY\\='s `worktree.list' reply and ask for a redraw.
 
-The whole reply, not its `worktrees\\=' array alone: `source.repo_root\\='
+The whole reply, not its `worktrees' array alone: `source.repo_root'
 states which repository the listing was taken from, which
-`herdr-tree--workspace-repository\\=' would otherwise have to infer by
+`herdr-tree--workspace-repository' would otherwise have to infer by
 scanning for the entry that is not a linked worktree.
 
 GENERATION is the connection\\='s worktrees generation when the request
@@ -515,7 +515,7 @@ cause is a workspace directory that is not a git repository, which will
 fail identically forever, and asking again on every redraw is a request
 per workspace several times a second for as long as the dashboard is
 open.  The workspace is remembered in
-`herdr-dispatch--worktrees-unanswered-reason\\=' instead, which
+`herdr-dispatch--worktrees-unanswered-reason' instead, which
 \\[herdr-dispatch-refresh] retries — so the entry costs nothing to
 correct and is not permanent.  It is not retried any sooner than that,
 because nothing the dashboard can observe says the answer would differ:
@@ -524,7 +524,7 @@ that one has become a git repository.
 
 Called from a process sentinel, where a signal would be unhandled and
 land in the event stream\\='s filter, so nothing here may signal: the
-server\\='s error arrives as data rather than as a `herdr-error\\=', and a
+server\\='s error arrives as data rather than as a `herdr-error', and a
 dashboard killed since the request went out is a redraw not scheduled
 rather than a buffer written to."
   (when (equal generation (herdr-connection-worktrees-generation connection))
@@ -543,8 +543,8 @@ rather than a buffer written to."
 (defun herdr-dispatch--fetch-worktrees (connection key directory)
   "Ask for KEY\\='s worktrees, which live in DIRECTORY.
 
-A nil DIRECTORY caches as `no-directory\\=' rather than as a failure, so
-`herdr-dispatch--request-worktrees\\=' asks again the moment a pane gives
+A nil DIRECTORY caches as `no-directory' rather than as a failure, so
+`herdr-dispatch--request-worktrees' asks again the moment a pane gives
 the workspace one.
 
 Asynchronous: this runs in the refresh path, driven by the event stream,
@@ -552,14 +552,14 @@ where a blocking round trip stalls the whole dashboard.  TIMEOUT is
 passed client-side, unlike the herdr-cmd.el callers that bind
 server-side, because nothing here waits out a server that accepted the
 connection and never answered.  A timeout then reaches
-`herdr-dispatch--worktrees-received\\=' as an ordinary error and
-`herdr-dispatch--retry-unanswered-worktrees\\=' cures it.
+`herdr-dispatch--worktrees-received' as an ordinary error and
+`herdr-dispatch--retry-unanswered-worktrees' cures it.
 
-Catch plain `error\\=', not just `herdr-error\\=': an unreachable socket
+Catch plain `error', not just `herdr-error': an unreachable socket
 signals the latter, but a peer closing between connect and send makes
-`process-send-string\\=' signal the former.  Either escaping leaves the
+`process-send-string' signal the former.  Either escaping leaves the
 pending marker set and a workspace wedged behind it, and the refresh
-callers are not inside `herdr-dispatch--protect\\='."
+callers are not inside `herdr-dispatch--protect'."
   (if (null directory)
       (progn
         (setf (alist-get key (herdr-connection-worktrees-unanswered connection)
@@ -602,8 +602,8 @@ skipped redraw means the tree just built equals the tree on screen, and a
 tree built while no worktrees are known goes on equalling itself — so
 keying the fetch to the redraw would leave a workspace unasked forever.
 A workspace is still only asked once:
-`herdr-dispatch--worktrees-answered-p\\=' covers the ones already answered
-and `herdr-dispatch--worktrees-in-flight-p\\=' the ones being answered now.
+`herdr-dispatch--worktrees-answered-p' covers the ones already answered
+and `herdr-dispatch--worktrees-in-flight-p' the ones being answered now.
 
 The exception is a workspace that was cached empty only because no
 directory could be derived for it, which is the state a workspace is in
@@ -611,7 +611,7 @@ between the event announcing it and the event giving it its first pane.
 Waiting for \\[herdr-dispatch-refresh] there would be the reported bug in
 another costume — worktrees that appear only when a key is pressed — so
 such an entry is dropped as soon as a directory exists.  This costs a
-`herdr-state-workspace-directory\\=' per redraw, which is a walk of the
+`herdr-state-workspace-directory' per redraw, which is a walk of the
 pane list rather than a round trip, and it cannot loop: the entry that
 replaces it is either an answer or a failure, and neither is retried
 here."
@@ -628,13 +628,13 @@ here."
 
 (defun herdr-dispatch--retry-unanswered-worktrees (connection)
   "Forget every workspace that has no answer, and ask again.
-The next `herdr-dispatch--request-worktrees\\=' asks them.  Only those: a
+The next `herdr-dispatch--request-worktrees' asks them.  Only those: a
 repository that genuinely has no worktrees keeps its entry, so
 \\[herdr-dispatch-refresh] does not re-ask the whole session.
 
 A request still in flight counts as unanswered, and this is the only
 thing that can rescue one before its own timeout would.
-`herdr-dispatch--fetch-worktrees\\=' passes `herdr-rpc-timeout\\=', so a
+`herdr-dispatch--fetch-worktrees' passes `herdr-rpc-timeout', so a
 server that accepts the connection and never replies now surfaces on its
 own as a timeout error a few seconds later — but until it does, the
 pending marker is exactly what stops the workspace being asked again, and
@@ -643,7 +643,7 @@ that window.  Clearing it here is what makes the keystroke an immediate
 cure rather than a no-op until the timeout catches up.
 
 The generation must move with it.  Clearing the marker while a reply is
-still on the wire is the same race `herdr-dispatch--forget-worktrees\\='
+still on the wire is the same race `herdr-dispatch--forget-worktrees'
 describes: the reply would land after the refetch had claimed a new
 marker, clear a marker it no longer owns, and leave the refetch
 unguarded for a third request.  Bumping the generation drops that reply
@@ -658,12 +658,12 @@ whole instead."
 
 (defun herdr-dispatch--invalidate-worktrees (connection kind _data)
   "Drop the worktree cache when KIND changed the set of worktrees.
-Also unhooks from `herdr-state-change-functions\\=' once the dispatcher's buffer
-is gone, matching `herdr-dispatch--refresh-hook\\='.
+Also unhooks from `herdr-state-change-functions' once the dispatcher's buffer
+is gone, matching `herdr-dispatch--refresh-hook'.
 
-`workspace_closed\\=' belongs on this list even though it announces no
+`workspace_closed' belongs on this list even though it announces no
 worktree.  A cached listing outlived the workspace it described for the
-rest of the session, and `herdr-dispatch--worktree-record\\=' flattens
+rest of the session, and `herdr-dispatch--worktree-record' flattens
 every cached listing together before searching it, so a dead
 workspace\\='s entry could still supply the record a worktree row
 resolved to.
@@ -672,13 +672,13 @@ Whole-cache rather than the closing workspace\\='s entry alone, which is
 the arrangement the worktree events already have and for one more
 reason besides theirs.  Theirs: the events carry a worktree, not the
 workspace whose listing it belongs to.  This one\\='s: every OTHER
-workspace\\='s listing carries `open_workspace_id\\=', so when a worktree
+workspace\\='s listing carries `open_workspace_id', so when a worktree
 workspace closes, its parent repository\\='s cached listing goes on
 saying \"open as wX\" for a workspace that no longer exists — and
 dropping only the closing workspace\\='s own entry would leave exactly
 that stale claim in place, on the row a user would then press RET on.
 
-The cost is one asynchronous `worktree.list\\=' per remaining workspace,
+The cost is one asynchronous `worktree.list' per remaining workspace,
 on an event that fires when a workspace closes and at no other time."
   ;; Only the connection that notified.  Its event says nothing about
   ;; any other server's worktrees, and dropping theirs would cost one
@@ -694,13 +694,13 @@ on an event that fires when a workspace closes and at no other time."
 
 A worktree section carries only its path as its value; the branch, and
 whether herdr has already opened it as a workspace, live in the cached
-record.  Resolved once, into the RECORD of `herdr-dispatch-target\\=', so
+record.  Resolved once, into the RECORD of `herdr-dispatch-target', so
 two verbs on the same row cannot disagree about which worktree it names.
 
 Searches CONNECTION\\='s listings flattened together, because a row knows
 its path and not which listing answered for it.  One connection\\='s, not
 every connection\\='s: a path is a path on some machine, and two servers
-can each hold a `~/workspace/repo\\=' that is not the same directory and
+can each hold a `~/workspace/repo' that is not the same directory and
 not the same repository."
   (seq-find (lambda (candidate)
               (equal path (herdr-worktree-path candidate)))
@@ -719,11 +719,11 @@ renderer declines to draw, so a stale row cannot be acted on.
 Three refusals, in the order the answers arrive.  A row with no cached
 record first, or the others read fields off nil and announce that a row
 whose record was merely missing is the repository\\='s own checkout.  Then
-`herdr-worktree-linked-p\\=', and `herdr-tree-own-workspace-p\\=' against
+`herdr-worktree-linked-p', and `herdr-tree-own-workspace-p' against
 the workspace the row sits inside.  The record and the row come from
 one connection\\='s listings, so bare ids compare soundly.
 
-The last is the guard that matters: `k\\=' on such a row otherwise
+The last is the guard that matters: `k' on such a row otherwise
 resolves to the workspace the row is nested inside."
   (unless (eq 'herdr-worktree (herdr-dispatch--target-type target))
     ;; `M-x herdr-dispatch-open-worktree' off any row lands here, and a
@@ -750,15 +750,15 @@ resolves to the workspace the row is nested inside."
 (defun herdr-dispatch--worktree-workspace (target)
   "Return the id of the workspace TARGET\\='s worktree is open as.
 
-`worktree.remove\\=' and `workspace.focus\\=' both address a workspace, and a
+`worktree.remove' and `workspace.focus' both address a workspace, and a
 worktree that herdr has not opened as one has no such id.  The enclosing
 workspace is not a substitute: it is the repository whose worktree list
 this row was expanded from, a different object entirely — reaching for it
-is how `k\\=' came to remove the very workspace point was standing in.  So
+is how `k' came to remove the very workspace point was standing in.  So
 this refuses rather than guesses.
 
 Whether the row may be acted on at all is settled first, by
-`herdr-dispatch--checked-worktree\\='.  Only the question this function\\='s
+`herdr-dispatch--checked-worktree'.  Only the question this function\\='s
 own name asks is left here."
   (let ((worktree (herdr-dispatch--checked-worktree target)))
     (or (herdr-worktree-open-workspace-id worktree)
@@ -769,8 +769,8 @@ own name asks is left here."
 
 (defun herdr-dispatch--refuse-heading (complaint)
   "Refuse a verb on a grouping heading, COMPLAINT saying which.
-Covers a workspace\\='s `main\\=' group and the `Inactive (N)\\=' group, the
-two types in `herdr-dispatch-target-types\\=' that name a list rather than
+Covers a workspace\\='s `main' group and the `Inactive (N)' group, the
+two types in `herdr-dispatch-target-types' that name a list rather than
 a thing.
 
 A heading names a list, not a herdr object, and every verb here acts on
@@ -779,9 +779,9 @@ something with an id.
 Say which heading, rather than falling through.  A verb with no arm for
 a heading type reaches its own \"nothing at point\" arm, which is safe but
 tells you nothing about the row you were standing on.  It used to be
-worse than unhelpful: resolution walked up from point, so `k\\=' and `R\\='
+worse than unhelpful: resolution walked up from point, so `k' and `R'
 on a heading found the enclosing workspace and reached
-`workspace.close\\=' and `workspace.rename\\=' against the repository the
+`workspace.close' and `workspace.rename' against the repository the
 heading belonged to.
 
 Folding is a heading\\='s one useful action, hence the hint."
@@ -790,8 +790,8 @@ Folding is a heading\\='s one useful action, hence the hint."
 (herdr-dispatch-defverb herdr-dispatch-open-worktree (&optional target)
   "Open the worktree at point as a workspace.
 
-Resolves through `herdr-dispatch--checked-worktree\\=' like every
-other worktree verb.  It cannot use `herdr-dispatch--worktree-workspace\\='
+Resolves through `herdr-dispatch--checked-worktree' like every
+other worktree verb.  It cannot use `herdr-dispatch--worktree-workspace'
 itself, which refuses a worktree that is not open as a workspace —
 opening exactly that is what this command is for — but the checks that
 say whether the row may be acted on at all are the same ones, and
@@ -816,7 +816,7 @@ others refuse."
 A pane is focused and its buffer shown.  A workspace is focused and then
 followed to whichever pane herdr lands on, which is the server\\='s
 choice rather than ours.  A worktree is opened as a workspace.  A
-heading has nowhere to go; see `herdr-dispatch--refuse-heading\\='."
+heading has nowhere to go; see `herdr-dispatch--refuse-heading'."
   (let ((target (herdr-dispatch-target-at-point)))
     (pcase (herdr-dispatch--target-type target)
       ('herdr-pane (herdr-pane-focus (herdr-dispatch-target-value target)))
@@ -861,7 +861,7 @@ pane, which is the thing you are looking at, rather than its
 workspace.  A worktree has no rename operation at all, so it is refused
 rather than allowed to fall through to the repository workspace whose
 list it was expanded from — and neither has the heading that groups
-them; see `herdr-dispatch--refuse-heading\\='."
+them; see `herdr-dispatch--refuse-heading'."
   (let ((target (herdr-dispatch-target-at-point)))
     (pcase (herdr-dispatch--target-type target)
       ('herdr-pane
@@ -880,17 +880,17 @@ them; see `herdr-dispatch--refuse-heading\\='."
 
 (herdr-dispatch-defverb herdr-dispatch-close ()
   "Close or remove the thing at point.
-The underlying commands — `herdr-pane-close\\=', `herdr-workspace-close\\='
-and `herdr-worktree-remove\\=' — all prompt for confirmation, so this adds
+The underlying commands — `herdr-pane-close', `herdr-workspace-close'
+and `herdr-worktree-remove' — all prompt for confirmation, so this adds
 no second prompt.
 
 A worktree is removed as the workspace herdr has opened it as, which is
-the only handle `worktree.remove\\=' has on it.  Not the enclosing
+the only handle `worktree.remove' has on it.  Not the enclosing
 workspace: that is the repository whose worktree list this row was
 expanded from, and removing it would destroy something other than the row
 under point.  The heading that groups the rows is refused outright, for
 the same reason and with more at stake; see
-`herdr-dispatch--refuse-heading\\='."
+`herdr-dispatch--refuse-heading'."
   (let ((target (herdr-dispatch-target-at-point)))
     (pcase (herdr-dispatch--target-type target)
       ('herdr-pane (herdr-pane-close (herdr-dispatch-target-value target)))
@@ -943,7 +943,7 @@ the repository the user was pointing past."
 
 The section it sits in, or - for a pane row drawn outside any workspace
 section, which the agents buffer does - the workspace the pane\\='s own
-record names.  Only `n\\=' asks this: `w\\=' and `%\\=' create things against a
+record names.  Only `n' asks this: `w' and `%' create things against a
 workspace on screen and refuse a row that shows none, which is what they
 did before there was a resolver to ask."
   (or (herdr-dispatch-target-workspace target)
@@ -953,7 +953,7 @@ did before there was a resolver to ask."
 
 (defun herdr-dispatch--workspace-target-pane (target)
   "Return a fresh tab\\='s pane in the workspace TARGET sits in, or refuse.
-`herdr-cmd--new-tab-pane\\=' reads a nil workspace as \"whichever the
+`herdr-cmd--new-tab-pane' reads a nil workspace as \"whichever the
 server has focused\", which this buffer must never answer silently."
   (let ((workspace (and target (herdr-dispatch--terminal-workspace target))))
     (unless workspace
@@ -989,7 +989,7 @@ An empty base ref means the current HEAD and is omitted from the call."
 (defun herdr-dispatch--header (connections)
   "Return the header line summarising CONNECTIONS.
 
-Ends with `herdr-tree-status-summary\\=' rather than an agent count: a
+Ends with `herdr-tree-status-summary' rather than an agent count: a
 count that is always true stops being read, the same reasoning that
 already keeps idle out of the modeline segment.
 
@@ -1009,7 +1009,7 @@ there are several: one machine needs no telling that it is the only one."
             (if (string-empty-p summary) "" (concat "  " summary)))))
 
 (defun herdr-dispatch--count (n noun)
-  "Return N and NOUN, pluralised.  Every noun the header counts adds `s\\='."
+  "Return N and NOUN, pluralised.  Every noun the header counts adds `s'."
   (format "%d %s%s" n noun (if (= n 1) "" "s")))
 
 (defun herdr-dispatch--position-at (position)
@@ -1025,9 +1025,9 @@ instead; the header, on the first line, is the root legitimately."
       (cons section (magit-section-get-relative-position section)))))
 
 (defun herdr-dispatch--position-restore (position)
-  "Return where POSITION, from `herdr-dispatch--position-at\\=', now lands.
+  "Return where POSITION, from `herdr-dispatch--position-at', now lands.
 The same section, else a sibling or ancestor that survived the redraw;
-`magit-section-goto-successor\\=' decides."
+`magit-section-goto-successor' decides."
   (save-excursion
     (apply #'magit-section-goto-successor position)
     (point)))
@@ -1045,7 +1045,7 @@ workspace is being drawn.  Requests go out whether or not this call
 redraws, and each reply schedules its own redraw.  FORCE additionally
 retries the workspaces whose last fetch went unanswered.
 
-`herdr-tree--steady-title\\=' is what lets the skip engage at all while an
+`herdr-tree--steady-title' is what lets the skip engage at all while an
 agent is working."
   (interactive (list t))
   (when-let* ((buffer (get-buffer herdr-dispatch-buffer-name))
@@ -1157,14 +1157,14 @@ they are being shown together."
   "Redraw the dispatcher shortly, coalescing a burst of events into one.
 
 A pending timer is KEPT, not cancelled and re-armed.  The re-arm shape
-\(which `herdr-term--schedule-directory-refresh\\=' still uses, correctly
+\(which `herdr-term--schedule-directory-refresh' still uses, correctly
 — the cache's own repair timer covers what the deferral misses\) starved
 this redraw outright: the stream's median event gap is 0.105s and the
 debounce 0.2s, so while an agent produced output every reschedule pushed the
 redraw past the next event and the dashboard stayed stale for exactly
 as long as something was happening on it.  A kept timer fires one
 debounce after the first event of a burst, bounding staleness at
-`herdr-dispatch-refresh-debounce\\=' instead of at the length of the
+`herdr-dispatch-refresh-debounce' instead of at the length of the
 burst."
   (unless herdr-dispatch--refresh-timer
     (setq herdr-dispatch--refresh-timer
@@ -1185,8 +1185,8 @@ burst."
   "Show the herdr dispatcher: workspaces, tabs, panes and agents.
 
 Worktree knowledge belongs to an open dashboard, so opening one starts
-from none.  While the dashboard is up, `herdr-dispatch--invalidate-worktrees\\='
-is on `herdr-state-change-functions\\=' and keeps the listings honest; when the
+from none.  While the dashboard is up, `herdr-dispatch--invalidate-worktrees'
+is on `herdr-state-change-functions' and keeps the listings honest; when the
 buffer dies that hook takes itself off, so a worktree created between
 closing the dashboard and reopening it is one nothing here ever hears
 about.  \\[herdr-dispatch-refresh] is no cure — it re-asks the workspaces

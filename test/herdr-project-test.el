@@ -113,7 +113,7 @@ workspace, not make one for the subdirectory it happened to be in."
     (should (equal "w1" (alist-get 'workspace_id params)))))
 
 (ert-deftest herdr-opens-the-dashboard-after-running-the-start-sequence ()
-  "`herdr\\=' runs the start sequence; `herdr-agents\\=' does not."
+  "`herdr' runs the start sequence; `herdr-agents' does not."
   (should (commandp 'herdr))
   (let (opened started)
     (cl-letf (((symbol-function 'herdr-start) (lambda () (setq started t)))
@@ -175,14 +175,14 @@ workspace, not make one for the subdirectory it happened to be in."
       (kill-buffer neighbor))))
 
 (ert-deftest herdr-requires-the-escape-hatch-rather-than-autoloading-it ()
-  "`herdr-call\\=' used to arrive with `herdr-transient\\=' and answered
-`void-function\\=' once that went.  Asserted on the `require\\=', because
-`fboundp\\=' is true here whichever way the symbol arrived."
+  "`herdr-call' used to arrive with `herdr-transient' and answered
+`void-function' once that went.  Asserted on the `require', because
+`fboundp' is true here whichever way the symbol arrived."
   (should (memq 'herdr-call features))
   (should (commandp 'herdr-call)))
 
 (ert-deftest herdr-command-map-is-the-only-menu ()
-  "`herdr-menu\\=' and `herdr-transient\\=' were surfaces over commands this
+  "`herdr-menu' and `herdr-transient' were surfaces over commands this
 map and the dashboard already reach."
   (should-not (fboundp 'herdr-menu))
   (should-not (fboundp 'herdr-transient))

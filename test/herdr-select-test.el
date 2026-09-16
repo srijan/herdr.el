@@ -50,7 +50,7 @@ findable by the name it is known by as well as by what it is doing."
 ;;; Candidates carry the name, not only the id
 
 (ert-deftest herdr-select-pane-candidates-carry-the-readable-name ()
-  "`completing-read\\=' matches candidates and never annotations, so a name
+  "`completing-read' matches candidates and never annotations, so a name
 that lives only in an annotation is a name you cannot type to find its
 pane.  The picker offered bare ids and could be searched by nothing
 else."
@@ -103,7 +103,7 @@ pane map takes an id."
                   'herdr-pane "w1:p1  ▶ claude    Lantern  /tmp"))))
 
 (ert-deftest herdr-select-workspace-candidates-carry-the-label ()
-  "The picker offered `w2P\\=' and annotated it `veda\\=', so the only
+  "The picker offered `w2P' and annotated it `veda', so the only
 searchable half of a workspace row was the half that means nothing.
 Four commands read this picker: close, focus, rename and worktree
 remove."
@@ -232,7 +232,7 @@ follow Emacs."
         (should (string-prefix-p "/tmp/elsewhere/" (nth 2 offered)))))))
 
 (ert-deftest herdr-select-place-works-without-project-el ()
-  "Unbound and restored rather than stubbed: `fboundp\\=' is what the guard
+  "Unbound and restored rather than stubbed: `fboundp' is what the guard
 asks, and a stub that answers calls cannot make it answer nil."
   (let ((offered nil)
         (saved (when (fboundp 'project-known-project-roots)
@@ -293,7 +293,7 @@ asks, and a stub that answers calls cannot make it answer nil."
       (should (equal "/tmp/my project/" (herdr-select-place))))))
 
 (ert-deftest herdr-select-place-refuses-empty-input ()
-  "`completing-read\\=' hands back the empty string on empty input whatever
+  "`completing-read' hands back the empty string on empty input whatever
 REQUIRE-MATCH says, and no row can match it."
   (herdr-test-with-state (:cache (herdr-state-from-snapshot '((workspaces . (((workspace_id . "w1")))))))
     (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)
@@ -302,7 +302,7 @@ REQUIRE-MATCH says, and no row can match it."
       (should-error (herdr-select-place) :type 'user-error))))
 
 (ert-deftest herdr-select-pane-answers-empty-input-with-nothing ()
-  "An empty row splits to nil, and `herdr-call\\=' reads that as an optional
+  "An empty row splits to nil, and `herdr-call' reads that as an optional
 parameter left out.  The place picker\\='s refusal must not spread here."
   (herdr-select-test-with-state '(((pane_id . "w1:p1")))
     (cl-letf (((symbol-function 'herdr-state-refresh) #'ignore)

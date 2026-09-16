@@ -70,7 +70,8 @@
     (nreverse found)))
 
 (defun herdr-lint--stray-equals (files)
-  "Return FILES\\=' docstrings that render a stray `=\\=' or a literal `\\=\\='."
+  "Return the places in FILES where a doc quote is under-escaped.
+One backslash too few renders as an equals sign rather than a quote."
   (let ((found nil))
     (dolist (file files)
       (with-temp-buffer

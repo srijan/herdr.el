@@ -32,7 +32,7 @@ OVERRIDES is spliced into the snapshot alist ahead of the defaults."
 (defun herdr-tree-test--worktree-rows (children)
   "Return the worktree rows a workspace node\\='s CHILDREN hold.
 
-They sit under one `herdr-worktrees\\=' heading now rather than beside the
+They sit under one `herdr-worktrees' heading now rather than beside the
 panes, so this looks inside it.  A nested workspace is spliced in where
 its worktree row would have gone, so it counts as one too."
   (seq-filter (lambda (node)
@@ -44,7 +44,7 @@ its worktree row would have gone, so it counts as one too."
                           children)))
 
 (defun herdr-tree-test--pane-nodes (workspace)
-  "Return the pane nodes of WORKSPACE, a node from `herdr-tree-build\\='.
+  "Return the pane nodes of WORKSPACE, a node from `herdr-tree-build'.
 Always its own children now: there is no tab group between them."
   (herdr-tree-test--nodes-of-type 'herdr-pane (nth 3 workspace)))
 
@@ -115,7 +115,7 @@ replaced never fired and the heading rendered with no name at all."
     (should-not (string-match-p "w2F" line))))
 
 (ert-deftest herdr-tree-workspace-line-abbreviates-a-home-relative-directory ()
-  "A known-project row already shows `~/\\=' for free, since
+  "A known-project row already shows `~/' for free, since
 `project-known-project-roots' hands those back pre-abbreviated; a
 workspace's directory is derived from a pane's cwd instead and had
 nothing shortening it, so the two looked inconsistent side by side."
@@ -131,9 +131,9 @@ nothing shortening it, so the two looked inconsistent side by side."
 (ert-deftest herdr-tree-counts-children-in-parentheses ()
   "magit\\='s idiom, because the dashboard is read next to magit-status.
 
-`Unstaged changes (1)\\=' is a heading that owns a countable number of
-children; `.emacs.d (2)\\=' says the same thing about the same kind of
-line.  A `2 panes\\=' column in the middle of the line said it too, but
+`Unstaged changes (1)' is a heading that owns a countable number of
+children; `.emacs.d (2)' says the same thing about the same kind of
+line.  A `2 panes' column in the middle of the line said it too, but
 said it in a place the eye has to travel to and in a shape shared with
 the leaf rows, which own nothing.  Both halves are asserted: the count is
 in parentheses on the label, and the column it replaced is gone rather
@@ -142,7 +142,7 @@ than duplicated beside it.
 Each row counts what it owns.  The workspace row itself owns no count
 any more: it names the workspace, the branch and the directory, which is
 what herdr\\='s own sidebar shows, and the checkouts it used to count are
-behind the `worktrees (N)\\=' heading that actually holds them."
+behind the `worktrees (N)' heading that actually holds them."
   (let* ((worktrees '(("w1" . ((worktrees . (((path . "/tmp/wt")
                                 (is_linked_worktree . t)
                                 (branch . "feat/x"))))))))
@@ -231,32 +231,32 @@ assertion above while the dashboard went on redrawing once a second."
 
 (defun herdr-tree-test--face-of (line text)
   "Return the face LINE carries where TEXT begins in it.
-Read off `font-lock-face\\=', which is only half the answer — see
-`herdr-tree-faces-a-field-with-both-properties\\=' for the other half and
+Read off `font-lock-face', which is only half the answer — see
+`herdr-tree-faces-a-field-with-both-properties' for the other half and
 for why one property alone renders as nothing."
   (get-text-property (string-match text line) 'font-lock-face line))
 
 (ert-deftest herdr-tree-faces-a-field-with-both-properties ()
   "A face has to be written twice or it is invisible half the time.
 
-`face\\=' alone is erased: `magit-section-mode\\=' sets
-`font-lock-defaults\\=', so `font-lock-mode\\=' comes on in the dashboard,
-and `font-lock-default-unfontify-region\\=' removes `face\\=' before the
+`face' alone is erased: `magit-section-mode' sets
+`font-lock-defaults', so `font-lock-mode' comes on in the dashboard,
+and `font-lock-default-unfontify-region' removes `face' before the
 line is first fontified.  That was the original bug, and the fix moved
-everything to `font-lock-face\\='.
+everything to `font-lock-face'.
 
-`font-lock-face\\=' alone renders as nothing: it is not a display
-property, only a `char-property-alias-alist\\=' entry that
-`font-lock-mode\\=' installs, so with font-lock off it means nothing to
-redisplay.  That was the next bug, verified with `face-at-point\\='
+`font-lock-face' alone renders as nothing: it is not a display
+property, only a `char-property-alias-alist' entry that
+`font-lock-mode' installs, so with font-lock off it means nothing to
+redisplay.  That was the next bug, verified with `face-at-point'
 answering nil across the whole dashboard.  magit sets both properties
 for exactly this reason.
 
-Neither failure is observable in batch — `font-lock-mode\\=' forces
-itself off under `noninteractive\\=', which is why 302 tests passed over
+Neither failure is observable in batch — `font-lock-mode' forces
+itself off under `noninteractive', which is why 302 tests passed over
 a dashboard that rendered no faces at all.  The presence of both
 properties is what a batch test can see, so that is what this asserts,
-on a real pane row as well as on `herdr-tree--faced\\=' directly."
+on a real pane row as well as on `herdr-tree--faced' directly."
   (let ((faced (herdr-tree--faced "working" 'warning)))
     (should (eq 'warning (get-text-property 0 'font-lock-face faced)))
     (should (eq 'warning (get-text-property 0 'face faced))))
@@ -313,11 +313,11 @@ back in."
                 (get-text-property (1- (length line)) 'font-lock-face line)))))
 
 (ert-deftest herdr-tree-faces-do-not-make-two-equal-trees-differ ()
-  "Text properties must stay invisible to `equal\\='.
+  "Text properties must stay invisible to `equal'.
 
-`herdr-dispatch-refresh\\=' skips a redraw when the tree it just built
+`herdr-dispatch-refresh' skips a redraw when the tree it just built
 equals the one on screen, and the tree tests above compare lines with
-`equal\\=' and `string-match-p\\='.  Both would be wrong if a face could
+`equal' and `string-match-p'.  Both would be wrong if a face could
 change the identity of a string — which is the reason faces can live
 here at all rather than in the renderer."
   (let ((state (herdr-tree-test--state)))
@@ -328,7 +328,7 @@ here at all rather than in the renderer."
                    (herdr-tree--faced "working" 'success)))))
 
 (ert-deftest herdr-tree-agent-column-widens-to-fit-the-longest-label ()
-  "A fixed column truncates nothing — `%-Ns\\=' never cuts a longer
+  "A fixed column truncates nothing — `%-Ns' never cuts a longer
 string — but a label wider than the fixed width breaks alignment: every
 other row's status and pane_id columns drift out of place.  So the real
 assertion is that the status column starts at the same offset on every
@@ -394,8 +394,8 @@ offered no row to read, prompt or close it.  The flat listing this tree
 replaced could not lose a pane, so silence here is a regression, not a
 gap.
 
-Reachable rather than theoretical: `herdr-state' drops a `tab_created\\='
-event that carries no `tab\\=' payload, and a resync races the events
+Reachable rather than theoretical: `herdr-state' drops a `tab_created'
+event that carries no `tab' payload, and a resync races the events
 around it.  This is that state exactly — one workspace, one blocked pane,
 no tabs."
   (let ((state (herdr-state-from-snapshot
@@ -417,7 +417,7 @@ no tabs."
 (ert-deftest herdr-tree-flat-listing-ignores-whether-a-panes-tab-is-cached ()
   "The partial case that used to need dedicated orphan handling: some
 tabs known, one pane naming a tab that is not.  Flat listing filters
-panes by `workspace_id\\=' alone, so a pane whose tab the cache does not
+panes by `workspace_id' alone, so a pane whose tab the cache does not
 hold renders exactly like any other pane of its workspace."
   (let* ((state (herdr-tree-test--state
                  '(panes . (((pane_id . "w1:p1") (workspace_id . "w1")
@@ -433,7 +433,7 @@ hold renders exactly like any other pane of its workspace."
                    (nth 1 (nth 2 (herdr-tree-test--pane-nodes (car tree))))))))
 
 (defun herdr-tree-test--pane-ids (nodes)
-  "Return the id of every `herdr-pane\\=' node anywhere under NODES.
+  "Return the id of every `herdr-pane' node anywhere under NODES.
 Collected across the whole subtree rather than one level, so a pane
 rendered twice — once under its tab and again beside it — shows up as the
 duplicate it is instead of hiding at a level the test never looked at."
@@ -836,7 +836,7 @@ nest it under."
                       '("w1:p1" "claude" "idle"))))))
 
 (ert-deftest herdr-tree-status-summary-uses-the-established-order ()
-  "Statuses appear in `herdr-tree-noteworthy-statuses\\=' order — blocked,
+  "Statuses appear in `herdr-tree-noteworthy-statuses' order — blocked,
 then working, then done — regardless of the order agents were created in."
   (should (equal (concat "1" (herdr-tree-glyph "blocked")
                          "1" (herdr-tree-glyph "working")
@@ -855,7 +855,7 @@ then working, then done — regardless of the order agents were created in."
 
 (ert-deftest herdr-tree-workspace-row-shows-the-branch-it-is-on ()
   "herdr\\='s own sidebar names a workspace and the branch its checkout is
-on.  Only a `worktree.list\\=' reply carries a branch — no snapshot field
+on.  Only a `worktree.list' reply carries a branch — no snapshot field
 does — and the entry naming this workspace as its open workspace is the
 checkout to read it from, not whichever entry happens to come first."
   (let* ((tree (herdr-tree-build (herdr-tree-test--worktree-state "w1" "w2")
@@ -875,9 +875,9 @@ repository at all, shows no branch rather than a placeholder."
 (defun herdr-tree-test--queue-state (&rest specs)
   "Return a state whose agents are SPECS, each (ID STATUS SEQ).
 
-A spec of `done\\=' seeds the record as `idle\\=' and marks the pane unseen,
-because that is the only shape the server can produce: `done\\=' never
-crosses the wire, and a fixture writing it into `agent_status\\=' would
+A spec of `done' seeds the record as `idle' and marks the pane unseen,
+because that is the only shape the server can produce: `done' never
+crosses the wire, and a fixture writing it into `agent_status' would
 test a record herdr cannot send."
   (let ((state (herdr-state-from-snapshot
                 `((workspaces . (((workspace_id . "w1") (label . "web"))))
@@ -938,9 +938,9 @@ projection, cannot pass by agreeing with a fixture."
                                              '((pane_id . "w1:p1")))))))))))
 
 (ert-deftest herdr-tree-queue-reads-done-as-ready-and-keeps-unknown-apart ()
-  "herdr says `idle\\=' and `done\\=' both mean ready for input and uses its
-seen state to tell them apart, so `done\\=' is work nobody has looked at:
-READY.  `unknown\\=' keeps a heading of its own because herdr says it does
+  "herdr says `idle' and `done' both mean ready for input and uses its
+seen state to tell them apart, so `done' is work nobody has looked at:
+READY.  `unknown' keeps a heading of its own because herdr says it does
 not prove completion — it must not read as nothing to do."
   (let ((headings (mapcar (lambda (node) (nth 2 node))
                           (herdr-tree-queue-nodes
@@ -950,7 +950,7 @@ not prove completion — it must not read as nothing to do."
     (should (equal '("READY (1)" "UNKNOWN (1)") headings))))
 
 (ert-deftest herdr-tree-queue-puts-the-newest-news-first-in-a-section ()
-  "`state_change_seq\\=' is the only ordering a pane record carries: no
+  "`state_change_seq' is the only ordering a pane record carries: no
 field says when a change happened, so the highest seq is the most recent
 news and leads its group."
   (let* ((nodes (herdr-tree-queue-nodes
@@ -962,7 +962,7 @@ news and leads its group."
     (should (equal '("w1:p2" "w1:p3" "w1:p1") ids))))
 
 (ert-deftest herdr-tree-queue-rows-are-pane-nodes ()
-  "A queue row is a `herdr-pane\\=' node like any other, so every verb
+  "A queue row is a `herdr-pane' node like any other, so every verb
 already aimed at a pane row works on it with no arm of its own."
   (let ((row (car (nth 3 (car (herdr-tree-queue-nodes
                               (list (cons nil (herdr-tree-test--queue-state

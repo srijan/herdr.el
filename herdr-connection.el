@@ -44,8 +44,8 @@
 (defun herdr-connection--host (path)
   "Return (USER . HOST) for PATH\\='s TRAMP prefix, or nil when it is local.
 USER is nil when the path does not name one, which is why
-`herdr-connection--same-host-p\\=' compares users only when both sides
-have one: `/ssh:shadow:\\=' and `/ssh:me@shadow:\\=' may well be the same
+`herdr-connection--same-host-p' compares users only when both sides
+have one: `/ssh:shadow:' and `/ssh:me@shadow:' may well be the same
 machine, and refusing that would invent a distinction TRAMP does not
 make.  Two accounts that both name themselves are a different matter --
 they have different home directories and different herdr sockets."
@@ -54,14 +54,14 @@ they have different home directories and different herdr sockets."
       (cons (file-remote-p remote 'user) (downcase host)))))
 
 (defun herdr-connection--host-name (host)
-  "Return HOST, as `herdr-connection--host\\=' returns it, for a message."
+  "Return HOST, as `herdr-connection--host' returns it, for a message."
   (cond ((null host) "this machine")
         ((car host) (format "%s@%s" (car host) (cdr host)))
         (t (cdr host))))
 
 (defun herdr-connection--same-host-p (a b)
   "Return non-nil when A and B name the same account.
-A and B are what `herdr-connection--host\\=' returns.  Local matches
+A and B are what `herdr-connection--host' returns.  Local matches
 local.  A host matches the same host, and the users must match too when
 both sides name one."
   (and (equal (cdr a) (cdr b))
@@ -90,7 +90,7 @@ stripping it would hand the server a filename that resolves to
 something arbitrary.  A local path offered to a remote server is the
 same mistake the other way round.
 
-Signals `herdr-error\\=' on a mismatch rather than guessing, since every
+Signals `herdr-error' on a mismatch rather than guessing, since every
 guess here names a real directory on the wrong machine."
   (when path
     (let ((path-host (herdr-connection--host path))
@@ -109,7 +109,7 @@ guess here names a real directory on the wrong machine."
   "Alist of (NAME . CONNECTION) for every connection being followed.
 
 In registration order, which puts the local server first: it is the one
-`herdr-start\\=' makes, and the one a command with no other context
+`herdr-start' makes, and the one a command with no other context
 means.  Keyed by name because that is what a user types and what a
 failure has to be able to name.")
 
@@ -143,7 +143,7 @@ Replaces any connection of the same name in place, so that reconnecting
 under a name a user already knows does not leave two of them -- and
 stops the one it displaces, which replacing the cell alone did not.  An
 unregistered connection keeps its streams, its timers and its tunnel
-and is reachable by nothing, `herdr-disconnect\\=' included."
+and is reachable by nothing, `herdr-disconnect' included."
   (let ((name (herdr-connection-name connection)))
     (if-let* ((cell (assoc name herdr-connections)))
         (progn
@@ -176,7 +176,7 @@ must not stop the one taking its place from registering."
 Outranks the buffer.  A pane chosen by hand on one server means that
 server even when the command was typed in a terminal buffer belonging
 to another: ambient context loses to an explicit answer.  Cleared from
-`post-command-hook\\=', so it never survives the command that set it.")
+`post-command-hook', so it never survives the command that set it.")
 
 (defun herdr-connection-choose (connection)
   "Answer CONNECTION for the rest of this command, and return it."
@@ -187,9 +187,9 @@ to another: ambient context loses to an explicit answer.  Cleared from
 (defun herdr-connection--unchoose ()
   "Forget the chosen connection once its command is over.
 
-Not while a minibuffer is open.  `post-command-hook\\=' runs for the
+Not while a minibuffer is open.  `post-command-hook' runs for the
 commands inside a recursive edit too, so a command that picks a target
-and then asks `y-or-n-p\\=' used to lose its answer between the two and
+and then asks `y-or-n-p' used to lose its answer between the two and
 send the request to whatever resolved next.  Measured: the close went
 to the local server after picking a pane on the remote one."
   (when (zerop (minibuffer-depth))
@@ -259,9 +259,9 @@ answers."
 (defcustom herdr-connection-socket-directory (format "/tmp/herdr-%s" (user-uid))
   "Directory holding the local end of each forwarded remote socket.
 
-Under `/tmp\\=' rather than `temporary-file-directory\\=': macOS caps a
-unix socket path at 104 bytes and its temporary directory spends about
-half of that before the file name starts.  Per-uid, because /tmp is
+Under `/tmp' rather than the variable `temporary-file-directory': macOS
+caps a unix socket path at 104 bytes and its temporary directory spends
+about half of that before the file name starts.  Per-uid, because /tmp is
 shared."
   :type 'directory
   :group 'herdr)
@@ -289,20 +289,20 @@ user typed."
 (defun herdr-connection--tunnel-command (target local remote)
   "Return the argv forwarding TARGET\\='s REMOTE socket to LOCAL.
 
-`-N\\=' because nothing is being run: the forward is the whole point.
-`ExitOnForwardFailure\\=' is asked for anyway, though it catches nothing
+`-N' because nothing is being run: the forward is the whole point.
+`ExitOnForwardFailure' is asked for anyway, though it catches nothing
 here — OpenSSH binds a local unix socket at setup and only dials the
 remote when something connects to it, so a forward to a socket that does
 not exist starts exactly like one that does.  What it does catch is the
 local bind failing.
 
-`ServerAliveInterval\\=' because a forward that is only listening sends
+`ServerAliveInterval' because a forward that is only listening sends
 nothing on its own: a laptop that sleeps, or moves networks, leaves an
-`ssh\\=' that looks alive for as long as the TCP stack takes to notice,
+`ssh' that looks alive for as long as the TCP stack takes to notice,
 and every RPC through it waits out its timeout.  Four missed probes at
 fifteen seconds is a minute, and then ssh exits and the reconnect runs.
 
-TARGET is passed through untouched, so a bare host, a `user@host\\=' and
+TARGET is passed through untouched, so a bare host, a `user@host' and
 an alias from the user\\='s SSH config all work and none of them is
 parsed here."
   (list "ssh" "-N"
@@ -320,18 +320,18 @@ Returns (EXECUTABLE . SESSIONS).  One round trip, because each one is an
 SSH handshake and this runs before a user has anything to look at.
 
 Both answers have to come from the remote host.  The socket path must,
-because the default contains a `~\\=' and a macOS client expanding it
-locally would forward to a `/Users/...\\=' path on a Linux server.  The
+because the default contains a `~' and a macOS client expanding it
+locally would forward to a `/Users/...' path on a Linux server.  The
 executable must for a different reason: TRAMP runs remote commands under
-its own `tramp-remote-path\\=', not the login PATH, so a herdr installed
-in `~/.local/bin\\=' is on the PATH for `ssh host herdr\\=' and not on the
+its own `tramp-remote-path', not the login PATH, so a herdr installed
+in `~/.local/bin' is on the PATH for `ssh host herdr' and not on the
 one the terminal client would get.  An absolute path needs neither.
 
 Asking at all doubles as the explicit check that herdr is installed
 there — the one diagnosis the forward can never make, because OpenSSH
 dials the path it is given without inspecting what is behind it.
 
-Signals `herdr-error\\=' with a code saying which part failed."
+Signals `herdr-error' with a code saying which part failed."
   (let ((stderr (make-temp-file "herdr-ssh-")))
    (unwind-protect
     (with-temp-buffer
@@ -400,14 +400,14 @@ that does not exist -- a cause inferred rather than the one observed."
 
 (defun herdr-connection-executable (connection)
   "Return the herdr binary CONNECTION\\='s commands should run.
-The absolute path resolved on a remote host, and `herdr-executable\\=' for
+The absolute path resolved on a remote host, and `herdr-executable' for
 a local one."
   (or (herdr-connection-remote-executable connection) herdr-executable))
 
 (defun herdr-connection--remove-stale-socket (path)
   "Delete PATH when it is a socket nothing is listening on.
 
-An `ssh\\=' killed rather than stopped leaves its end of the forward
+An `ssh' killed rather than stopped leaves its end of the forward
 behind, and OpenSSH refuses to bind over it.  Deleting a socket that is
 still live would break a working tunnel, so this connects first: a
 refused connection is a dead file, an accepted one is left alone."
@@ -454,9 +454,9 @@ streams use, so there is one retry mechanism rather than two."
 
 Nil for a local connection, which has no tunnel.  The reconnect path
 calls this before it reopens the streams: a remote connection reaches
-its server through the forward, so a socket with no live `ssh\\=' behind
+its server through the forward, so a socket with no live `ssh' behind
 it can be retried forever and never answer.  Signals the same
-`herdr-error\\=' codes the first connect does."
+`herdr-error' codes the first connect does."
   (when (and (herdr-connection-remote-p connection)
              (not (process-live-p (herdr-connection-tunnel connection))))
     (herdr-connection--start-tunnel connection)
@@ -464,7 +464,7 @@ it can be retried forever and never answer.  Signals the same
 
 (defun herdr-connection--tunnel-died (connection)
   "Note that CONNECTION\\='s tunnel exited, and retry if it is still wanted.
-Wanted means the session is running: `herdr-disconnect\\=' stops it first,
+Wanted means the session is running: `herdr-disconnect' stops it first,
 so a deliberate teardown reaches here with nothing left to retry."
   (when-let* ((process (herdr-connection-tunnel connection)))
     ;; The stderr buffer goes with it.  Only `--stop-tunnel' killed it,
@@ -495,7 +495,7 @@ a forward to a path with no listener produces a socket that exists and
 refuses every connection.  The handshake is the only evidence the whole
 path works.
 
-Three reportable states, and no more.  `ssh\\=' exiting is SSH\\='s own
+Three reportable states, and no more.  `ssh' exiting is SSH\\='s own
 failure and it has said why on stderr.  A socket that never answers is
 a socket that never answered: through the forward, a missing herdr and a
 wrong socket path are the same silence, which is why the path is
@@ -652,9 +652,9 @@ Absent reads as enabled: a catalog that does not say is not saying no."
             (null (alist-get 'enabled machine)))))
 
 (defun herdr-connection-machines ()
-  "Return the enabled machines saved with `herdr machine\\=', newest last.
+  "Return the enabled machines saved with `herdr machine', newest last.
 
-A herdr with no `machine\\=' subcommand, a catalog that will not parse and
+A herdr with no `machine' subcommand, a catalog that will not parse and
 an empty one are all the same answer — none — because every caller of
 this falls back to being told a target directly.  This is a source of
 suggestions, not a source of truth."
@@ -686,7 +686,7 @@ TARGET, when given, is what was typed instead of picking a machine."
           nil)))
 
 (defun herdr-connection--read-remote ()
-  "Read (NAME TARGET SESSION MACHINE-ID) for `herdr-connect-remote\\='.
+  "Read (NAME TARGET SESSION MACHINE-ID) for `herdr-connect-remote'.
 
 A saved machine already holds a label, a target and a session, which is
 exactly what this would otherwise ask for three times.  Anything typed
@@ -741,7 +741,7 @@ server nobody established was there."
     (herdr-connection--open-remote name target session machine-id)))
 
 (defun herdr-connection--open-remote (name target session machine-id)
-  "Open, await and register the connection `herdr-connect-remote\\=' asked for.
+  "Open, await and register the connection `herdr-connect-remote' asked for.
 NAME, TARGET, SESSION and MACHINE-ID are that command\\='s own arguments."
   (let ((connection (herdr-connection-remote name target session machine-id))
         (established nil))

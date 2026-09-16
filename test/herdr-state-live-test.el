@@ -168,10 +168,10 @@ fails here."
   "Connecting must end with the pane set the server actually has.
 
 A burst delivered across one server poll arrives in subscription-list
-order rather than in the order the events happened, so a `pane_created\\='
-can land after the `pane_closed\\=' that retires it — a ghost.  It folds
-away only because `pane.created\\=' happens to be listed before
-`pane.closed\\=' in `herdr-state-global-subscriptions\\='; nothing in the
+order rather than in the order the events happened, so a `pane_created'
+can land after the `pane_closed' that retires it — a ghost.  It folds
+away only because `pane.created' happens to be listed before
+`pane.closed' in `herdr-state-global-subscriptions'; nothing in the
 protocol guarantees it.  Through herdr 0.8.2 the whole 512-event replay
 arrived that way, so the window was hours wide; it is now milliseconds.
 Either way the settle after connecting reconciles, and rebuilds
@@ -272,9 +272,9 @@ a no-op instead of a second teardown and its gap."
 (defun herdr-state-live-test--reconnect-server (record)
   "Return a responder for the reconnect tests, calling RECORD per method.
 
-Answers `session.snapshot\\=' with a session whose labels all read
+Answers `session.snapshot' with a session whose labels all read
 \"fresh\", so anything the cache still reports as \"stale\" was never
-refreshed from it.  `pane.list\\=' agrees about the pane set, so a
+refreshed from it.  `pane.list' agrees about the pane set, so a
 reconcile alone cannot account for a fresh label."
   (lambda (req)
     (let ((method (alist-get 'method req)))
@@ -311,7 +311,7 @@ reconcile alone cannot account for a fresh label."
 
 (ert-deftest herdr-state-reconnect-resyncs-workspaces-too ()
   "A reconnect must replace the whole cache, not just the panes.
-Reconciling repairs panes alone — it is one `pane.list\\=' — so a
+Reconciling repairs panes alone — it is one `pane.list' — so a
 reconnect that only reconciled left the workspace half wrong for the
 rest of the session."
   (let (methods)

@@ -45,7 +45,7 @@ Nil means never.  A sensible opt-in is (\"blocked\" \"done\")."
   "Return the modeline string for STATE, or an empty string.
 Idle agents are omitted: a count that is always on screen stops being
 read.  Only the states worth acting on appear, via
-`herdr-tree-status-summary\\='."
+`herdr-tree-status-summary'."
   (let ((summary (herdr-tree-status-summary state)))
     (if (string-empty-p summary) "" (concat "herdr:" summary))))
 
@@ -79,7 +79,7 @@ comparing against this is comparing against the displayed segment.")
   "Recompute the modeline segment, and redisplay only if it changed.
 
 The change hook fires for every event, and most events do not move the
-counts this segment shows.  When `pane.updated\\=' was still subscribed
+counts this segment shows.  When `pane.updated' was still subscribed
 that meant about 7.5 firings a second per busy agent, each rebuilding
 the string and calling `force-mode-line-update' across every frame — a
 redisplay of every mode line in Emacs several times a second for text
@@ -149,10 +149,10 @@ is why Emacs's own `global-mode-string' conventionally starts with \"\"."
 
 (defun herdr-notify--maybe (connection &rest _)
   "Notify about CONNECTION\\='s agents that just entered a watched status.
-The statuses worth notifying about are `herdr-notify-statuses\\='.
+The statuses worth notifying about are `herdr-notify-statuses'.
 
 Keyed by the connection\\='s token beside the pane id: ids are per-server
-counters, so a bare one would have two machines' `w1:p1\\=' share a last
+counters, so a bare one would have two machines' `w1:p1' share a last
 status — one agent going idle suppressing the other\\='s notification, and
 its next status firing one that never happened."
   (when herdr-notify-statuses

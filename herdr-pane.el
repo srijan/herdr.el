@@ -41,7 +41,7 @@
 (defun herdr-pane--said (string)
   "Return STRING when it says something, nil when it is empty or absent.
 The server sends an empty label for a pane nobody has named, and an
-empty string is a name that reads as a missing one - `claude@\\=' for a
+empty string is a name that reads as a missing one - `claude@' for a
 workspace labelled \"\" was a real buffer name."
   (unless (or (null string) (string-empty-p string)) string))
 
@@ -66,7 +66,7 @@ workspace labelled \"\" was a real buffer name."
 
 (defun herdr-pane-title (pane)
   "Return PANE\\='s terminal title with ANSI already stripped, or nil.
-Still carries an animated spinner; `herdr-pane-steady-title\\=' is what
+Still carries an animated spinner; `herdr-pane-steady-title' is what
 takes that off."
   (alist-get 'terminal_title_stripped pane))
 
@@ -85,13 +85,13 @@ and not the latest timestamp."
 
 (defun herdr-pane-agent (pane)
   "Return the agent detected in PANE, or nil.
-The detected kind, not the one to show: `display_agent\\=' outranks this
+The detected kind, not the one to show: `display_agent' outranks this
 for display but does not decide whether a pane has an agent at all."
   (alist-get 'agent pane))
 
 (defun herdr-pane-display-agent (pane)
   "Return the agent kind to show for PANE, or nil.
-`display_agent\\=' is what the server wants shown - a plugin pane seated
+`display_agent' is what the server wants shown - a plugin pane seated
 with a manifest name has one - and it falls back to the detected agent."
   (or (herdr-pane--said (alist-get 'display_agent pane))
       (herdr-pane--said (alist-get 'agent pane))))
@@ -104,7 +104,7 @@ which is what makes this possible: it consumes OSC 7 rather than
 forwarding it, so a terminal buffer fronting a herdr pane has no other
 way to know where it is.
 
-`foreground_cwd\\=' is the fallback: a pane that has not reported a cwd of
+`foreground_cwd' is the fallback: a pane that has not reported a cwd of
 its own may still say where its foreground process is."
   (when-let* ((dir (herdr-pane-directory-name pane)))
     (when (file-directory-p dir) dir)))
@@ -112,7 +112,7 @@ its own may still say where its foreground process is."
 (defun herdr-pane-directory-name (pane)
   "Return PANE\\='s working directory as a directory name, unchecked.
 
-`herdr-pane-directory\\=' asks the filesystem whether it exists; this does
+`herdr-pane-directory' asks the filesystem whether it exists; this does
 not, because the filesystem it would ask is the wrong one whenever the
 pane belongs to a server on another machine.  Checking a remote path
 properly means a stat over TRAMP per pane per poll, and the server
@@ -124,13 +124,13 @@ better authority anyway."
 
 (defun herdr-pane-cwd (pane)
   "Return the cwd PANE reports, unchecked, or nil.
-`herdr-pane-directory\\=' is the one to use when the answer must name a
+`herdr-pane-directory' is the one to use when the answer must name a
 directory that exists; this is the raw field, for showing."
   (alist-get 'cwd pane))
 
 (defun herdr-pane-terminal-id (pane)
   "Return the raw terminal stream id for PANE, signalling when absent.
-`herdr terminal attach\\=' wants this rather than the pane id, and only
+`herdr terminal attach' wants this rather than the pane id, and only
 the pane record knows it."
   (or (alist-get 'terminal_id pane)
       (user-error "herdr: pane %s has no terminal_id; herdr 0.8.2+ required"
@@ -140,7 +140,7 @@ the pane record knows it."
   "Return the argv tail for attaching to PANE, stealing it when TAKEOVER.
 
 SESSION names one of the host\\='s herdr sessions, and goes before the
-subcommand because that is where herdr takes it: `terminal attach\\=' has
+subcommand because that is where herdr takes it: `terminal attach' has
 no session option of its own, so a client for a named session says so
 globally or attaches to the default one."
   (append (when session (list "--session" session))
@@ -149,19 +149,19 @@ globally or attaches to the default one."
 
 (defconst herdr-pane-significant-fields
   '(agent agent_status cwd foreground_cwd workspace_id tab_id label)
-  "Pane fields worth reacting to when reconciling against `pane.list\\='.
+  "Pane fields worth reacting to when reconciling against `pane.list'.
 
 Excludes the volatile ones: revision, scroll and the terminal title.
 The title especially, however stable it looks - an agent animates a
 spinner and a second counter inside it, so it changes several times a
-second and every poll would declare a change.  `label\\=' is included
+second and every poll would declare a change.  `label' is included
 because only a person or a plugin sets it.
 
 A record differing only in excluded fields is still refreshed, silently,
-without running the change hook; see `herdr-state-reconcile-panes\\='.
+without running the change hook; see `herdr-state-reconcile-panes'.
 
-`revision\\=' is not a staleness guard.  herdr bumps it for presentation
-metadata only, never for `agent_status\\=' (0.8.2, terminal/state.rs), so
+`revision' is not a staleness guard.  herdr bumps it for presentation
+metadata only, never for `agent_status' (0.8.2, terminal/state.rs), so
 it cannot order status updates.")
 
 (defun herdr-pane-differs-p (known fresh)
@@ -175,21 +175,21 @@ it cannot order status updates.")
 
 (defconst herdr-pane-spinner-glyphs '(?◐ ?◑)
   "Characters an agent animates at the head of its terminal title.
-`terminal_title_stripped\\=' strips ANSI, not these.  Only these two were
+`terminal_title_stripped' strips ANSI, not these.  Only these two were
 measured; another agent animating a different glyph costs one redraw a
 second on that pane, and adding its glyph here is the whole fix.
 
-A list of characters, not a string: `herdr-pane-steady-title\\=' builds a
-regexp character class from it through `regexp-opt-charset\\=', which is
-what quotes `]\\=', `-\\=' and `^\\=' correctly.")
+A list of characters, not a string: `herdr-pane-steady-title' builds a
+regexp character class from it through `regexp-opt-charset', which is
+what quotes `]', `-' and `^' correctly.")
 
 (defun herdr-pane-steady-title (title)
   "Return TITLE with any animated spinner glyph taken off the front.
 Without this the rendered tree differs several times a second while an
-agent works, so the unchanged-tree skip in `herdr-dispatch-refresh\\='
+agent works, so the unchanged-tree skip in `herdr-dispatch-refresh'
 never engages and the buffer is erased and rebuilt about once a second.
 
-A different problem from the one `herdr-state-pane-significant-fields\\='
+A different problem from the one `herdr-state-pane-significant-fields'
 solves: that one governs whether a reconcile counts as a change, this
 one whether the RENDERED tree differs.  Fixing either alone leaves the
 other.
@@ -210,7 +210,7 @@ the title alone cannot tell two panes running the same agent apart.
 
 Degrades to whichever exists, and does not print a title that merely
 repeats the label.  Empty when the pane has neither, which is why
-callers that must print something fall back to `herdr-pane-identity\\='."
+callers that must print something fall back to `herdr-pane-identity'."
   (let ((label (herdr-pane-label pane))
         (title (herdr-pane-steady-title (or (herdr-pane-title pane) ""))))
     (cond
@@ -220,8 +220,8 @@ callers that must print something fall back to `herdr-pane-identity\\='."
 
 (defun herdr-pane-identity (pane &optional rename workspace-label)
   "Return what to call PANE when the answer must not move under you.
-In order: RENAME, the name `agent.rename\\=' set; then the pane\\='s own
-`label\\='; then KIND@WORKSPACE; then a bare KIND.
+In order: RENAME, the name `agent.rename' set; then the pane\\='s own
+`label'; then KIND@WORKSPACE; then a bare KIND.
 
 RENAME and WORKSPACE-LABEL are the two facts this cannot read off PANE,
 and callers that have a cache pass them in.  Without WORKSPACE-LABEL the
@@ -230,7 +230,7 @@ cache has not caught up with still tells two panes apart rather than
 collapsing them onto one name.
 
 An empty string counts as absent at every step, so this is never empty:
-a pane the server labelled \"\" reads as `claude@web\\=', not as nothing.
+a pane the server labelled \"\" reads as `claude@web', not as nothing.
 
 Not unique.  Two unnamed panes of the same kind in one workspace have
 the same identity, so callers that name a buffer with it must uniquify."
