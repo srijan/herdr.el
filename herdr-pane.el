@@ -75,6 +75,13 @@ One of \"working\", \"blocked\", \"done\", \"idle\" - or nil for a pane with
 no agent in it."
   (alist-get 'agent_status pane))
 
+(defun herdr-pane-state-change-seq (pane)
+  "Return the counter herdr bumps when PANE\\='s agent state changes, or nil.
+Monotonic per server and the only ordering the record carries: no field
+says when a change happened, so the most recent news is the highest seq
+and not the latest timestamp."
+  (alist-get 'state_change_seq pane))
+
 (defun herdr-pane-agent (pane)
   "Return the agent detected in PANE, or nil.
 The detected kind, not the one to show: `display_agent\\=' outranks this

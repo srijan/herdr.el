@@ -871,3 +871,80 @@ repository at all, shows no branch rather than a placeholder."
   (let ((line (nth 2 (car (herdr-tree-build (herdr-tree-test--state) nil)))))
     (should (string-match-p "herdr\\.el" line))
     (should-not (string-match-p "main" line))))
+
+(defun herdr-tree-test--queue-state (&rest specs)
+  "Return a state whose agents are SPECS, each (ID STATUS SEQ)."
+  (herdr-state-from-snapshot
+   `((workspaces . (((workspace_id . "w1") (label . "web"))))
+     (panes . ,(mapcar (lambda (spec)
+                         `((pane_id . ,(nth 0 spec)) (workspace_id . "w1")
+                           (agent . "claude") (agent_status . ,(nth 1 spec))
+                           (state_change_seq . ,(nth 2 spec))))
+                       specs)))))
+
+(ert-deftest herdr-tree-queue-heads-the-worst-first-and-omits-what-is-empty ()
+  "Worst first, so the section that wants you most is the one you land on.
+A status nothing is in gets no heading: a section reading (0) is a line
+that never says anything."
+  (let ((nodes (herdr-tree-queue-nodes
+                (list (cons nil (herdr-tree-test--queue-state
+                                 '("w1:p1" "idle" 1)
+                                 '("w1:p2" "blocked" 2)
+                                 '("w1:p3" "done" 3)))))))
+    (should (equal '("BLOCKED (1)" "READY (1)" "IDLE (1)")
+                   (mapcar (lambda (node) (nth 2 node)) nodes)))
+    (should (equal '(herdr-queue herdr-queue herdr-queue)
+                   (mapcar (lambda (node) (nth 0 node)) nodes)))))
+
+(ert-deftest herdr-tree-queue-reads-done-as-ready-and-keeps-unknown-apart ()
+  "herdr says `idle\\=' and `done\\=' both mean ready for input and uses its
+seen state to tell them apart, so `done\\=' is work nobody has looked at:
+READY.  `unknown\\=' keeps a heading of its own because herdr says it does
+not prove completion — it must not read as nothing to do."
+  (let ((headings (mapcar (lambda (node) (nth 2 node))
+                          (herdr-tree-queue-nodes
+                           (list (cons nil (herdr-tree-test--queue-state
+                                            '("w1:p1" "done" 1)
+                                            '("w1:p2" "unknown" 2))))))))
+    (should (equal '("READY (1)" "UNKNOWN (1)") headings))))
+
+(ert-deftest herdr-tree-queue-puts-the-newest-news-first-in-a-section ()
+  "`state_change_seq\\=' is the only ordering a pane record carries: no
+field says when a change happened, so the highest seq is the most recent
+news and leads its group."
+  (let* ((nodes (herdr-tree-queue-nodes
+                 (list (cons nil (herdr-tree-test--queue-state
+                                  '("w1:p1" "done" 10)
+                                  '("w1:p2" "done" 30)
+                                  '("w1:p3" "done" 20))))))
+         (ids (mapcar (lambda (row) (nth 1 row)) (nth 3 (car nodes)))))
+    (should (equal '("w1:p2" "w1:p3" "w1:p1") ids))))
+
+(ert-deftest herdr-tree-queue-rows-are-pane-nodes ()
+  "A queue row is a `herdr-pane\\=' node like any other, so every verb
+already aimed at a pane row works on it with no arm of its own."
+  (let ((row (car (nth 3 (car (herdr-tree-queue-nodes
+                              (list (cons nil (herdr-tree-test--queue-state
+                                               '("w1:p1" "blocked" 1))))))))))
+    (should (eq 'herdr-pane (nth 0 row)))
+    (should (equal "w1:p1" (nth 1 row)))
+    (should-not (nth 3 row))))
+
+(ert-deftest herdr-tree-queue-carries-the-machine-only-when-there-are-several ()
+  "A queue is ordered by attention, not by machine, so a row has no
+machine heading above it to be read off.  It carries the name on its own
+line instead — and only when there is a choice to be made, so a
+single-machine queue is free of a name that says nothing."
+  (let* ((one (herdr-tree-test--queue-state '("w1:p1" "blocked" 1)))
+         (alone (car (nth 3 (car (herdr-tree-queue-nodes
+                                  (list (cons nil one)))))))
+         (several (nth 3 (car (herdr-tree-queue-nodes
+                               (list (cons "local" one)
+                                     (cons "shadow" one)))))))
+    (should-not (get-text-property 0 'herdr-machine (nth 2 alone)))
+    (should (equal '("local" "shadow")
+                   (mapcar (lambda (row)
+                             (get-text-property
+                              (string-match-p "claude" (nth 2 row))
+                              'herdr-machine (nth 2 row)))
+                           several)))))

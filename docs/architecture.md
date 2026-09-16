@@ -113,8 +113,9 @@ returns a nested list of nodes. Each node has this shape:
 (TYPE VALUE LINE CHILDREN)
 ```
 
-- `TYPE` is one of `herdr-workspace`, `herdr-pane`, `herdr-worktree` or `herdr-worktrees`
-  (the foldable heading over a repository's other checkouts). The renderer's `pcase` has no fallback clause, so a type with no branch
+- `TYPE` is one of `herdr-workspace`, `herdr-pane`, `herdr-worktree`, `herdr-worktrees`
+  (the foldable heading over a repository's other checkouts), `herdr-queue` (one status section
+  of the attention queue), `herdr-machine` or `herdr-machines`. The renderer's `pcase` has no fallback clause, so a type with no branch
   is dropped silently along with everything under it.
 - `VALUE` is the identifier that a command acts on. It must never be `nil` for a real row.
 - `LINE` is the propertized string to insert.

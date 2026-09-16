@@ -450,6 +450,95 @@ sections different widths."
                            (assoc (herdr-workspace-id workspace) nesting))
                          workspaces)))))
 
+(defconst herdr-tree-queue-sections
+  '(("blocked" . "BLOCKED") ("done" . "READY")
+    ("working" . "WORKING") ("idle" . "IDLE")
+    ("unknown" . "UNKNOWN"))
+  "Agent statuses as the queue heads them, worst-first.
+
+herdr\='s own words where it has one and the queue\='s where it reads
+better.  `done\=' is headed READY because that is what it means: herdr
+says `idle\=' and `done\=' both mean ready for input and uses its seen
+state to tell them apart, so `done\=' is work finished that nobody has
+looked at yet.  `unknown\=' keeps a heading of its own rather than
+joining IDLE — herdr says it does not prove completion, so it must not
+read as nothing to do.")
+
+(defun herdr-tree--queue-row (state pane machine width)
+  "Return the queue row for PANE in STATE, its agent column WIDTH wide.
+
+A `herdr-pane\=' node like any other, so every verb already aimed at a
+pane row works here with no arm of its own.
+
+MACHINE, when given, is the name of the machine the pane is on, carried
+as a text property rather than shown: a queue is sorted by attention and
+not by machine, so a row has no machine heading above it to be read off.
+A name rather than a connection, because a section outlives the redraws
+around it and a reconnect replaces the struct."
+  (let* ((id (herdr-pane-id pane))
+         (status (or (herdr-pane-status pane) "unknown"))
+         (face (herdr-tree-status-face status))
+         (name (herdr-pane-name pane))
+         (line (string-trim-right
+                (format (format "%%s %%-%ds %%-34s %%s" width)
+                        (herdr-tree--faced (herdr-tree-glyph status) face)
+                        (herdr-tree--agent-label state pane)
+                        (if (string-empty-p name) id name)
+                        (herdr-tree--faced
+                         (or (herdr-state-workspace-label
+                              state (herdr-pane-workspace-id pane))
+                             (herdr-pane-workspace-id pane) "")
+                         'font-lock-comment-face)))))
+    (list 'herdr-pane id
+          (if machine (propertize line 'herdr-machine machine) line)
+          nil)))
+
+(defun herdr-tree-queue-nodes (entries)
+  "Return the attention queue over ENTRIES, one (MACHINE-NAME . STATE) each.
+
+One section per status that has agents in it, worst first, and inside a
+section the highest `state_change_seq\=' first — the most recent news at
+the top of the group that wants you most.  That counter is the only
+ordering a pane record carries; no field says when a change happened.
+
+MACHINE-NAME is nil when only one machine is connected, which keeps a
+single-machine queue free of a name that says nothing.
+
+Pure: the panes come from the states handed in, so the queue is built
+and asserted without a buffer or a server."
+  (let ((width (apply #'max herdr-tree-agent-column-min
+                      (mapcar (lambda (entry)
+                                (herdr-tree--agent-column-width (cdr entry)))
+                              entries))))
+    (delq nil
+          (mapcar
+           (lambda (section)
+             (let* ((status (car section))
+                    (rows (sort
+                           (seq-mapcat
+                            (lambda (entry)
+                              (mapcar
+                               (lambda (pane) (cons (car entry) pane))
+                               (seq-filter
+                                (lambda (pane)
+                                  (equal status (or (herdr-pane-status pane)
+                                                    "unknown")))
+                                (herdr-state-agents (cdr entry)))))
+                            entries)
+                           (lambda (a b)
+                             (> (or (herdr-pane-state-change-seq (cdr a)) 0)
+                                (or (herdr-pane-state-change-seq (cdr b)) 0))))))
+               (when rows
+                 (list 'herdr-queue status
+                       (format "%s (%s)" (cdr section) (length rows))
+                       (mapcar
+                        (lambda (row)
+                          (herdr-tree--queue-row
+                           (cdr (assoc (car row) entries)) (cdr row)
+                           (car row) width))
+                        rows)))))
+           herdr-tree-queue-sections))))
+
 (defface herdr-tree-machine
   '((t :inherit magit-section-heading))
   "Face for the row naming a machine, drawn only when there are several."

@@ -71,9 +71,13 @@ removed the cause. For the explanation, see
 
 ## Step 4: Read the dashboard
 
-The dashboard shows the session as a tree. Each workspace row names the workspace, the branch its
-own checkout is on, and its directory — the three things herdr's own sidebar shows. Its panes hang
-directly off it.
+The dashboard has two halves. The attention queue comes first: one section per agent status,
+worst first, and inside a section the most recent news leads. Below it, `MACHINES` is the
+topology — each workspace row names the workspace, the branch its own checkout is on, and its
+directory, which is what herdr's own sidebar shows.
+
+A workspace starts folded. Press `TAB` on it to see its panes and its other checkouts; the queue
+above already lists every agent, so nothing appears twice.
 
 ```
 herdr.el        main                  ~/src/herdr.el/

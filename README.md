@@ -25,16 +25,28 @@ of repositories, their checkouts and their panes. Every command is reachable fro
 ```
 herdr   3 workspaces  5 panes  2▶1✓
 
-example-api (1)              ~/src/example-api/
-  · shell       idle      w4:p1   npm run watch
-  ✓ claude      done      w4:p5   Add the pagination endpoint
+BLOCKED (1)
+  ⏸ codex       Approve the migration?             example-api
 
-herdr.el       main          ~/src/herdr.el/
-  ▶ claude      working   w7:p1   Fix the reconcile order
-  feat-dispatch feat/nest   ~/src/herdr.el-worktrees/feat-dispatch/ ▶
-    ▶ claude    working   w9:p1   Nest worktrees under their repository
-  ▸ worktrees (2)
+READY (1)
+  ✓ claude      Add the pagination endpoint        example-api
+
+WORKING (2)
+  ▶ claude      Fix the reconcile order            herdr.el
+  ▶ claude      Nest worktrees under repositories  feat-dispatch
+
+MACHINES
+  ▸ example-api   main        ~/src/example-api/
+  ▾ herdr.el      main        ~/src/herdr.el/
+      ▶ claude    working   w7:p1   Fix the reconcile order
+      ▸ feat-dispatch feat/nest  ~/src/herdr.el-worktrees/feat-dispatch/ ▶
+      ▸ worktrees (2)
 ```
+
+The queue comes first, because what wants you is not where it lives. A section per status,
+worst first, and inside one the most recent news leads. `MACHINES` below is the topology:
+machine, workspace, branch, directory. A workspace opens to its panes and checkouts when you
+press `TAB` on it — the queue already lists every agent, so nothing is shown twice.
 
 The dashboard opens in the selected window and leaves your other windows alone. `q` restores the
 buffer that window held before.

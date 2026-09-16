@@ -11,6 +11,34 @@
 ;; skip every test here and report success.
 (require 'herdr-dispatch)
 
+(defun herdr-dispatch-test--machines (tree)
+  "Return the children of TREE\\='s MACHINES container.
+The dashboard leads with the attention queue, so the topology sits one
+level in rather than at top level."
+  (nth 3 (seq-find (lambda (node) (eq 'herdr-machines (nth 0 node))) tree)))
+
+(defun herdr-dispatch-test--in-machines (text)
+  "Move point past TEXT inside the MACHINES section.
+
+The queue above lists every agent under its own status heading, so a
+bare `search-forward\\=' from point-min finds the queue\\='s copy of a name
+first.  These tests mean the topology.
+
+Fixtures built from raw nodes have no MACHINES container and nothing
+above them to disambiguate from, so there the search is plain.
+
+Case-sensitively: the header counts \"2 machines\" in lower case, and a
+folding search matches that first and then finds the queue below it."
+  (goto-char (point-min))
+  (let ((case-fold-search nil))
+    (when (save-excursion (search-forward "MACHINES" nil t))
+      (search-forward "MACHINES")))
+  (search-forward text)
+  ;; On the row, not past it.  A row whose columns are all empty trims to
+  ;; the text searched for, which leaves point at end of line, where
+  ;; `magit-current-section\\=' answers with whatever section starts next.
+  (goto-char (line-beginning-position)))
+
 (defun herdr-dispatch-test--listing (key)
   "Return the worktree records cached under KEY on the current connection.
 The cache holds the whole `worktree.list' reply; this is its array, so a
@@ -106,12 +134,16 @@ renderer consuming them, which is the seam such a typo would hide in."
     (should (eq 'herdr-worktree  (herdr-dispatch-test--type-at "open as w2")))))
 
 (defun herdr-dispatch-test--indent-at (text)
-  "Return the leading whitespace width of the line containing TEXT."
+  "Return the leading whitespace width of the line containing TEXT.
+
+Counted in characters rather than with `current-column\\=', which measures
+displayed width: a workspace starts collapsed, so its rows are invisible
+and every one of them would measure zero."
   (goto-char (point-min))
   (search-forward text)
   (goto-char (line-beginning-position))
-  (skip-chars-forward " ")
-  (current-column))
+  (- (save-excursion (skip-chars-forward " ") (point))
+     (line-beginning-position)))
 
 (ert-deftest herdr-dispatch-panes-of-a-two-tab-workspace-render-at-the-same-depth ()
   "The hierarchy has to be visible, not just navigable.
@@ -484,25 +516,26 @@ refresh that had no restore path whatsoever.  The change is what makes
 this a test of a redraw again rather than a test of the skip."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
-    (goto-char (point-min))
-    (search-forward "web")
-    (magit-section-hide (magit-current-section))
-    (should (oref (magit-current-section) hidden))
-    (goto-char (point-min))
-    (search-forward "w1:p2")
+    ;; Open it first: a workspace starts folded, so the state worth
+    ;; carrying across a redraw is the one the reader chose.
+    (herdr-dispatch-test--in-machines "web")
+    (magit-section-show (magit-current-section))
+    (should-not (oref (magit-current-section) hidden))
+    (herdr-dispatch-test--in-machines "w1:p2")
     (let ((ident (magit-section-ident (magit-current-section))))
       ;; No `herdr-worktrees' heading: the fixture has no worktrees.  The
-      ;; ident is what point is restored through, so pin it.
+      ;; ident is what point is restored through, so pin it — MACHINES
+      ;; included, since the topology sits inside it now.
       (should (equal '((herdr-pane . "w1:p2")
-                       (herdr-workspace . "w1") (herdr-root))
+                       (herdr-workspace . "w1")
+                       (herdr-machines . "machines") (herdr-root))
                      ident))
       (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
       (should (equal 1 (herdr-dispatch-test-counting-rebuilds
                          (herdr-dispatch-refresh))))
       (should (equal ident (magit-section-ident (magit-current-section))))
-      (goto-char (point-min))
-      (search-forward "web")
-      (should (oref (magit-current-section) hidden)))))
+      (herdr-dispatch-test--in-machines "web")
+      (should-not (oref (magit-current-section) hidden)))))
 
 ;;; Redraw suppression, debouncing and point
 
@@ -653,15 +686,14 @@ buffer.  `magit-section-goto-successor' lands on a surviving sibling,
 else the parent."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
-    (goto-char (point-min))
-    (search-forward "w1:p2")
-    (goto-char (line-beginning-position))
+    (herdr-dispatch-test--in-machines "w1:p2")
     (setf (herdr-connection-cache (herdr-current-connection))
           (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_closed"
                               '((pane_id . "w1:p2"))))
     (herdr-dispatch-refresh)
     (should-not (= (point) (point-max)))
-    (should (equal '((herdr-pane . "w1:p1") (herdr-workspace . "w1") (herdr-root))
+    (should (equal '((herdr-pane . "w1:p1") (herdr-workspace . "w1")
+                     (herdr-machines . "machines") (herdr-root))
                    (magit-section-ident (magit-current-section))))))
 
 (ert-deftest herdr-dispatch-refresh-lands-near-a-workspace-that-went-with-its-pane ()
@@ -676,9 +708,7 @@ that took the dead one's place, not the header."
                   ((pane_id . "w2:p1") (agent . "codex") (agent_status . "idle")
                    (workspace_id . "w2")))))
     (herdr-dispatch-refresh t)
-    (goto-char (point-min))
-    (search-forward "w1:p1")
-    (goto-char (line-beginning-position))
+    (herdr-dispatch-test--in-machines "w1:p1")
     (setf (herdr-connection-cache (herdr-current-connection))
           (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_closed"
                               '((pane_id . "w1:p1"))))
@@ -691,7 +721,8 @@ that took the dead one's place, not the header."
     ;; is expected to leave you on.
     (should-not (= (point) (point-max)))
     (should-not (= (point) (point-min)))
-    (should (equal '((herdr-workspace . "w2") (herdr-root))
+    (should (equal '((herdr-workspace . "w2")
+                     (herdr-machines . "machines") (herdr-root))
                    (magit-section-ident (magit-current-section))))))
 
 (ert-deftest herdr-dispatch-refresh-skips-the-blank-line-between-rows ()
@@ -753,10 +784,13 @@ restore resolved the root ident the same way."
                   ((pane_id . "w2:p1") (agent . "codex") (agent_status . "idle")
                    (workspace_id . "w2")))))
     (herdr-dispatch-refresh t)
+    ;; The separator above MACHINES.  Workspaces sit inside it now, and
+    ;; only top-level nodes get a blank line between them.
     (goto-char (point-min))
-    (search-forward "api")
+    (let ((case-fold-search nil)) (search-forward "MACHINES"))
     (forward-line -1)
     (goto-char (line-beginning-position))
+    (should (looking-at-p "$"))
     (should (eq magit-root-section (magit-current-section)))
     (should-not (= (point) (point-min)))
     (herdr-dispatch-test--pane-event "w1:p1" "working" 2)
@@ -764,8 +798,9 @@ restore resolved the root ident the same way."
     (should-not (= (point) (point-min)))
     ;; The nearest row below, not the separator: a blank line has no
     ;; identity to restore, and the exact character position cannot
-    ;; survive a row above it changing width.
-    (should (equal '((herdr-workspace . "w2") (herdr-root))
+    ;; survive a row above it changing width.  The nearest row below the
+    ;; separator is the MACHINES heading now.
+    (should (equal '((herdr-machines . "machines") (herdr-root))
                    (magit-section-ident (magit-current-section))))))
 
 (ert-deftest herdr-dispatch-refresh-keeps-point-on-the-header ()
@@ -789,8 +824,7 @@ usually fires while the dashboard is not the selected window."
       (unwind-protect
           (progn
             (set-window-buffer window (current-buffer))
-            (goto-char (point-min))
-            (search-forward "w1:p2")
+            (herdr-dispatch-test--in-machines "w1:p2")
             (set-window-point window (line-beginning-position))
             (goto-char (point-min))
             (setf (herdr-connection-cache (herdr-current-connection))
@@ -799,7 +833,7 @@ usually fires while the dashboard is not the selected window."
             (herdr-dispatch-refresh)
             (should-not (= (window-point window) (point-max)))
             (should (equal '((herdr-pane . "w1:p1") (herdr-workspace . "w1")
-                             (herdr-root))
+                             (herdr-machines . "machines") (herdr-root))
                            (save-excursion
                              (goto-char (window-point window))
                              (magit-section-ident (magit-current-section))))))
@@ -1739,18 +1773,18 @@ by a rendered change between every keystroke, because a single toggle in
 a static buffer never meets the erase that broke this."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
+    ;; A workspace starts folded, so the first toggle opens it: hidden on
+    ;; the odd passes rather than the even ones.
     (dotimes (i 4)
-      (goto-char (point-min))
-      (search-forward "web")
+      (herdr-dispatch-test--in-machines "web")
       (call-interactively #'magit-section-toggle)
-      (should (equal (cl-evenp i)
+      (should (equal (cl-oddp i)
                      (and (oref (magit-current-section) hidden) t)))
       (herdr-dispatch-test--pane-event
        "w1:p1" (if (cl-evenp i) "idle" "working") i)
       (herdr-dispatch-refresh)
-      (goto-char (point-min))
-      (search-forward "web")
-      (should (equal (cl-evenp i)
+      (herdr-dispatch-test--in-machines "web")
+      (should (equal (cl-oddp i)
                      (and (oref (magit-current-section) hidden) t))))))
 
 ;;; Fold indicators and the current-section highlight
@@ -1759,9 +1793,11 @@ a static buffer never meets the erase that broke this."
   "Return the fold indicator drawn beside the line holding TEXT, or nil.
 The indicator is a margin overlay carrying a `display' property, which is
 where the character actually ends up — reading it back out is the only
-way to tell a configured indicator from a drawn one."
-  (goto-char (point-min))
-  (search-forward text)
+way to tell a configured indicator from a drawn one.
+
+Inside MACHINES: the queue above lists the same names, and a queue row is
+a leaf with no indicator to find."
+  (herdr-dispatch-test--in-machines text)
   (goto-char (line-beginning-position))
   (seq-some (lambda (overlay)
               (when (eq 'margin (overlay-get overlay 'magit-vis-indicator))
@@ -1771,9 +1807,12 @@ way to tell a configured indicator from a drawn one."
             (overlays-in (point) (1+ (point)))))
 
 (defun herdr-dispatch-test--hidden-p (text)
-  "Return non-nil when the line holding TEXT is invisible on screen."
-  (goto-char (point-min))
-  (search-forward text)
+  "Return non-nil when the MACHINES line holding TEXT is invisible.
+
+Inside MACHINES: the queue lists every agent above, and a queue row is
+never folded away — it is what folding the topology leaves you with."
+  (herdr-dispatch-test--in-machines text)
+  (end-of-line)
   (and (invisible-p (point)) t))
 
 (ert-deftest herdr-dispatch-marks-foldable-headings-in-any-frame ()
@@ -1804,10 +1843,14 @@ room for it, or the overlay is silently dropped."
   "magit writes indicators in `magit-section-show' and
 `magit-section-hide' and nowhere else, so a buffer that has only ever
 been drawn has none — configuring the option is not the same as showing
-one.  A leaf has nothing to fold and must stay unmarked."
+one.  A leaf has nothing to fold and must stay unmarked.
+
+A workspace starts collapsed now, so the indicator beside it is the
+closed one: `herdr-dispatch--apply-fold' hides it on the way in, and
+hiding is one of the two places magit draws an indicator at all."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
-    (should (equal (cdar (herdr-dispatch--fold-indicators))
+    (should (equal (caar (herdr-dispatch--fold-indicators))
                    (herdr-dispatch-test--fold-glyph "web")))
     (should-not (herdr-dispatch-test--fold-glyph "w1:p1"))))
 
@@ -1824,18 +1867,26 @@ screen: the panes stay invisible and the heading keeps the collapsed
 glyph."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
-    (should-not (herdr-dispatch-test--hidden-p "w1:p1"))
-    (goto-char (point-min))
-    (search-forward "web")
-    (magit-section-hide (magit-current-section))
+    ;; A workspace starts folded, so it is the unfold that has to
+    ;; survive: the failure this guards is a redraw putting the tree back
+    ;; the way the code wanted it rather than the way it was left.
     (should (herdr-dispatch-test--hidden-p "w1:p1"))
-    (should (equal (caar (herdr-dispatch--fold-indicators))
+    (herdr-dispatch-test--in-machines "web")
+    (magit-section-show (magit-current-section))
+    (should-not (herdr-dispatch-test--hidden-p "w1:p1"))
+    (should (equal (cdar (herdr-dispatch--fold-indicators))
                    (herdr-dispatch-test--fold-glyph "web")))
     (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
     (herdr-dispatch-refresh)
-    (should (herdr-dispatch-test--hidden-p "w1:p1"))
-    (should (equal (caar (herdr-dispatch--fold-indicators))
-                   (herdr-dispatch-test--fold-glyph "web")))))
+    (should-not (herdr-dispatch-test--hidden-p "w1:p1"))
+    (should (equal (cdar (herdr-dispatch--fold-indicators))
+                   (herdr-dispatch-test--fold-glyph "web")))
+    ;; And folding it again survives just as well.
+    (herdr-dispatch-test--in-machines "web")
+    (magit-section-hide (magit-current-section))
+    (herdr-dispatch-test--pane-event "w1:p1" "working" 2)
+    (herdr-dispatch-refresh)
+    (should (herdr-dispatch-test--hidden-p "w1:p1"))))
 
 (ert-deftest herdr-dispatch-highlights-the-section-at-point ()
   "magit-section wires this up itself, and the point is that we add nothing.
@@ -2838,8 +2889,8 @@ as one workspace, and whichever verb ran would reach whichever server
 answered last."
   (herdr-dispatch-test--with-two-servers
     (let ((text (buffer-string)))
-      (should (string-match-p "^one" text))
-      (should (string-match-p "^two" text))
+      (should (string-match-p "^ *one (" text))
+      (should (string-match-p "^ *two (" text))
       (should (string-match-p "on-one" text))
       (should (string-match-p "on-two" text)))
     ;; The header counts across both.
@@ -2850,22 +2901,38 @@ answered last."
   "The guard this unit owes: a colliding id has to reach the connection
 whose subtree the row sits in, not whichever the resolver would answer."
   (herdr-dispatch-test--with-two-servers
-    (goto-char (point-min))
-    (search-forward "on-one")
+    (herdr-dispatch-test--in-machines "on-one")
     (let ((target (herdr-dispatch-target-at-point)))
       (should (eq one (herdr-dispatch-target-connection target)))
       (should (equal "on-one" (herdr-workspace-label
                                (herdr-dispatch-target-record target)))))
-    (goto-char (point-min))
-    (search-forward "on-two")
+    (herdr-dispatch-test--in-machines "on-two")
     (let ((target (herdr-dispatch-target-at-point)))
       (should (eq two (herdr-dispatch-target-connection target)))
       (should (equal "on-two" (herdr-workspace-label
                                (herdr-dispatch-target-record target)))))
     ;; And a verb invoked by name reaches the same one.
-    (goto-char (point-min))
-    (search-forward "on-two")
+    (herdr-dispatch-test--in-machines "on-two")
     (should (eq two (herdr-current-connection)))))
+
+(ert-deftest herdr-dispatch-a-queue-row-resolves-to-its-own-machine ()
+  "The same guard for the queue, which is where it is hardest: a queue is
+ordered by attention, so a row has no machine heading above it to walk up
+to, and both machines here issued `w1:p1\='.
+
+The row carries the machine name on its own line instead, which is what
+`herdr-dispatch--row-connection\=' reads when there is no heading.  A name
+rather than the connection, because a section outlives the redraws around
+it and a reconnect replaces the struct."
+  (herdr-dispatch-test--with-two-servers
+    (dolist (case (list (cons "claude" one) (cons "codex" two)))
+      (goto-char (point-min))
+      ;; The queue is above MACHINES, so this finds the queue row.
+      (search-forward (car case))
+      (let ((target (herdr-dispatch-target-at-point)))
+        (should (eq 'herdr-pane (herdr-dispatch-target-type target)))
+        (should (equal "w1:p1" (herdr-dispatch-target-value target)))
+        (should (eq (cdr case) (herdr-dispatch-target-connection target)))))))
 
 (ert-deftest herdr-dispatch-one-connection-draws-no-server-level ()
   "Nobody following one server should see a row that says nothing."
@@ -2875,10 +2942,11 @@ whose subtree the row sits in, not whichever the resolver would answer."
                                          (label . "solo")))))))))
     (setf (herdr-connection-name connection) "local")
     (let ((herdr-connections (herdr-test-connections connection)))
-      (let ((tree (herdr-dispatch--tree (herdr-connection-list))))
+      (let ((machines (herdr-dispatch-test--machines
+                       (herdr-dispatch--tree (herdr-connection-list)))))
         (should-not (seq-find (lambda (node) (eq 'herdr-machine (car node)))
-                              tree))
-        (should (eq 'herdr-workspace (car (car tree)))))
+                              machines))
+        (should (eq 'herdr-workspace (car (car machines)))))
       (should-not (string-match-p
                    "machines" (herdr-dispatch--header
                               (herdr-connection-list)))))))
@@ -2891,12 +2959,11 @@ a row that vanishes when a laptop sleeps tells you the wrong one."
           (herdr-connection-cache two) (herdr-state-empty))
     (herdr-dispatch-refresh t)
     (let ((text (buffer-string)))
-      (should (string-match-p "^two  not connected" text))
+      (should (string-match-p "^ *two  not connected" text))
       ;; The other is still fully there.
       (should (string-match-p "on-one" text)))
     ;; And still navigable.
-    (goto-char (point-min))
-    (search-forward "on-one")
+    (herdr-dispatch-test--in-machines "on-one")
     (should (eq one (herdr-dispatch-target-connection
                      (herdr-dispatch-target-at-point))))))
 

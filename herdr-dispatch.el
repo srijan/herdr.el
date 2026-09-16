@@ -110,13 +110,17 @@ frame."
               (lambda (&rest _) (herdr-dispatch-refresh t)))
   (setq-local magit-section-visibility-indicators
               (herdr-dispatch--fold-indicators))
-  ;; A repository's other checkouts are worth one line until asked for.
-  ;; magit's own mechanism rather than a hidden slot set by hand: it is
+  ;; The queue above already lists every agent, so MACHINES is topology:
+  ;; machine, workspace, branch, directory.  A workspace opens to its
+  ;; panes and checkouts when asked, which is how herdr\='s own sidebar and
+  ;; Collie both read — neither lists a pane twice on one screen.
+  ;;
+  ;; magit\='s own mechanism rather than a hidden slot set by hand: it is
   ;; consulted by `magit-insert-section\=', so a redraw keeps whatever the
   ;; reader has since toggled instead of folding it shut again.
   (setq-local magit-section-initial-visibility-alist
-              (cons '(herdr-worktrees . hide)
-                    magit-section-initial-visibility-alist))
+              (append '((herdr-worktrees . hide) (herdr-workspace . hide))
+                      magit-section-initial-visibility-alist))
   ;; Two columns: one for the indicator, one of air between it and the
   ;; text.  A margin of zero width silently drops margin overlays, which
   ;; would leave the indicators configured and invisible.
@@ -258,7 +262,8 @@ foldable headings."
 ;;; The object at point
 
 (defconst herdr-dispatch-target-types
-  '(herdr-machine herdr-workspace herdr-pane herdr-worktree herdr-worktrees)
+  '(herdr-machine herdr-machines herdr-queue
+                  herdr-workspace herdr-pane herdr-worktree herdr-worktrees)
   "The section types a verb can be aimed at.
 Every type `herdr-tree-build\\=' draws.  A section of any other type - the
 buffer\\='s root, the header - is not a target, and the verbs say so.")
@@ -356,7 +361,20 @@ connection is the answer.
 A name rather than the connection itself, because a section outlives the
 redraws around it and a reconnect replaces the struct: the name is what
 both sides still agree on."
-  (or (when-let* ((name (herdr-dispatch--enclosing-value section 'herdr-machine)))
+  (or (when-let* ((name (herdr-dispatch--enclosing-value section
+                                                           'herdr-machine)))
+        (herdr-connection-named name))
+      ;; A queue row has no machine heading above it: the queue is
+      ;; ordered by attention, not by machine.  It carries the name on
+      ;; its own line instead; see `herdr-tree--queue-row\='.
+      ;;
+      ;; Scanned across the row rather than read at its start, because
+      ;; `herdr-dispatch--indent\=' puts plain spaces in front of every
+      ;; line and the section begins on one of those.
+      (when-let* ((at (text-property-not-all (oref section start)
+                                             (oref section end)
+                                             'herdr-machine nil))
+                  (name (get-text-property at 'herdr-machine)))
         (herdr-connection-named name))
       (herdr-connection--only)))
 
@@ -803,7 +821,7 @@ heading has nowhere to go; see `herdr-dispatch--refuse-heading\\='."
       ('herdr-workspace
        (herdr-workspace-focus (herdr-dispatch-target-value target)))
       ('herdr-worktree (herdr-dispatch-open-worktree target))
-      ('herdr-worktrees
+      ((or 'herdr-worktrees 'herdr-queue 'herdr-machines)
        (herdr-dispatch--refuse-heading
         "a grouping heading is not somewhere to go"))
       (_ (user-error "herdr: nothing at point")))))
@@ -841,7 +859,7 @@ them; see `herdr-dispatch--refuse-heading\\='."
       ('herdr-worktree
        (user-error
         "herdr: a worktree cannot be renamed; rename its branch with git"))
-      ('herdr-worktrees
+      ((or 'herdr-worktrees 'herdr-queue 'herdr-machines)
        (herdr-dispatch--refuse-heading
         "a grouping heading cannot be renamed"))
       (_ (user-error "herdr: nothing at point to rename")))))
@@ -867,7 +885,7 @@ the same reason and with more at stake; see
       ('herdr-worktree
        (herdr-worktree-remove
         (herdr-dispatch--worktree-workspace target)))
-      ('herdr-worktrees
+      ((or 'herdr-worktrees 'herdr-queue 'herdr-machines)
        (herdr-dispatch--refuse-heading
         "a grouping heading cannot be closed"))
       (_ (user-error "herdr: nothing at point to close")))))
@@ -1094,14 +1112,21 @@ nothing.
 Merged here and nowhere else, per KTD6: each connection\\='s cache is
 built from its own server alone, and this is the one place that knows
 they are being shown together."
-  (if (cdr connections)
-      (mapcar (lambda (connection)
-                (herdr-tree-machine-node
-                 (herdr-connection-name connection)
-                 (herdr-state-running-p connection)
-                 (herdr-dispatch--tree-for connection)))
-              connections)
-    (herdr-dispatch--tree-for (car connections))))
+  (append
+   (herdr-tree-queue-nodes
+    (mapcar (lambda (connection)
+              (cons (and (cdr connections) (herdr-connection-name connection))
+                    (herdr-state-current connection)))
+            connections))
+   (list (list 'herdr-machines "machines" "MACHINES"
+               (if (cdr connections)
+                   (mapcar (lambda (connection)
+                             (herdr-tree-machine-node
+                              (herdr-connection-name connection)
+                              (herdr-state-running-p connection)
+                              (herdr-dispatch--tree-for connection)))
+                           connections)
+                 (herdr-dispatch--tree-for (car connections)))))))
 
 (defun herdr-dispatch--tree-for (connection)
   "Return CONNECTION\\='s own subtree."
