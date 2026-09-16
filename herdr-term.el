@@ -117,39 +117,53 @@ the startup loop alone could block for forty."
         (progn (herdr-rpc-call connection "ping") t)
       (herdr-error nil))))
 
-(defconst herdr-term-bootstrap-buffer-name "*herdr-bootstrap*"
-  "Buffer for the client that brings the server up; killed once it has.")
+(defun herdr-term--bootstrap-complaint (log)
+  "Return what the server wrote to LOG as a phrase to append to an error."
+  (let ((said (ignore-errors
+                (with-temp-buffer
+                  (insert-file-contents log)
+                  (string-trim (buffer-string))))))
+    (if (and said (not (string-empty-p said))) (format ": %s" said) "")))
 
 (defun herdr-term--bootstrap-server (connection)
-  "Start a herdr client long enough to bring the server up.
+  "Start the local herdr server, detached, and wait for it to answer.
 
-herdr has no headless start command, so the server is brought up by
-running a client.  The server is a daemon and outlives it, so the buffer
-is discarded once ping succeeds.
+`herdr server\\=' is how herdr starts its own daemon, but it blocks in the
+foreground and has no detach flag: started as a process of ours it would
+be an Emacs child and die with Emacs.  The `&\\=' lets the shell exit at
+once so the server is reparented to init instead.
 
-Shown while it runs: ghostel sizes its PTY from a displayed window and
-paints nothing into a zero-sized one, so a bootstrap that is never shown
-can hang on an unusable PTY until the timeout gives up."
-  (let ((buffer (get-buffer-create herdr-term-bootstrap-buffer-name)))
-    (with-current-buffer buffer (ghostel-mode))
-    (herdr-term--show buffer)
-    (ghostel-exec buffer herdr-executable nil)
+Local only.  A remote connection\\='s server lives on the far host, and
+starting one here would bring up a local server the tunnel does not
+point at and then report success.
+
+`call-process\\=' returns when the shell does, so it cannot say whether
+herdr started; the ping loop is the detector and LOG is what lets a
+timeout say why."
+  (when (herdr-connection-remote-p connection)
+    (error "herdr: no server answering on %s; start it on that host"
+           (herdr-connection-ssh-target connection)))
+  (let ((log (make-temp-file "herdr-server-")))
     (unwind-protect
-        ;; One liveness answer per loop pass, and none after the
-        ;; deadline.  The old shape re-pinged in the `unless' after the
-        ;; loop ended, so a server that missed the deadline was charged
-        ;; one more full probe on top of it before the error finally
-        ;; surfaced.
-        (let ((deadline (+ (float-time) herdr-server-start-timeout))
-              (live (herdr-server-live-p connection)))
-          (while (and (not live) (< (float-time) deadline))
-            (sit-for 0.2)
-            (setq live (herdr-server-live-p connection)))
-          (unless live
-            (error "herdr server did not come up within %ss"
-                   herdr-server-start-timeout)))
-      (quit-windows-on buffer))
-    buffer))
+        (progn
+          (call-process "sh" nil nil nil "-c"
+                        (format "%s server >%s 2>&1 &"
+                                (shell-quote-argument herdr-executable)
+                                (shell-quote-argument log)))
+          ;; One liveness answer per loop pass, and none after the
+          ;; deadline.
+          (let ((deadline (+ (float-time) herdr-server-start-timeout))
+                (live (herdr-server-live-p connection)))
+            (while (and (not live) (< (float-time) deadline))
+              (sit-for 0.2)
+              (setq live (herdr-server-live-p connection)))
+            (unless live
+              (error "herdr server did not come up within %ss%s.  \
+For one that outlives Emacs: `brew services start herdr\\=', or a systemd \
+user unit running `herdr server\\='"
+                     herdr-server-start-timeout
+                     (herdr-term--bootstrap-complaint log)))))
+      (delete-file log))))
 
 ;;; Buffer bookkeeping
 
@@ -469,15 +483,11 @@ trips to be told nothing moved."
 (defun herdr-term-ensure (connection)
   "Make sure CONNECTION\='s terminals exist, starting its server if needed."
   (require 'ghostel)
-  (let ((bootstrap (unless (herdr-server-live-p connection)
-                     (herdr-term--bootstrap-server connection))))
-    (add-hook 'herdr-state-change-functions #'herdr-term--on-state-change)
-    (prog1
-        (progn
-          ;; The bootstrap client was only there to start the daemon.
-          (when (buffer-live-p bootstrap) (kill-buffer bootstrap))
-          (herdr-term--sync-buffers connection))
-      (herdr-term--sync-directories connection))))
+  (unless (herdr-server-live-p connection)
+    (herdr-term--bootstrap-server connection))
+  (add-hook 'herdr-state-change-functions #'herdr-term--on-state-change)
+  (prog1 (herdr-term--sync-buffers connection)
+    (herdr-term--sync-directories connection)))
 
 (defun herdr-term-teardown (&optional connection)
   "Kill CONNECTION\='s terminal buffers, or every one when CONNECTION is nil.

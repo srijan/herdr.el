@@ -255,24 +255,32 @@ riding along on it."
     (should (equal "renamed" (herdr-workspace-label w2)))
     (should (equal '("w2" "w1" "w3" "w4") (herdr-state-test--ws-order next)))))
 
-(ert-deftest herdr-state-reduce-workspace-moved-forward-pins-an-unverified-reading ()
-  "UNVERIFIED: this fixes one of two possible readings of `insert_index'.
+(ert-deftest herdr-state-reduce-workspace-moved-counts-the-index-with-the-entry-in ()
+  "MEASURED against herdr 0.9.0, not assumed.
 
-`herdr-state--move-within' counts the index against the list with the
-moved workspace already taken out, so w2 to index 3 of (w1 w2 w3 w4)
-gives (w1 w3 w4 w2).  Counting against the list with w2 still in it
-gives (w1 w3 w2 w4) instead.  Only a forward move can tell them apart.
+`insert_index\\=' counts against the list with the moved workspace STILL IN
+IT, so w2 to index 3 of (w1 w2 w3 w4) gives (w1 w3 w2 w4).  Counting
+against the list with w2 already taken out gives (w1 w3 w4 w2), which is
+what this package used to do.  Only a forward move tells them apart.
 
-Nothing has been measured: provoking one means calling
-`workspace.move' on a live session, which was out of bounds here.  A
-single real `workspace_moved' watched read-only on the event stream
-settles it.  This test is here to be found and corrected if the other
-reading is right — correct it, do not delete it."
+Provoked on a throwaway session: four workspaces, `workspace.move\\=' with
+insert_index 3, then `workspace.list\\='.  Backward moves agree under both
+readings, which is why the other tests here never caught it."
   (let ((next (herdr-state-reduce
                (herdr-state-test--ws-seed) "workspace_moved"
                `((workspace_id . "w2") (insert_index . 3)
                  (workspaces . [])))))
-    (should (equal '("w1" "w3" "w4" "w2") (herdr-state-test--ws-order next)))))
+    (should (equal '("w1" "w3" "w2" "w4") (herdr-state-test--ws-order next)))))
+
+(ert-deftest herdr-state-reduce-workspace-moved-to-the-length-goes-last ()
+  "MEASURED: an index equal to the length is the last valid one and puts
+the workspace at the end.  One past it is refused by the server with
+`workspace_move_failed\\=', so no event carries it."
+  (let ((next (herdr-state-reduce
+               (herdr-state-test--ws-seed) "workspace_moved"
+               `((workspace_id . "w1") (insert_index . 4)
+                 (workspaces . [])))))
+    (should (equal '("w2" "w3" "w4" "w1") (herdr-state-test--ws-order next)))))
 
 (ert-deftest herdr-state-reduce-workspace-moved-is-pure ()
   (let* ((state (herdr-state-test--ws-seed))
@@ -290,7 +298,9 @@ reading is right — correct it, do not delete it."
     (should (equal '("w1" "w2" "w3" "w4") (herdr-state-test--ws-order next)))))
 
 (ert-deftest herdr-state-reduce-workspace-moved-clamps-a-past-the-end-index ()
-  "Clamping puts it at the end under either reading of the index."
+  "Defensive, not a spec: herdr refuses such a move with
+`workspace_move_failed\\=' and sends no event.  A reducer must not signal
+on a payload it did not expect, so it clamps."
   (let ((next (herdr-state-reduce
                (herdr-state-test--ws-seed) "workspace_moved"
                `((workspace_id . "w1") (insert_index . 99) (workspaces . [])))))

@@ -174,7 +174,6 @@ rather than at the backstop's.
 
 | Option | Default | Function |
 |---|---|---|
-| `herdr-dispatch-show-known-projects` | `nil` | Whether to list projects with no workspace open. |
 | `herdr-dispatch-buffer-name` | `"*herdr-agents*"` | The name of the dashboard buffer. |
 | `herdr-dispatch-display-action` | `(display-buffer-same-window)` | Where the dashboard appears. |
 | `herdr-dispatch-refresh-debounce` | `0.2` | The number of seconds to group the dashboard redraws. |
@@ -211,6 +210,16 @@ To get desktop notifications, set the statuses that you want:
 ```
 
 herdr.el uses the `alert` package when the package is present.
+
+These are herdr.el's own notifications, and they do not come from the server. herdr has a notifier
+of its own under `[ui.toast]` in `config.toml` — `off`, `inside herdr`, `via terminal` or
+`via system` in its settings screen — but every one of those needs a herdr TUI attached: with none,
+`notification.show` answers `no_foreground_client` and nothing is delivered whichever mode is set.
+So for the usual herdr.el session, where the terminals are Emacs buffers and no TUI is running,
+`herdr-notify-statuses` is the only thing that can notify you.
+
+If you do keep a TUI attached and turn `[ui.toast]` on, set one or the other rather than both, or
+each finished agent notifies you twice.
 
 ## The event stream
 

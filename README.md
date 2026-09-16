@@ -34,8 +34,6 @@ herdr.el (2)                 ~/src/herdr.el/
     ▶ claude    working   w7:p1   Fix the reconcile order
   feat-dispatch (1)          ~/src/herdr.el-worktrees/feat-dispatch/ ▶
     ▶ claude    working   w9:p1   Nest worktrees under their repository
-
-Inactive (24)
 ```
 
 The dashboard opens in the selected window and leaves your other windows alone. `q` restores the
@@ -86,40 +84,6 @@ chat arrives as a workspace of one pane and reads as exactly that.
 
 The count on a repository row is its checkouts: its own, plus one for each worktree. Where a
 `main` group is drawn, the pane count sits on the group.
-
-### Inactive projects
-
-Set `herdr-dispatch-show-known-projects` to `t` and the dashboard ends with one foldable
-`Inactive (N)` heading. It lists every `project.el` project with no herdr workspace open.
-
-It is off by default. The list grows with every project you visit and never shrinks, so it is
-soon longer than the session above it, and each root costs a `worktree.list` round trip whenever
-the dashboard refetches. Each row is dimmed, folds, and carries the repository's
-checkouts underneath: a `main` row for its own, then one for each worktree.
-
-```
-Inactive (24)
-  example-api (16)           ~/src/example-api/
-    main                     ~/src/example-api
-    release-1.4              ~/src/example-api-worktrees/release-1.4
-    …
-```
-
-`RET` on the project row creates its workspace. `n` on any row under it opens a terminal in that
-directory. A worktree you have not touched in a week is two keystrokes from having a shell in it.
-
-Two kinds of row are left out. A worktree you have also opened as a project in Emacs gets no row
-of its own, because it is already listed under the repository it belongs to. A project whose
-directory has been deleted gets no row either. `project.el` remembers a project until something
-tells it to forget one, and nothing tells it when a directory goes away. Run
-`project-forget-zombie-projects` to drop those.
-
-This list comes from `project-known-project-roots`, not from herdr. A herdr workspace closes when
-its last pane closes, so the server knows nothing about a project you are not working in right
-now. Reading `project.el` is what makes the dashboard a place to start work from.
-
-Directories render with `~/` in place of the home path. The abbreviation is display only. The row
-still carries the real path for the commands that act on it.
 
 ## One prefix key
 

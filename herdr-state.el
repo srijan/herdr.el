@@ -283,20 +283,26 @@ how callers tell a miss from a merge.  ITEMS is never mutated."
 (defun herdr-state--move-within (items key id index)
   "Return ITEMS with the entry whose KEY is ID placed at INDEX.
 
-An ID no entry carries leaves ITEMS alone.  An INDEX past the end is
-clamped.  Like `herdr-state--upsert\\=', ITEMS is not mutated.
+INDEX counts against the list with the moved entry STILL IN IT.  That is
+herdr\\='s reading, measured against a 0.9.0 server and not assumed: moving
+w2 to index 3 of (w1 w2 w3 w4) gives (w1 w3 w2 w4), where counting
+against the list with w2 already removed would give (w1 w3 w4 w2).  Only
+a forward move tells the two apart; this package had the wrong one.
 
-INDEX counts against the list with the moved entry ALREADY REMOVED.
-That is the usual convention, but it is NOT VERIFIED against herdr, and
-only a forward move can tell the two readings apart.  The other reading
-counts against the list including the entry and lands it one slot
-earlier.  One real `workspace.move\\=' watched on the event stream would
-settle it; until then the tests say which of the two they pin."
-  (let ((moved (seq-find (lambda (item) (equal id (alist-get key item))) items)))
-    (if (not moved)
+An ID no entry carries leaves ITEMS alone.  herdr refuses an INDEX past
+the end with `workspace_move_failed\\=', so no event carries one, but it is
+clamped rather than trusted because a reducer must not signal.  Like
+`herdr-state--upsert\\=', ITEMS is not mutated."
+  (let ((from (seq-position items id
+                            (lambda (item wanted)
+                              (equal wanted (alist-get key item))))))
+    (if (not from)
         items
-      (let* ((rest (delq moved (copy-sequence items)))
-             (at (max 0 (min (length rest) (or index 0)))))
+      (let* ((moved (nth from items))
+             (rest (append (seq-take items from) (seq-drop items (1+ from))))
+             (index (or index 0))
+             (at (max 0 (min (length rest)
+                             (if (> index from) (1- index) index)))))
         (append (seq-take rest at) (list moved) (seq-drop rest at))))))
 
 (defun herdr-state--merge-pane (state pane-id changes)

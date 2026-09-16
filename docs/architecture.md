@@ -114,8 +114,7 @@ returns a nested list of nodes. Each node has this shape:
 ```
 
 - `TYPE` is one of `herdr-workspace`, `herdr-panes` (a workspace's `main` group),
-  `herdr-pane`, `herdr-worktree`, `herdr-known-project` or `herdr-known-projects` (the
-  `Inactive` container). The renderer's `pcase` has no fallback clause, so a type with no branch
+  `herdr-pane` or `herdr-worktree`. The renderer's `pcase` has no fallback clause, so a type with no branch
   is dropped silently along with everything under it.
 - `VALUE` is the identifier that a command acts on. It must never be `nil` for a real row.
 - `LINE` is the propertized string to insert.
@@ -156,5 +155,3 @@ Apply the abbreviation to the `LINE` string only. Never apply it to `VALUE`. A c
 - A synchronous call on a timer must bind `herdr-rpc-timeout` to
   `herdr-rpc-background-timeout`. A slow server must not freeze the editor.
 - Guard every use of `project.el` with `fboundp`.
-- Stub `herdr-dispatch--known-project-roots` in a test. Without the stub, the test reads the real
-  project list of the machine.

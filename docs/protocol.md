@@ -249,8 +249,8 @@ Reporting only gives a pane an entry in herdr's own agent list: the sidebar, and
 the focus in Emacs, the focus moves in every attached TUI.
 
 **A workspace closes with its last pane.** A workspace with zero panes therefore cannot exist.
-That fact is the reason that the `Inactive` section of the dashboard comes from `project.el` and
-not from the server.
+That fact is the reason `herdr-new-terminal` offers `project.el` roots beside the open
+workspaces: the server knows nothing about a project you are not working in right now.
 
 ## Throughput and terminals
 

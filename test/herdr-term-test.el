@@ -410,44 +410,53 @@ business, not a side effect of navigation."
   (should (equal '((display-buffer-reuse-window display-buffer-same-window))
                  (default-value 'herdr-display-action))))
 
-;;; Bootstrap must give ghostel a displayed window
+;;; Bootstrap must outlive Emacs
 
-(ert-deftest herdr-term-bootstrap-server-shows-the-buffer ()
-  "ghostel sizes its PTY from a displayed window and paints nothing into
-a zero-sized one.  Skipping the show, on the belief that the bootstrap
-client is discarded right after, would leave first startup stuck with an
-unusable PTY."
-  (let (shown quit)
-    (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
-              ((symbol-function 'ghostel-exec) #'ignore)
-              ((symbol-function 'herdr-server-live-p) (lambda (_connection) t))
-              ((symbol-function 'herdr-term--show)
-               (lambda (buf) (setq shown buf)))
-              ((symbol-function 'quit-windows-on)
-               (lambda (buf &rest _) (setq quit buf))))
-      (let ((buffer (herdr-term--bootstrap-server (herdr-current-connection))))
-        (unwind-protect
-            (progn
-              (should (eq buffer shown))
-              (should (eq buffer quit)))
-          (kill-buffer buffer))))))
+(ert-deftest herdr-term-bootstrap-server-orphans-the-server ()
+  "`herdr server\\=' blocks and has no detach flag, so an Emacs child would
+die with Emacs.  The spawn must go through a shell and end in `&\\='."
+  (let (command)
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (program &rest args)
+                 (setq command (cons program (nthcdr 4 args)))
+                 0))
+              ((symbol-function 'herdr-server-live-p) (lambda (_connection) t)))
+      (herdr-term--bootstrap-server (herdr-current-connection))
+      (should (equal "sh" (car command)))
+      (should (member "-c" (list (nth 1 command) "-c")))
+      (let ((script (car (last command))))
+        (should (string-match-p " server " script))
+        (should (string-suffix-p "&" script))))))
 
-(ert-deftest herdr-term-bootstrap-server-quits-the-window-even-on-failure ()
-  "A bootstrap that never comes up must not leave its window lingering."
-  (let ((herdr-server-start-timeout 0.01)
-        quit)
-    (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
-              ((symbol-function 'ghostel-exec) #'ignore)
-              ((symbol-function 'herdr-term--show) #'ignore)
-              ((symbol-function 'herdr-server-live-p) (lambda (_connection) nil))
-              ((symbol-function 'quit-windows-on)
-               (lambda (buf &rest _) (setq quit buf))))
-      (unwind-protect
-          (progn
-            (should-error (herdr-term--bootstrap-server (herdr-current-connection)))
-            (should (eq (get-buffer herdr-term-bootstrap-buffer-name) quit)))
-        (when (get-buffer herdr-term-bootstrap-buffer-name)
-          (kill-buffer herdr-term-bootstrap-buffer-name))))))
+(ert-deftest herdr-term-bootstrap-server-refuses-a-remote-connection ()
+  "A remote server lives on the far host.  Starting one here would bring
+up a local server the tunnel does not point at and report success."
+  (let ((remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
+        (spawned nil))
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (&rest _) (setq spawned t) 0)))
+      (should-error (herdr-term--bootstrap-server remote))
+      (should-not spawned))))
+
+(ert-deftest herdr-term-bootstrap-server-reports-what-the-server-said ()
+  "A timeout with no reason is the failure the ghostel buffer used to
+show.  The log the spawn redirects to is what replaces it."
+  (let ((herdr-server-start-timeout 0.01))
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (_program &rest args)
+                 ;; Write into the log the real script redirects to.
+                 (let ((script (car (last args))))
+                   (should (string-match ">\\([^ ]+\\) 2>&1" script))
+                   (write-region "address already in use" nil
+                                 (match-string 1 script) nil 'quiet))
+                 0))
+              ((symbol-function 'herdr-server-live-p) (lambda (_connection) nil)))
+      (let ((complaint (cadr (should-error
+                              (herdr-term--bootstrap-server
+                               (herdr-current-connection))))))
+        (should (string-match-p "did not come up" complaint))
+        (should (string-match-p "address already in use" complaint))
+        (should (string-match-p "brew services" complaint))))))
 
 ;;; Timer teardown must cancel, not merely forget
 

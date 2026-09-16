@@ -35,7 +35,6 @@
 
 ;;; Code:
 
-(require 'json)
 (require 'subr-x)
 (require 'herdr-rpc)
 (require 'herdr-connection)

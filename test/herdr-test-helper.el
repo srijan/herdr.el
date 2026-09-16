@@ -9,7 +9,6 @@
 
 ;;; Code:
 
-(require 'json)
 (require 'ert)
 (require 'cl-lib)
 ;; The connection struct and its `setf' expanders have to exist before
@@ -35,12 +34,6 @@ connections sharing one would replace each other.")
           (emacs-pid)
           (cl-incf herdr-test--socket-counter)))
 
-(defun herdr-test-parse (string)
-  "Parse STRING as herdr does: alists, lists, nil for null and false."
-  (json-parse-string string
-                     :object-type 'alist :array-type 'list
-                     :null-object nil :false-object nil))
-
 (defun herdr-test-start-server (path responder)
   "Listen on PATH, answering with RESPONDER.
 RESPONDER is called with each decoded request alist and must return a
@@ -54,7 +47,7 @@ real server sends after every non-subscription request."
    :filter
    (lambda (client chunk)
      (dolist (line (split-string chunk "\n" t "[ \t\r]+"))
-       (let* ((request (herdr-test-parse line))
+       (let* ((request (herdr-rpc-decode line))
               (reply (funcall responder request)))
          (when (car reply)
            (process-send-string client (car reply)))
