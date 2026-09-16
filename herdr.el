@@ -3,11 +3,12 @@
 ;; Copyright (C) 2026 Eddie Jesinsky
 
 ;; Author: Eddie Jesinsky
-;; URL: https://github.com/ejesinsky/herdr.el
+;; Maintainer: Srijan Choudhary
+;; URL: https://github.com/srijan/herdr.el
 ;; Version: 0.1.0
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-;; Package-Requires: ((emacs "28.1") (magit-section "4.0") (ghostel "0"))
+;; Package-Requires: ((emacs "29.1") (magit-section "4.0") (ghostel "0"))
 
 ;; This file is not part of GNU Emacs.
 
@@ -44,12 +45,14 @@
 A mismatch warns once rather than refusing to run: declining to work
 because herdr bumped a minor is worse than one command misbehaving."
   :type 'integer
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defun herdr--check-protocol (connection)
-  "Warn once if CONNECTION\='s server speaks a protocol this package does not know.
+  "Warn once when CONNECTION\\='s server speaks an unknown protocol.
 
-Once per connection rather than once per package: a single flag let the
+Unknown meaning other than `herdr-protocol-version'.  Once per
+connection rather than once per package: a single flag let the
 first server's mismatch silence the check for every server after it, and
 the one most likely to disagree is the one added last."
   (unless (herdr-connection-protocol-warned connection)
@@ -87,7 +90,7 @@ One connection, both halves.  The teardown used to be called with no
 argument, which kills every connection\\='s terminal buffers, beside a
 stop scoped to one — so stopping the local server reaped a remote
 server\\='s terminals and left that connection running.  Use
-`herdr-disconnect\\=' to stop a connection you named."
+`herdr-disconnect' to stop a connection you named."
   (interactive)
   (let ((connection (herdr-current-connection)))
     (herdr-term-teardown connection)
@@ -108,7 +111,7 @@ server\\='s terminals and left that connection running.  Use
 (defun herdr ()
   "Start herdr if needed and open the dispatcher.
 The one entry point that runs the start sequence first, which is why
-`s\\=' in `herdr-command-map\\=' is bound here and not to `herdr-agents\\='."
+`s' in `herdr-command-map' is bound here and not to `herdr-agents'."
   (interactive)
   (herdr-start)
   (herdr-agents))
@@ -130,7 +133,7 @@ The one entry point that runs the start sequence first, which is why
     (define-key global-map (kbd \"C-c H\") herdr-command-map)
 
 The letters are the dashboard\\='s letters; the target comes from a picker
-here and from point there.  No help key: `C-h\\=' after the prefix lists
+here and from point there.  No help key: `C-h' after the prefix lists
 these bindings.")
 
 (provide 'herdr)

@@ -21,7 +21,7 @@ level in rather than at top level."
   "Move point past TEXT inside the MACHINES section.
 
 The queue above lists every agent under its own status heading, so a
-bare `search-forward\\=' from point-min finds the queue\\='s copy of a name
+bare `search-forward' from point-min finds the queue\\='s copy of a name
 first.  These tests mean the topology.
 
 Fixtures built from raw nodes have no MACHINES container and nothing
@@ -84,9 +84,9 @@ between them every node type the renderer must handle appears.")
 
 (defun herdr-dispatch-test--face-at (text)
   "Return the face on the first character of the line holding TEXT.
-Read off `font-lock-face\\=', which the dashboard writes beside `face\\='
+Read off `font-lock-face', which the dashboard writes beside `face'
 on every faced character; the two are asserted to agree by
-`herdr-dispatch-writes-every-face-under-both-properties\\=', which is
+`herdr-dispatch-writes-every-face-under-both-properties', which is
 also where the reason both exist is written down."
   (herdr-dispatch-test--section-at text)
   (get-text-property (line-beginning-position) 'font-lock-face))
@@ -136,7 +136,7 @@ renderer consuming them, which is the seam such a typo would hide in."
 (defun herdr-dispatch-test--indent-at (text)
   "Return the leading whitespace width of the line containing TEXT.
 
-Counted in characters rather than with `current-column\\=', which measures
+Counted in characters rather than with `current-column', which measures
 displayed width: a workspace starts collapsed, so its rows are invisible
 and every one of them would measure zero."
   (goto-char (point-min))
@@ -148,9 +148,9 @@ and every one of them would measure zero."
 (ert-deftest herdr-dispatch-panes-of-a-two-tab-workspace-render-at-the-same-depth ()
   "The hierarchy has to be visible, not just navigable.
 
-`w2\\=' used to keep its tab level because it had more than one tab;
-`herdr-tree-build\\=' no longer nests panes under a tab at all, so both of
-`w2\\='s panes must now hang directly off the workspace, indented one
+`w2' used to keep its tab level because it had more than one tab;
+`herdr-tree-build' no longer nests panes under a tab at all, so both of
+`w2's panes must now hang directly off the workspace, indented one
 level below its heading and no deeper than each other."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (search-forward "w2:p1")
@@ -275,27 +275,27 @@ the other would both be caught."
 (ert-deftest herdr-dispatch-faces-survive-being-fontified ()
   "A face has to be written where fontification will not delete it.
 
-`magit-section-mode\\=' sets `font-lock-defaults\\=', so
-`global-font-lock-mode\\=' — on by default — turns `font-lock-mode\\=' on in
+`magit-section-mode' sets `font-lock-defaults', so
+`global-font-lock-mode' — on by default — turns `font-lock-mode' on in
 the dashboard, and the first thing done to a region before it is
-fontified is `font-lock-default-unfontify-region\\=', which removes `face\\='
-and does not remove `font-lock-face\\='.  Every face in this buffer
+fontified is `font-lock-default-unfontify-region', which removes `face'
+and does not remove `font-lock-face'.  Every face in this buffer
 therefore used to last exactly as long as it took redisplay to reach the
 line: drawn correctly, then repainted in the default face.  No test
 caught it, because they all read the property back in the same instant
 it was written, which is the one moment it is still there.
 
 The control is what makes this test mean anything.  A field faced with
-`face\\=' is rendered beside the others and asserted to LOSE its face —
+`face' is rendered beside the others and asserted to LOSE its face —
 without that, this test would pass just as happily in a buffer where
 fontification never ran at all, which is the failure mode of every test
 that tries to prove something about redisplay in batch.
 
-The dashboard now writes `face\\=' as well, and the `face\\=' it writes is
+The dashboard now writes `face' as well, and the `face' it writes is
 erased here too — asserted below, because that is the fact that makes
 the pair necessary rather than redundant.  Neither property survives
-both situations: `font-lock-face\\=' is what renders once font-lock has
-run, `face\\=' is what renders while it has not."
+both situations: `font-lock-face' is what renders once font-lock has
+run, `face' is what renders while it has not."
   (let ((buffer (generate-new-buffer "herdr-fontification-test")))
     (unwind-protect
         (with-current-buffer buffer
@@ -957,7 +957,7 @@ which is why a `pcase' over the type cannot be mis-ordered."
   "Return a function recording each call to it as (NAME . ARGS).
 A leading connection is dropped.  These assertions are about which
 command ran with which parameters; that a connection was passed at all
-is `herdr-rpc-call-refuses-to-guess-a-connection\='s job."
+is `herdr-rpc-call-refuses-to-guess-a-connection\\='s job."
   (lambda (&rest args)
     (push (cons name (if (herdr-connection-p (car args)) (cdr args) args))
           herdr-dispatch-test--calls)
@@ -2064,18 +2064,18 @@ used to take the mutating branch rather than the focusing one."
                        (herdr-dispatch-open-worktree)))))))
 
 (ert-deftest herdr-dispatch-open-worktree-opens-a-closed-worktree-in-its-own-directory ()
-  "The cwd sent to `worktree.open\\=' must be the worktree's own workspace
+  "The cwd sent to `worktree.open' must be the worktree's own workspace
 directory, resolved the same way `herdr-dispatch--worktree-record' does —
-not `default-directory\\=', which in the dispatcher buffer names nothing
+not `default-directory', which in the dispatcher buffer names nothing
 in particular.
 
 `herdr-worktree-open' (the wrapped command `herdr-cmd' already has)
-derives its `cwd\\=' from the calling buffer's `default-directory\\=' , so a
+derives its `cwd' from the calling buffer's `default-directory' , so a
 test that only records \"was `herdr-worktree-open' called\" would pass
 even if the open request resolved against the wrong repository entirely.
-Binding `default-directory\\=' here to something that is not the
+Binding `default-directory' here to something that is not the
 worktree's directory, and asserting the exact params reaching
-`herdr-rpc-call\\=', is what would catch that."
+`herdr-rpc-call', is what would catch that."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (herdr-dispatch-test--with-worktrees
         '(("w1" . ((worktrees . (((path . "/tmp/herdr.el-fix")
@@ -2110,9 +2110,9 @@ opened on a guess."
                        (should-error (herdr-dispatch-visit) :type 'user-error))))))))
 
 (ert-deftest herdr-dispatch-binds-no-help-key ()
-  "Not nil but \"not one of ours\": `magit-section-mode\\=' links
-`special-mode-map\\=' into the parent chain once a dispatcher buffer
-exists, and `?\\=' is `describe-mode\\=' there."
+  "Not nil but \"not one of ours\": `magit-section-mode' links
+`special-mode-map' into the parent chain once a dispatcher buffer
+exists, and `?' is `describe-mode' there."
   (should (memq (lookup-key herdr-dispatch-mode-map "?") '(nil describe-mode)))
   (should-not (fboundp 'herdr-transient)))
 
@@ -2139,8 +2139,8 @@ exists, and `?\\=' is `describe-mode\\=' there."
         (should (equal '(workspace "new" "w1") called))))))
 
 (ert-deftest herdr-dispatch-rename-prefers-the-pane-over-its-workspace ()
-  "A pane nested under a workspace must still rename the pane: `w2:p1\\='
-has both ancestors, which distinguishes a `cond\\=' that checks the
+  "A pane nested under a workspace must still rename the pane: `w2:p1'
+has both ancestors, which distinguishes a `cond' that checks the
 workspace first from one that checks the pane first."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (search-forward "w2:p1")
@@ -2153,7 +2153,7 @@ workspace first from one that checks the pane first."
                        (herdr-dispatch-rename)))))))
 
 (ert-deftest herdr-dispatch-rename-refuses-a-worktree ()
-  "There is no rename-a-worktree operation, so `R\\=' on a worktree row must
+  "There is no rename-a-worktree operation, so `R' on a worktree row must
 refuse rather than fall through to the workspace enclosing it — which
 would silently rename the repository the worktree list was expanded
 from, a different object under a name the user never aimed at."
@@ -2201,8 +2201,8 @@ siblings, so removing the enclosing workspace destroys the worktree you
 are standing in rather than the sibling you aimed at.
 
 The fixture is built so a resolver that reaches for the enclosing
-workspace cannot pass by luck: the row sits inside `w1\\=' but names the
-worktree open as `w2\\='."
+workspace cannot pass by luck: the row sits inside `w1' but names the
+worktree open as `w2'."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (herdr-dispatch-test--with-worktrees
            '(("w1" . ((worktrees . (((path . "/tmp/herdr.el-fix")
@@ -2217,7 +2217,7 @@ worktree open as `w2\\='."
                        (herdr-dispatch-close)))))))
 
 (ert-deftest herdr-dispatch-close-refuses-a-worktree-that-is-not-open ()
-  "`worktree.remove\\=' addresses a workspace, so a worktree herdr has not
+  "`worktree.remove' addresses a workspace, so a worktree herdr has not
 opened as one cannot be removed at all.  Guessing at the enclosing
 workspace is what made this destructive; refusing is the alternative, and
 nothing may reach the server on the way out."
@@ -2434,13 +2434,13 @@ ancestor must not stop it firing when point really is on the heading."
         (should (eq t (alist-get 'focus params)))))))
 
 (ert-deftest herdr-dispatch-terminal-workspace-reads-an-unnested-pane-record ()
-  "A pane row is not always nested under a `herdr-workspace\\=' section —
-the agents buffer can list panes on their own — so `n\\=' falls back to the
-pane\\='s own `workspace_id\\=' rather than assuming nesting.
+  "A pane row is not always nested under a `herdr-workspace' section —
+the agents buffer can list panes on their own — so `n' falls back to the
+pane\\='s own `workspace_id' rather than assuming nesting.
 
-Only `n\\='.  The target\\='s WORKSPACE stays the section it sits in, because
-`w\\=' and `%\\=' create things against a workspace on screen and must refuse
-a row that shows none - reaching through a record for one would make `%\\='
+Only `n'.  The target\\='s WORKSPACE stays the section it sits in, because
+`w' and `%' create things against a workspace on screen and must refuse
+a row that shows none - reaching through a record for one would make `%'
 build a worktree for a workspace the row never named."
   (herdr-test-with-state (:cache (herdr-state-from-snapshot
           '((panes . (((pane_id . "w9:p1") (workspace_id . "w9")))))))
@@ -2453,7 +2453,7 @@ build a worktree for a workspace the row never named."
 
 (ert-deftest herdr-dispatch-open-worktree-refuses-a-row-that-is-not-one ()
   "Reachable as a command, so it has to answer for a row it was not aimed
-at: a struct accessor on a nil target would say `wrong-type-argument\\='
+at: a struct accessor on a nil target would say `wrong-type-argument'
 where the verb it replaced said which row you needed."
   (herdr-dispatch-test-with-buffer nil
     (should (equal "herdr: point is not on a worktree"
@@ -2463,7 +2463,7 @@ where the verb it replaced said which row you needed."
                      (user-error (error-message-string err)))))))
 
 (ert-deftest herdr-dispatch-open-worktree-acts-on-the-target-it-is-given ()
-  "`herdr-dispatch-visit\\=' hands over the target it already resolved, and
+  "`herdr-dispatch-visit' hands over the target it already resolved, and
 this is the half of that which the visit test cannot see: point is
 somewhere else entirely while the verb runs."
   (herdr-dispatch-test--with-worktrees
@@ -2560,11 +2560,11 @@ than the current HEAD."
     (herdr-workspace "w2" "api  /tmp/api  2 panes"
      ((herdr-pane "w2:p1" "  shell           w2:p1" nil)
       (herdr-pane "w2:p2" "· gemini idle w2:p2" nil))))
-  "A tree holding every case `a\\=' has to answer for.
+  "A tree holding every case `a' has to answer for.
 
-Every heading encloses no `herdr-tab\\=' section — `herdr-tree-build\\='
+Every heading encloses no `herdr-tab' section — `herdr-tree-build'
 never nests a pane under one — which is the case the split-target chain
-used to dead-end on for a single-tab workspace like `w1\\='.  Its panes
+used to dead-end on for a single-tab workspace like `w1'.  Its panes
 are, in order, one running a real agent, one plain shell, and one
 with no agent.")
 
@@ -2582,9 +2582,9 @@ with no agent.")
               ((pane_id . "w2:p1") (workspace_id . "w2") (tab_id . "w2:t1"))
               ((pane_id . "w2:p2") (workspace_id . "w2") (tab_id . "w2:t2")
                (agent . "gemini")))))
-  "The state `herdr-dispatch-test--start-nodes\\=' was drawn from.
+  "The state `herdr-dispatch-test--start-nodes' was drawn from.
 Real state rather than mocked accessors, for the reason given in
-`herdr-dispatch-create-terminal-resolves-a-tab-to-one-of-its-panes\\='.")
+`herdr-dispatch-create-terminal-resolves-a-tab-to-one-of-its-panes'.")
 
 (defmacro herdr-dispatch-test-with-start-tree (&rest body)
   "Render the agent-start fixture over its own state and run BODY there."
@@ -2653,11 +2653,11 @@ pointing past."
                      (alist-get 'cwd (cdr (car (reverse calls))))))))))
 
 (ert-deftest herdr-dispatch-create-terminal-refuses-a-row-naming-no-workspace ()
-  "A server row names no workspace, and a nil `workspace_id\\=' would send
+  "A server row names no workspace, and a nil `workspace_id' would send
 the terminal to whichever workspace the server has focused rather than
 refusing.
 
-A `main (N)\\=' heading is not refused: it sits inside a workspace, so the
+A `main (N)' heading is not refused: it sits inside a workspace, so the
 terminal goes there.  Only a row with no workspace above it has nowhere
 to send one."
   (herdr-dispatch-test-with-buffer
@@ -2670,9 +2670,9 @@ to send one."
                                    :type 'user-error))))))
 
 (ert-deftest herdr-dispatch-create-terminal-creates-a-tab-from-a-flattened-workspace-heading ()
-  "`herdr-tree\\=' renders a single-tab workspace flattened, dropping the
-tab level, so on such a heading there is no `herdr-tab\\=' section
-underneath — but `tab.create\\=' needs a workspace id, not a pane, and the
+  "`herdr-tree' renders a single-tab workspace flattened, dropping the
+tab level, so on such a heading there is no `herdr-tab' section
+underneath — but `tab.create' needs a workspace id, not a pane, and the
 heading is that id directly."
   (let ((params nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
@@ -2696,7 +2696,7 @@ heading is that id directly."
     (should (commandp verb))))
 
 (ert-deftest herdr-dispatch-binds-no-create-menu ()
-  "`c\\=' offered the same verbs as `w\\=', `n\\=' and `%\\=' plus three
+  "`c' offered the same verbs as `w', `n' and `%' plus three
 arguments, and was the last transient prefix in the package."
   (should-not (lookup-key herdr-dispatch-mode-map "c"))
   (should-not (fboundp 'herdr-dispatch-create))
@@ -2704,7 +2704,7 @@ arguments, and was the last transient prefix in the package."
   (should-not (fboundp 'herdr-dispatch--arg)))
 
 (ert-deftest herdr-dispatch-offers-no-second-way-to-create-a-place-to-run-in ()
-  "`a\\=' called `agent.start\\=', asking for a kind and a name that herdr\\='s
+  "`a' called `agent.start', asking for a kind and a name that herdr\\='s
 own TUI never asks for.
 
 The key is bound again, to answering a blocked agent, so the absent verb
@@ -2923,10 +2923,10 @@ whose subtree the row sits in, not whichever the resolver would answer."
 (ert-deftest herdr-dispatch-a-queue-row-resolves-to-its-own-machine ()
   "The same guard for the queue, which is where it is hardest: a queue is
 ordered by attention, so a row has no machine heading above it to walk up
-to, and both machines here issued `w1:p1\='.
+to, and both machines here issued `w1:p1'.
 
 The row carries the machine name on its own line instead, which is what
-`herdr-dispatch--row-connection\=' reads when there is no heading.  A name
+`herdr-dispatch--row-connection' reads when there is no heading.  A name
 rather than the connection, because a section outlives the redraws around
 it and a reconnect replaces the struct."
   (herdr-dispatch-test--with-two-servers
@@ -2974,7 +2974,7 @@ a row that vanishes when a laptop sleeps tells you the wrong one."
 
 (ert-deftest herdr-dispatch-worktrees-start-folded ()
   "A repository's other checkouts are worth one line until asked for.
-Through `magit-section-initial-visibility-alist\\=' rather than a hidden
+Through `magit-section-initial-visibility-alist' rather than a hidden
 slot set by hand, so a redraw keeps whatever the reader has since
 toggled instead of folding it shut under them again."
   (herdr-dispatch-test-with-buffer

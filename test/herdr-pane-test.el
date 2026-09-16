@@ -120,7 +120,7 @@ version — which a mutation run found it doing."
 ;;; What you call a pane
 
 (ert-deftest herdr-pane-identity-prefers-the-name-somebody-set ()
-  "`agent.rename\\=' outranks everything: it is the one name a person
+  "`agent.rename' outranks everything: it is the one name a person
 chose for this pane and nothing else."
   (should (equal "Lantern"
                  (herdr-pane-identity
@@ -143,7 +143,7 @@ runs in it and where."
                   '((pane_id . "w1:p1") (agent . "claude")) nil "web"))))
 
 (ert-deftest herdr-pane-identity-prefers-the-display-agent ()
-  "`display_agent\\=' is what the server wants shown; `agent\\=' is what it
+  "`display_agent' is what the server wants shown; `agent' is what it
 detected.  For a name, shown wins."
   (should (equal "opencode@web"
                  (herdr-pane-identity
@@ -167,7 +167,7 @@ kind would not."
 (ert-deftest herdr-pane-identity-treats-an-empty-string-as-absent ()
   "The server sends \"\" for a pane nobody named, and an empty name reads
 as a missing one.  Before this, a pane labelled \"\" was called nothing at
-all, and a workspace labelled \"\" made every pane in it `claude@\='."
+all, and a workspace labelled \"\" made every pane in it `claude@'."
   (should (equal "claude@web"
                  (herdr-pane-identity
                   '((pane_id . "w1:p1") (label . "") (agent . "claude"))
@@ -189,12 +189,12 @@ all, and a workspace labelled \"\" made every pane in it `claude@\='."
 
 (ert-deftest herdr-pane-identity-is-never-empty ()
   "A prompt has to print something.  This is the floor callers fall back
-to when `herdr-pane-name\\=' is empty."
+to when `herdr-pane-name' is empty."
   (should (equal "shell" (herdr-pane-identity '((pane_id . "w1:p1"))))))
 
 (ert-deftest herdr-pane-identity-collides-for-two-unnamed-siblings ()
   "Stated, not fixed: callers that name a buffer with this must uniquify.
-`herdr-term--unique-buffer-name\\=' is what does."
+`herdr-term--unique-buffer-name' is what does."
   (let ((one '((pane_id . "w1:p1") (agent . "claude") (workspace_id . "w1")))
         (two '((pane_id . "w1:p2") (agent . "claude") (workspace_id . "w1"))))
     (should (equal (herdr-pane-identity one) (herdr-pane-identity two)))))

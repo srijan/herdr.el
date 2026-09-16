@@ -43,7 +43,7 @@ connections answering to it, one of them dead."
 
 (ert-deftest herdr-current-connection-registers-a-local-one-when-empty ()
   "The single-server path needs no setup: asking with nothing registered
-is how `herdr-start\\=' gets its connection."
+is how `herdr-start' gets its connection."
   (let ((herdr-connections nil))
     (let ((connection (herdr-current-connection)))
       (should (herdr-connection-p connection))
@@ -218,7 +218,7 @@ herdr is installed there at all."
   "TRAMP runs remote commands under its own `tramp-remote-path', not the
 login PATH, so a herdr in `~/.local/bin' is on the PATH for
 `ssh host herdr' and not on the one the terminal client gets.  Measured:
-the attach failed with `/bin/sh: exec: herdr: not found\='.  An absolute
+the attach failed with `/bin/sh: exec: herdr: not found'.  An absolute
 path needs no PATH at all."
   (let ((asked nil))
     (herdr-connection-test--answering
@@ -249,7 +249,7 @@ the whole report; guessing past it is not."
       (should (string-match-p "Could not resolve" (herdr-error-message err))))))
 
 (ert-deftest herdr-connection-login-noise-is-not-mistaken-for-the-binary ()
-  "`command -v\\=' answers an absolute path.  A banner, a host-key warning
+  "`command -v' answers an absolute path.  A banner, a host-key warning
 or anything a remote shell echoes does not -- and the first line of the
 answer is exec\\='d on that host, so taking one would run whatever the
 noise named."
@@ -544,7 +544,7 @@ one of its labels is read as a target and asked about in full."
 (ert-deftest herdr-connection-registering-a-name-retires-the-one-it-displaces ()
   "Replacing the registry cell alone left the old connection running --
 its streams, its timers and its tunnel -- and reachable by nothing,
-`herdr-disconnect\=' included."
+`herdr-disconnect' included."
   (let* ((old (herdr-connection--make :name "shadow" :socket-path "/tmp/a.sock"))
          (new (herdr-connection--make :name "shadow" :socket-path "/tmp/b.sock"))
          (herdr-connections (list (cons "shadow" old)))
@@ -567,7 +567,7 @@ its streams, its timers and its tunnel -- and reachable by nothing,
     (should-not stopped)))
 
 (ert-deftest herdr-connection-a-failed-local-connect-leaves-no-entry ()
-  "`herdr-connect-remote\=' promises the registry holds nothing when any of
+  "`herdr-connect-remote' promises the registry holds nothing when any of
 it fails; the local entry point registered before the fallible call."
   (let ((herdr-connections nil))
     (cl-letf (((symbol-function 'herdr-state-start)
@@ -599,7 +599,7 @@ still matches, which is the leniency TRAMP itself has."
 
 (ert-deftest herdr-connection-a-choice-survives-a-confirmation-prompt ()
   "`post-command-hook\= ' runs for the commands inside a recursive edit too,
-so a command that picked a target and then asked `y-or-n-p\=' lost its
+so a command that picked a target and then asked `y-or-n-p' lost its
 answer between the two.  Measured in a real frame: the close went to the
 local server after picking a pane on the remote one."
   (let* ((one (herdr-connection--make :name "one"))
@@ -618,7 +618,7 @@ local server after picking a pane on the remote one."
 
 (ert-deftest herdr-connection-a-remote-reconnect-restarts-its-tunnel ()
   "A remote connection reaches its server through the forward, so
-reopening a socket whose `ssh\=' has exited retries a path that cannot
+reopening a socket whose `ssh' has exited retries a path that cannot
 answer -- forever, with backoff, looking like it is trying."
   (let ((connection (herdr-connection--make :name "shadow"
                                             :ssh-target "shadow"))

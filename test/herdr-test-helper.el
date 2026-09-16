@@ -34,7 +34,7 @@
 (defvar herdr-test--socket-counter 0)
 
 (defvar herdr-test--connection-counter 0
-  "Counter behind the names `herdr-test-connection\=' hands out.
+  "Counter behind the names `herdr-test-connection' hands out.
 Distinct names, because the registry is keyed by name and two test
 connections sharing one would replace each other.")
 
@@ -122,7 +122,7 @@ which is true and useless."
 (defmacro herdr-test-with-state (seeds &rest body)
   "Run BODY with the sole connection seeded from SEEDS.
 SEEDS is a plist of connection slots, so a test that used to bind
-`herdr-state--running\=' and friends seeds them here instead: the session
+`herdr-state--running' and friends seeds them here instead: the session
 state lives in the connection now, and a global is exactly what this
 removes."
   (declare (indent 1) (debug t))
@@ -141,7 +141,7 @@ removes."
 (defun herdr-test-term-buffers (cells &optional connection)
   "Return a terminal registry for CELLS on CONNECTION.
 CELLS is an alist of (PANE-ID . BUFFER), the shape the registry had
-before ids needed a server.  Keys each by the connection\='s token and
+before ids needed a server.  Keys each by the connection\\='s token and
 tells each buffer which connection it belongs to, which is what
 attaching does."
   (let ((connection (or connection (herdr-current-connection))))
@@ -155,7 +155,7 @@ attaching does."
 
 (defun herdr-test-connections (connection)
   "Return a registry holding CONNECTION alone.
-What a test binds `herdr-connections\=' to when it wants one connection
+What a test binds `herdr-connections' to when it wants one connection
 and wants every resolution to reach it."
   (list (cons (herdr-connection-name connection) connection)))
 
@@ -182,7 +182,7 @@ rather than silently reaching for the real one."
 What a picker leaves — the rows it offered and the connection it chose —
 belongs to the command that picked.  `herdr-connection-choose' clears
 the choice from `post-command-hook', which batch Emacs never runs, so
-without this one test\='s pick answers the next test\='s question."
+without this one test\\='s pick answers the next test\\='s question."
   (let ((herdr-connection-chosen nil)
         (herdr-select--rows nil))
     (funcall run test)))

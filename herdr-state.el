@@ -3,9 +3,10 @@
 ;; Copyright (C) 2026 Eddie Jesinsky
 
 ;; Author: Eddie Jesinsky
+;; Maintainer: Srijan Choudhary
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-;; Package-Requires: ((emacs "28.1"))
+;; Package-Requires: ((emacs "29.1"))
 
 ;;; Commentary:
 
@@ -58,12 +59,14 @@
 (defcustom herdr-state-reconnect-min 1.0
   "Initial delay, in seconds, before retrying a dropped event stream."
   :type 'number
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defcustom herdr-state-reconnect-max 30.0
   "Longest delay, in seconds, between event stream reconnect attempts."
   :type 'number
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defvar herdr-state-change-functions nil
   "Abnormal hook run after a connection\\='s cache changes.
@@ -88,22 +91,22 @@ stopping one connection takes another\\='s work with it.")
     "layout.updated")
   "Subscriptions that carry no pane id and so never need rebuilding.
 
-`pane.updated\\=' is deliberately absent; the commentary at the top of
-this file says why, and `herdr-state-reconcile-panes\\=' covers what it
+`pane.updated' is deliberately absent; the commentary at the top of
+this file says why, and `herdr-state-reconcile-panes' covers what it
 alone carried.
 
 Order matters, so do not sort this.  The server polls each subscription
 in the order listed here and emits at most one matching event for each
 pass, so a burst delivered across one pass arrives in list order rather
-than in the order the events happened.  A `pane.created\\=' for a pane
+than in the order the events happened.  A `pane.created' for a pane
 that has already closed therefore folds away only because
-`pane.closed\\=' is listed after it.
+`pane.closed' is listed after it.
 
 Through herdr 0.8.2 this governed the whole 512-event replay a fresh
 subscription began with, and getting it wrong left ghosts from hours
 earlier.  0.9.0 starts a subscription at the sequence its request
 arrived on, so the window is now milliseconds wide.  The ordering stays:
-it costs nothing, and `herdr-state-reconcile-panes\\=' is what makes the
+it costs nothing, and `herdr-state-reconcile-panes' is what makes the
 result right rather than lucky either way.")
 
 ;;; The state object
@@ -155,18 +158,18 @@ answer is better than an arbitrary one."
             (herdr-state-panes state)))
 
 (defun herdr-state-pane-status (state pane)
-  "Return PANE\\='s agent status as this client sees it.
+  "Return PANE\\='s agent status in STATE, as this client sees it.
 
-`done\\=' never crosses the socket API - measured against a 0.9.0 server,
-which reports only `idle\\=', `working\\=', `blocked\\=' and `unknown\\=' on both
-`agent.list\\=' and the event stream, and puts no `seen\\=' field on any
-record.  herdr keeps the seen state per client and says so: `idle\\=' and
-`done\\=' both mean ready for input, and each client tells them apart from
+`done' never crosses the socket API - measured against a 0.9.0 server,
+which reports only `idle', `working', `blocked' and `unknown' on
+both `agent.list' and the event stream, and puts no `seen' field on any
+record.  herdr keeps the seen state per client and says so: `idle' and
+`done' both mean ready for input, and each client tells them apart from
 what it has looked at.  So a completion nobody here has focused reads
-`idle\\=' on the wire and `done\\=' to us.
+`idle' on the wire and `done' to us.
 
 Every surface that shows a status goes through this rather than
-`herdr-pane-status\\=', or the queue would head a pane READY that the
+`herdr-pane-status', or the queue would head a pane READY that the
 modeline calls idle."
   (let ((status (herdr-pane-status pane)))
     (if (and (equal status "idle")
@@ -175,12 +178,12 @@ modeline calls idle."
       status)))
 
 (defun herdr-state--projected-panes (state)
-  "Return STATE\\='s panes with each `agent_status\\=' as this client sees it.
+  "Return STATE\\='s panes with each `agent_status' as this client sees it.
 
-For `herdr-state-merged\\=', which folds several servers into one state.
+For `herdr-state-merged', which folds several servers into one state.
 The projection is applied per state, before the merge: pane ids are
 per-server counters, so a merged done set would let one machine\\='s
-`w1:p1\\=' answer for another\\='s."
+`w1:p1' answer for another\\='s."
   (mapcar (lambda (pane)
             (let ((status (herdr-state-pane-status state pane)))
               (if (equal status (herdr-pane-status pane))
@@ -211,27 +214,27 @@ confirmation wants the workspace id in parentheses."
   "Return the name reported for the agent in PANE-ID, or nil.
 STATE is the cache to look it up in.
 
-Names live only in `session.snapshot\\='s `agents\\=' array; neither
-`pane.list\\=' nor the pane events carry one, so this is refreshed on the
+Names live only in `session.snapshot's `agents' array; neither
+`pane.list' nor the pane events carry one, so this is refreshed on the
 snapshot cadence rather than off the event stream.  Nil until someone
-calls `agent.rename\\='."
+calls `agent.rename'."
   (when-let* ((agent (seq-find (lambda (candidate)
                                  (equal pane-id (alist-get 'pane_id candidate)))
                                (herdr-state-agent-info state))))
     (alist-get 'name agent)))
 
 (defun herdr-state-note-agent (connection agent)
-  "Fold AGENT, an AgentInfo record, into CONNECTION\='s cache.
+  "Fold AGENT, an AgentInfo record, into CONNECTION\\='s cache.
 
-For `agent.rename\=', whose reply is the only thing that will ever say a
-rename happened: herdr publishes no `agent_renamed\=' event.  Measured
-against 0.9.0, whose event schema carries `workspace_renamed\=' and
-`tab_renamed\=' and nothing at all for an agent, so a name set here would
-otherwise stay invisible until the next `session.snapshot\=' - which is
+For `agent.rename', whose reply is the only thing that will ever say a
+rename happened: herdr publishes no `agent_renamed' event.  Measured
+against 0.9.0, whose event schema carries `workspace_renamed' and
+`tab_renamed' and nothing at all for an agent, so a name set here would
+otherwise stay invisible until the next `session.snapshot' - which is
 fetched on a resubscribe rather than on any timer.
 
-Keyed by `pane_id\=', like the array `session.snapshot\=' builds this slot
-from.  A cleared name arrives as a record with no `name\=' key, which
+Keyed by `pane_id', like the array `session.snapshot' builds this slot
+from.  A cleared name arrives as a record with no `name' key, which
 replaces the old one wholesale rather than merging, so clearing works
 by the same path as setting."
   (when-let* ((pane-id (alist-get 'pane_id agent))
@@ -248,7 +251,7 @@ by the same path as setting."
   "Return WORKSPACE-ID\\='s directory in STATE, or nil.
 
 Protocol 19\\='s WorkspaceInfo carries no cwd of any kind, so it is derived
-from the workspace\\='s panes: the first one that reports a `cwd\\='.  Panes
+from the workspace\\='s panes: the first one that reports a `cwd'.  Panes
 are held in cache order — snapshot order with later arrivals appended —
 so that is the oldest pane herdr told us about, which is the one the
 workspace was created in."
@@ -262,13 +265,13 @@ workspace was created in."
 (defun herdr-state-workspace-for-directory (state root)
   "Return the workspace in STATE rooted at ROOT, or nil.
 
-Compared through `herdr-state-workspace-directory\\=' because protocol 19
+Compared through `herdr-state-workspace-directory' because protocol 19
 workspaces carry no cwd of their own — this used to compare against an
-`identity_cwd\\=' field that does not exist, so it never matched and
-`herdr-project\\=' made a fresh workspace every time it was called.  ROOT
+`identity_cwd' field that does not exist, so it never matched and
+`herdr-project' made a fresh workspace every time it was called.  ROOT
 is normalized first — with or without a trailing slash must match the
 same workspace — so callers never have to agree on a convention
-`herdr-state-workspace-directory\\=' already settles one way.
+`herdr-state-workspace-directory' already settles one way.
 
 Shared rather than private to `herdr.el', which used to be its only
 caller: `herdr-tree.el' needs the identical answer to decide whether a
@@ -333,7 +336,7 @@ what most of herdr\\='s events need — a rename carries a label and nothing
 else, and the rest of the record must survive it.  A key CHANGES maps to
 nil is still written, since that is how an agent release clears a label.
 
-When no entry matches, ITEMS comes back `eq\\=' to what went in, which is
+When no entry matches, ITEMS comes back `eq' to what went in, which is
 how callers tell a miss from a merge.  ITEMS is never mutated."
   (let ((item (seq-find (lambda (candidate) (equal id (alist-get key candidate)))
                         items)))
@@ -354,9 +357,9 @@ against the list with w2 already removed would give (w1 w3 w4 w2).  Only
 a forward move tells the two apart; this package had the wrong one.
 
 An ID no entry carries leaves ITEMS alone.  herdr refuses an INDEX past
-the end with `workspace_move_failed\\=', so no event carries one, but it is
+the end with `workspace_move_failed', so no event carries one, but it is
 clamped rather than trusted because a reducer must not signal.  Like
-`herdr-state--upsert\\=', ITEMS is not mutated."
+`herdr-state--upsert', ITEMS is not mutated."
   (let ((from (seq-position items id
                             (lambda (item wanted)
                               (equal wanted (alist-get key item))))))
@@ -395,23 +398,23 @@ events use dots, so both spellings appear here deliberately."
 
 Wraps the reduce rather than living in its branches because every write
 to a pane record already funnels through one: the status events, the
-`final_status\\=' a release carries, and the `pane_updated\\=' that
-`herdr-state--fold-panes\\=' reconciles with.  A completion noticed in one
+`final_status' a release carries, and the `pane_updated' that
+`herdr-state--fold-panes' reconciles with.  A completion noticed in one
 place is noticed on all three.
 
 A completion is an agent that was working and is now idle.  Nothing
-else: `unknown\\=' does not prove one on herdr\\='s own account, a pane
+else: `unknown' does not prove one on herdr\\='s own account, a pane
 arriving already idle is most of a snapshot rather than news, and
-`blocked\\=' to `idle\\=' is a question that stopped being asked, which
+`blocked' to `idle' is a question that stopped being asked, which
 herdr cannot tell from one somebody answered.  Blocked agents head the
 queue on their own, so reading that as finished work would promote it
 twice and be wrong half the time.
 
 Focus is what clears it, and KIND is read rather than the focused id
-compared, because herdr emits `pane_focused\\=' even for a pane that
+compared, because herdr emits `pane_focused' even for a pane that
 already held focus: focusing the row you are sitting on is exactly how
 you look at the thing that finished.  A read clears nothing, which is
-the whole point - `pane.read\\=' and `agent.read\\=' emit no event at all,
+the whole point - `pane.read' and `agent.read' emit no event at all,
 measured, so there is nothing here to ignore."
   (let* ((done (herdr-state-done-panes before))
          (next done))
@@ -438,7 +441,7 @@ measured, so there is nothing here to ignore."
 
 (defun herdr-state--reduce-event (state kind data)
   "Apply event KIND with DATA to STATE, ignoring the done set.
-`herdr-state-reduce\\=' is the caller, and keeps that set up to date."
+`herdr-state-reduce' is the caller, and keeps that set up to date."
   (let ((next (herdr-state-copy state)))
     (pcase kind
       ((or "pane_created" "pane_updated" "pane_moved")
@@ -581,9 +584,9 @@ measured, so there is nothing here to ignore."
 
 The delay is what the startup gap costs.  A subscription starts at the
 sequence its request arrived on, so whatever the server announced
-between `session.snapshot\\=' and the subscribe is lost, and
-`herdr-state--settle\\=' is what repairs it: `pane.list\\=' and
-`workspace.list\\=' are both authoritative and both take no parameters.
+between `session.snapshot' and the subscribe is lost, and
+`herdr-state--settle' is what repairs it: `pane.list' and
+`workspace.list' are both authoritative and both take no parameters.
 Until this fires, a workspace renamed in that window reads stale.
 
 Through herdr 0.8.2 this delay had a second job.  A fresh subscription
@@ -593,7 +596,8 @@ that replay landed inside it.  0.9.0 removed the replay; the value is
 kept because the reconcile it schedules is now the only thing closing
 the gap, and delaying that further buys nothing."
   :type 'number
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defcustom herdr-state-repair-interval 5.0
   "Seconds between periodic cache repairs, or nil for none.
@@ -603,10 +607,11 @@ answering.  A tick arriving while the last one is still in flight
 declines, so a server slower than this interval is polled no faster
 than it answers."
   :type '(choice number (const :tag "Never repair" nil))
-  :group 'herdr)
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
 
 (defun herdr-state-current (&optional connection)
-  "Return CONNECTION\='s cache, or the current connection\='s.
+  "Return CONNECTION\\='s cache, or the current connection\\='s.
 The optional argument is what lets a renderer ask for one server while
 a command asks for whichever it is acting on."
   (let ((connection (or connection (herdr-current-connection))))
@@ -636,8 +641,8 @@ removed the replay, so there is nothing left to absorb either."
   "Ask CONNECTION for the pane set and fold the reply when it lands.
 
 DONE is called exactly once, with the RPC error or nil.  Exactly once
-including the paths that never reach a reply: `herdr-rpc-connect\=' can
-signal before the request goes out, and the caller\='s in-flight guard
+including the paths that never reach a reply: `herdr-rpc-connect' can
+signal before the request goes out, and the caller\\='s in-flight guard
 would stay set for the session if that escaped.
 
 Also the liveness watchdog, as the synchronous reconcile is: a failure
@@ -685,11 +690,11 @@ emptied."
 (defun herdr-state--reconcile-workspaces-async (connection done)
   "Ask CONNECTION for the workspace set and fold the reply when it lands.
 DONE is called exactly once, with the RPC error or nil.  Unlike the pane
-half this is not a watchdog: `herdr-state--reconcile-panes-async\=' has
+half this is not a watchdog: `herdr-state--reconcile-panes-async' has
 already spoken for the socket by the time this runs.
 
 Workspaces need this as much as panes do and have nowhere else to get
-it: a missed `workspace.closed\=' leaves a ghost in the cache until the
+it: a missed `workspace.closed' leaves a ghost in the cache until the
 next full resync, which only fires on reconnect, so a session that never
 disconnects keeps it forever."
   (let ((generation (herdr-connection-generation connection)))
@@ -711,7 +716,7 @@ disconnects keeps it forever."
                              (message . ,(error-message-string err))))))))
 
 (defun herdr-state-repair (connection &optional done)
-  "Reconcile CONNECTION\='s cached pane set, then its workspace set.
+  "Reconcile CONNECTION\\='s cached pane set, then its workspace set.
 
 Asynchronous, which is the whole point of it.  A server that is
 unreachable fails immediately, but one that accepts the connection and
@@ -723,7 +728,7 @@ too slow forfeits that round of freshness and nothing else.
 Returns non-nil when it started.  DONE, when given, runs after the pair
 has finished and is not run at all when the repair declines to start or
 when the session moved on underneath it: a caller with work that
-depends on the reconciled pane set — `herdr-state--settle\=' is the one —
+depends on the reconciled pane set — `herdr-state--settle' is the one —
 must not do it against a set nothing settled.
 
 The in-flight guard is a slot rather than a binding, so every path out
@@ -772,7 +777,7 @@ noticing."
                        #'herdr-state-repair connection))))
 
 (defun herdr-state--unhook (connection)
-  "Take CONNECTION off `herdr-state-change-functions\\=', if it is the last.
+  "Take CONNECTION off `herdr-state-change-functions', if it is the last.
 One function serves every connection now that the hook says which one
 notified, so it comes off only when no connection is left to feed it."
   (unless (seq-find (lambda (other)
@@ -807,7 +812,7 @@ notified, so it comes off only when no connection is left to feed it."
 
 (defun herdr-state--schedule-settle (connection &optional resync)
   "Arrange the one post-connect settle, replacing any pending one.
-RESYNC is passed through to `herdr-state--settle\\='."
+RESYNC is passed through to `herdr-state--settle'."
   (when (herdr-connection-settle-timer connection)
     (cancel-timer (herdr-connection-settle-timer connection)))
   (setf (herdr-connection-settle-timer connection)
@@ -822,21 +827,21 @@ gap and neither closes the other's.  A subscription starts at the
 sequence its request arrived on, so whatever the server announced
 between the snapshot and the subscribe is gone; before herdr 0.9.0 a
 retained-event replay happened to cover that window, and now nothing
-does.  `pane.list\\=' and `workspace.list\\=' both take no parameters and
+does.  `pane.list' and `workspace.list' both take no parameters and
 both answer with everything live, so the pair is authoritative over
 whatever was missed.
 
 What the pair does not restore is order and focus.  Reconciling
 updates and removes workspaces; it does not reorder them, and neither
-list call carries `focused_pane_id\\='.  A `workspace.reordered\\=' or a
+list call carries `focused_pane_id'.  A `workspace.reordered' or a
 focus change lost in the window therefore survives until the next one
 of its kind.  Both are cosmetic and both need an ordering fact the
 protocol does not give a client.
 
-Non-nil RESYNC replaces the whole cache from `session.snapshot\\=' first,
+Non-nil RESYNC replaces the whole cache from `session.snapshot' first,
 and is what the reconnect path passes.  It is not optional there: a
 disconnect can span minutes, and reconciling repairs membership while
-the snapshot is what restores focus with it.  `herdr-state-start\\='
+the snapshot is what restores focus with it.  `herdr-state-start'
 needs no RESYNC because it has just snapshotted.
 
 Realigning connection B afterwards, not before: reconciling is what
@@ -879,10 +884,10 @@ continuation, which is the whole reason the repair takes one."
            (herdr-state--schedule-settle connection resync)))))))
 
 (defun herdr-state--settle-hydrate (connection resync done)
-  "Replace CONNECTION\='s cache from a fresh snapshot, then call DONE.
+  "Replace CONNECTION\\='s cache from a fresh snapshot, then call DONE.
 
 Does nothing but call DONE when RESYNC is nil, which is the start path:
-`herdr-state-start\=' has just snapshotted.
+`herdr-state-start' has just snapshotted.
 
 Asynchronous for the reason the repair is.  This runs on a timer after
 a disconnect, which is exactly when the server is most likely to be
@@ -982,7 +987,7 @@ The agent panes, not every pane — attachment widened to
 every pane once `herdr terminal attach' stopped requiring a reported
 agent, but `pane.agent_status_changed' still only has something to say
 about a pane running an agent.  Each per-pane subscription makes the
-herdr server dispatch a `pane.get\\=' into its main loop every 100ms for
+herdr server dispatch a `pane.get' into its main loop every 100ms for
 as long as the subscription lives (herdr 0.8.2, api/subscriptions.rs) —
 subscribing every pane meant a session with a dozen plain shells paid
 ~120 server-side requests a second to watch statuses nothing here
@@ -1073,9 +1078,9 @@ then."
 
 A set comparison rather than a dispatch on event kind, because B now
 subscribes the agent panes only, and what changes that set is not
-just pane lifecycle: `pane_agent_detected\\=' gives a pane an agent or
+just pane lifecycle: `pane_agent_detected' gives a pane an agent or
 takes one away, and a reconcile can relabel a pane wholesale.  When
-this dispatched on kind, `pane_agent_detected\\=' was deliberately
+this dispatched on kind, `pane_agent_detected' was deliberately
 excluded — correct while B named every pane, a missed rebuild once it
 stopped.  Comparing the sets is immune to the enumeration going stale
 again.  Order-insensitive, since a reconcile may reorder the cache
@@ -1140,12 +1145,12 @@ without changing what B should watch."
 (defun herdr-state-reconcile-panes (connection)
   "Make the cached pane set match the server, and refresh directories.
 
-The event stream cannot keep the cache right on its own.  A `cd\\=' is
+The event stream cannot keep the cache right on its own.  A `cd' is
 never announced, and a subscription starts at the sequence its request
 arrived on, so whatever happened between the snapshot and the subscribe
-is never sent.  One `pane.list\\=' is authoritative and answers both.
+is never sent.  One `pane.list' is authoritative and answers both.
 Through herdr 0.8.2 there was a third reason: a fresh subscription
-replayed the server's event ring, so a `pane_created\\=' for a
+replayed the server's event ring, so a `pane_created' for a
 long-closed pane arrived as news.
 
 Returns non-nil when anything significant changed.  A record drifting
@@ -1156,7 +1161,7 @@ Also the liveness watchdog.  A quiet subscription and a wedged server
 look identical, and this is the only periodic RPC, so its failure is the
 one signal the socket stopped answering; it schedules a reconnect.
 
-Capture the cached ids BEFORE the call.  `herdr-rpc-call\\='s wait
+Capture the cached ids BEFORE the call.  `herdr-rpc-call's wait
 services the event-stream filters, so the cache can gain a pane while
 the reply is in flight, and a reply built before that pane existed
 cannot pronounce it stale."
@@ -1179,7 +1184,7 @@ cannot pronounce it stale."
       (herdr-state--fold-panes connection (alist-get 'panes reply) known-ids))))
 
 (defun herdr-state--fold-panes (connection panes known-ids)
-  "Fold the authoritative PANES into CONNECTION\='s cache.
+  "Fold the authoritative PANES into CONNECTION\\='s cache.
 
 KNOWN-IDS is the cached pane set as it stood when the request went out.
 A pane that has appeared since cannot be pronounced stale by a reply
@@ -1233,7 +1238,7 @@ how the list is obtained."
     changed))
 
 (defun herdr-state--fold-workspaces (connection workspaces)
-  "Fold the authoritative WORKSPACES into CONNECTION\='s cache.
+  "Fold the authoritative WORKSPACES into CONNECTION\\='s cache.
 Returns non-nil when anything changed."
   (let* ((live-ids (mapcar #'herdr-workspace-id workspaces))
          (stale (seq-remove
@@ -1266,7 +1271,7 @@ Returns non-nil when anything changed."
 (defun herdr-state-refresh (connection)
   "Replace the cache from a fresh snapshot, leaving subscriptions alone.
 
-Lighter than `herdr-state-resync\\=', which also tears down and rebuilds
+Lighter than `herdr-state-resync', which also tears down and rebuilds
 the per-pane event connection.  This is what the pickers use: the cache
 can drift, and a picker offering panes that no longer exist is worse
 than one extra round trip."
@@ -1277,6 +1282,7 @@ than one extra round trip."
     (run-hook-with-args 'herdr-state-change-functions connection "refresh" nil)
     (herdr-state-current connection)))
 
+;;;###autoload
 (defun herdr-state-resync (connection)
   "Refetch CONNECTION\\='s snapshot and rebuild its per-pane subscriptions."
   (interactive (list (herdr-current-connection)))

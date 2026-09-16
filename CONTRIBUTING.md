@@ -71,7 +71,7 @@ A green suite is not enough.
 
 ## Rules for the code
 
-- Emacs 28.1 is the floor. Do not use a function that arrived in Emacs 29.
+- Emacs 29.1 is the floor. Do not use a function that arrived in Emacs 30.
 - A warning stops the build. Declare each external function with `declare-function`, and each
   external variable with `defvar`.
 - Every file starts with `-*- lexical-binding: t; -*-`. Every file ends with `(provide 'FEATURE)`

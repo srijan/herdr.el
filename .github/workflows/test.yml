@@ -1,0 +1,40 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor this package declares, and the current release.  Both
+        # earn their place: 31.1 dropped checkdoc's 80-column check, so a
+        # lint clean on 31.1 alone is not a lint clean.
+        emacs: ['29.1', '31.1']
+    name: emacs ${{ matrix.emacs }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs }}
+
+      # ghostel is on no archive, and nothing here needs it to compile:
+      # herdr-term.el declares its functions and requires it at runtime.
+      - name: Install magit-section
+        run: |
+          emacs -Q --batch --eval "(progn \
+            (require 'package) \
+            (add-to-list 'package-archives '(\"nongnu\" . \"https://elpa.nongnu.org/nongnu/\") t) \
+            (add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\") t) \
+            (package-initialize) \
+            (package-refresh-contents) \
+            (package-install 'magit-section))"
+
+      - run: make compile
+      - run: make lint
+      - run: make test

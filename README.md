@@ -202,9 +202,13 @@ the SELinux relabelling Fedora and RHEL need.
 
 ## Requirements
 
-- Emacs 28.1+
+- Emacs 29.1+
 - [herdr](https://herdr.dev) 0.9.0 (protocol 22)
 - `ghostel`, `magit-section`
+
+`ghostel` is on no package archive, so `Package-Requires` can never resolve it and neither
+`package-install` nor `package-lint` will work on this package. Both it and herdr.el are
+manual installs: clone each and point `:load-path` at it, as below.
 
 Optional, used when present and never required: `embark`, `consult`, `alert`.
 

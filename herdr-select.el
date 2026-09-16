@@ -3,9 +3,10 @@
 ;; Copyright (C) 2026 Eddie Jesinsky
 
 ;; Author: Eddie Jesinsky
+;; Maintainer: Srijan Choudhary
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-;; Package-Requires: ((emacs "28.1"))
+;; Package-Requires: ((emacs "29.1"))
 
 ;;; Commentary:
 
@@ -123,7 +124,7 @@ Refreshing at all is the old reasoning: a picker listing panes that no
 longer exist is worse than one extra round trip.
 
 Every connection is asked, running or not: a registered connection that
-is not being followed holds the empty cache `herdr-state-stop\\=' left, so
+is not being followed holds the empty cache `herdr-state-stop' left, so
 skipping it offered no rows at all and the picker refused a list that
 worked before.  Failure is swallowed instead, which costs an
 unreachable server nothing but its own freshness.
@@ -161,7 +162,7 @@ comes last so the id stays the first token every row reduces through."
 
 (defun herdr-select--read-row (prompt connections ids candidate category)
   "Read one row over CONNECTIONS with PROMPT and return the id it names.
-IDS, CANDIDATE and CATEGORY are as `herdr-select--offer\\=' takes them.
+IDS, CANDIDATE and CATEGORY are as `herdr-select--offer' takes them.
 Choosing a row also makes its connection the answer for this command.
 Nil for a row nothing offered, which is what empty input reduces to."
   (when-let* ((row (herdr-select--read

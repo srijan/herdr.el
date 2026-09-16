@@ -123,11 +123,11 @@ deleting them safe."
 ;;; Focus must move Emacs, not just the server
 
 (ert-deftest herdr-agent-rename-clears-by-sending-no-name-at-all ()
-  "herdr reads an absent `name\\=' as `--clear\\=' and refuses an empty string.
+  "herdr reads an absent `name' as `--clear' and refuses an empty string.
 
-Measured on 0.9.0: `agent.rename\\=' with only a target leaves the agent
-with no name in the next snapshot, while `\"\"\\=' is refused as
-`invalid_agent_name\\='.  The transport already drops nil params rather
+Measured on 0.9.0: `agent.rename' with only a target leaves the agent
+with no name in the next snapshot, while `\"\"' is refused as
+`invalid_agent_name'.  The transport already drops nil params rather
 than sending null, so clearing needs nothing of its own - which is the
 whole reason this is asserted rather than assumed."
   (let (seen)
@@ -145,11 +145,11 @@ whole reason this is asserted rather than assumed."
       (should-not (assq 'name params)))))
 
 (ert-deftest herdr-agent-rename-shows-the-new-name-without-waiting-for-a-snapshot ()
-  "herdr publishes no `agent_renamed\\=' event, so the reply is the only news.
+  "herdr publishes no `agent_renamed' event, so the reply is the only news.
 
-Its event schema carries `workspace_renamed\\=' and `tab_renamed\\=' and
-nothing for an agent, and the `agents\\=' array this reads comes from
-`session.snapshot\\=' alone - fetched on a resubscribe rather than on any
+Its event schema carries `workspace_renamed' and `tab_renamed' and
+nothing for an agent, and the `agents' array this reads comes from
+`session.snapshot' alone - fetched on a resubscribe rather than on any
 timer.  Without folding the reply in, a name you just set stays
 invisible for as long as the pane set holds still."
   (cl-letf (((symbol-function 'message) #'ignore))
@@ -178,9 +178,9 @@ invisible for as long as the pane set holds still."
 (ert-deftest herdr-agent-send-keys-sends-an-array-of-key-names ()
   "The verb for a blocked agent, which cannot be prompted at all.
 
-`keys\\=' is a JSON array, and the package sends vectors for arrays
-everywhere: `json-serialize\\=' reads a list as an alist and signals
-`Wrong type argument: symbolp\\=' on a list of plain strings.  The fake
+`keys' is a JSON array, and the package sends vectors for arrays
+everywhere: `json-serialize' reads a list as an alist and signals
+`Wrong type argument: symbolp' on a list of plain strings.  The fake
 server decodes arrays back to lists, so that is what arrives here."
   (let (seen)
     (cl-letf (((symbol-function 'message) #'ignore))
@@ -610,11 +610,11 @@ close asks a second question whose answer must differ from the first."
 
 (ert-deftest herdr-workspace-close-offers-the-group-when-the-server-refuses ()
   "herdr 0.9.0 refuses to close a workspace that would take linked
-worktree workspaces with it, answering `workspace_group_close_required\='
+worktree workspaces with it, answering `workspace_group_close_required'
 and closing nothing.  The refusal is what asks the second question.
 
-Not a `worktree.list\=' before the first one: a main checkout's own entry
-carries an `open_workspace_id\=' naming the workspace being closed, so a
+Not a `worktree.list' before the first one: a main checkout's own entry
+carries an `open_workspace_id' naming the workspace being closed, so a
 listing cannot tell a group from a lone workspace, and the server
 decides this without a race."
   (herdr-cmd-test--group-close '(t t) (herdr-cmd-test--group-required-once) wire said
@@ -633,7 +633,7 @@ decides this without a race."
     (should (string-match-p "left open" (or said "")))))
 
 (ert-deftest herdr-workspace-close-does-not-swallow-other-errors ()
-  "Only the group refusal is handled.  Reading every `herdr-error\=' as a
+  "Only the group refusal is handled.  Reading every `herdr-error' as a
 group question would turn a permission failure into a second prompt and
 then a close the user never asked for."
   (herdr-cmd-test--group-close '(t t)
@@ -644,7 +644,7 @@ then a close the user never asked for."
 
 (ert-deftest herdr-workspace-close-sends-no-group-flag-for-a-lone-workspace ()
   "The common case must cost nothing: the same request as before, with
-no extra round trip and no `close_group\=' key at all."
+no extra round trip and no `close_group' key at all."
   (herdr-cmd-test--group-close '(t)
       (lambda (req) (cons (herdr-test-ok req '((type . "ok"))) nil))
       wire said
@@ -769,7 +769,7 @@ directory's own name."
 
 (ert-deftest herdr-cmd-pane-in-directory-opens-a-workspace-when-none-is-there ()
   "The pane returned is the new workspace\\='s root pane; asking
-`tab.create\\=' for another would leave an empty tab behind."
+`tab.create' for another would leave an empty tab behind."
   (let ((calls nil))
     (cl-letf (((symbol-function 'herdr-rpc-call)
                (lambda (_connection method params)
@@ -787,8 +787,8 @@ directory's own name."
 there and opening a terminal there: both have to create the workspace,
 and the directory is the only input either has.
 
-`herdr-cmd-open-workspace-for\\=' and `herdr-cmd-pane-in-directory\\='
-each wrote that `workspace.create\\=' out in full, which is how they came
+`herdr-cmd-open-workspace-for' and `herdr-cmd-pane-in-directory'
+each wrote that `workspace.create' out in full, which is how they came
 to disagree about the label and about how to follow the new pane.  This
 pins them to one call."
   (let (going opening)
@@ -854,7 +854,7 @@ is a directory."
         (should (equal "w9:p2" followed))))))
 
 (ert-deftest herdr-new-terminal-opens-a-directory-that-is-not-a-workspace ()
-  "A directory goes through `herdr-cmd-pane-in-directory\\=', which opens
+  "A directory goes through `herdr-cmd-pane-in-directory', which opens
 it first."
   (let ((calls nil)
         (followed nil))

@@ -206,7 +206,7 @@ the same pane."
       (should (null (seq-difference (buffer-list) before))))))
 
 (ert-deftest herdr-term-attach-refuses-a-pane-the-server-is-too-old-for ()
-  "A pane with no `terminal_id\\=' cannot be attached at all, and the
+  "A pane with no `terminal_id' cannot be attached at all, and the
 argv is built before the buffer is committed to, so nothing is created
 and nothing is displayed."
   (let ((state (herdr-state-from-snapshot
@@ -397,7 +397,7 @@ lists it like any other, and RET on the row is a reasonable mistake."
 (ert-deftest herdr-self-pane-needs-the-server-to-match-not-just-the-id ()
   "Ids are per-server counters, so the id alone names a pane everywhere.
 
-Two machines each hold a `w1:p1\\='.  Refusing both would make the machine
+Two machines each hold a `w1:p1'.  Refusing both would make the machine
 this Emacs happens to sit on able to veto a pane on every other one."
   (let ((herdr-self-pane-id "w1:p1")
         (herdr-self-socket-path "/tmp/herdr-mine.sock"))
@@ -462,8 +462,8 @@ business, not a side effect of navigation."
 ;;; Bootstrap must outlive Emacs
 
 (ert-deftest herdr-term-bootstrap-server-orphans-the-server ()
-  "`herdr server\\=' blocks and has no detach flag, so an Emacs child would
-die with Emacs.  The spawn must go through a shell and end in `&\\='."
+  "`herdr server' blocks and has no detach flag, so an Emacs child would
+die with Emacs.  The spawn must go through a shell and end in `&'."
   (let (command)
     (cl-letf (((symbol-function 'call-process)
                (lambda (program &rest args)
@@ -672,7 +672,7 @@ to a forty-second frozen startup."
 ;;; Belonging to the project
 
 (ert-deftest herdr-term-buffer-p-answers-from-the-registry ()
-  "The major mode cannot be the test: a herdr terminal is a `ghostel-mode\\='
+  "The major mode cannot be the test: a herdr terminal is a `ghostel-mode'
 buffer like any ghostel shell, and only herdr knows which are its panes.
 It answers for a buffer whose pane has gone away too, which is a buffer
 to clean up rather than one to protect."
@@ -689,8 +689,8 @@ to clean up rather than one to protect."
       (kill-buffer theirs))))
 
 (ert-deftest herdr-term-buffers-are-killed-with-the-project ()
-  "`project-kill-buffers\\=' counted herdr's terminals and left them standing:
-they answer to `project-buffers\\=' through `default-directory\\=', and no
+  "`project-kill-buffers' counted herdr's terminals and left them standing:
+they answer to `project-buffers' through `default-directory', and no
 default condition matches one.  Asserted both ways, because a test that
 only kills would pass without the registration doing anything."
   (require 'project)
@@ -705,8 +705,8 @@ only kills would pass without the registration doing anything."
             (setq major-mode 'ghostel-mode))
           ;; Without herdr's own clause, however this file was loaded:
           ;; requiring project.el registers it, and another test may have.
-          ;; The PROJECT argument arrived after 28.1, which this package
-          ;; still supports, so the project comes through `project-current'.
+          ;; Pinned through `project-current' rather than passed, so the
+          ;; test says which project it means on every supported version.
           (cl-letf (((symbol-function 'project-current) (lambda (&rest _) project)))
             (let ((project-kill-buffer-conditions
                    (remq #'herdr-term-buffer-p project-kill-buffer-conditions)))
@@ -719,13 +719,13 @@ only kills would pass without the registration doing anything."
 
 (ert-deftest herdr-term-registers-itself-when-project-loads ()
   "The registration is a load-time side effect.  Tests that call the helper
-themselves pass with the `with-eval-after-load\\=' form deleted, so this one
+themselves pass with the `with-eval-after-load' form deleted, so this one
 asks the loaded world instead."
   (require 'project)
   (should (memq #'herdr-term-buffer-p project-kill-buffer-conditions)))
 
 (ert-deftest herdr-term-project-registration-cannot-break-loading ()
-  "Unbound and restored rather than stubbed: `boundp\\=' is what the guard
+  "Unbound and restored rather than stubbed: `boundp' is what the guard
 asks, and project.el's variables are not a contract."
   (require 'project)
   (let ((saved project-kill-buffer-conditions))
