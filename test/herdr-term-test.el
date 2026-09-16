@@ -375,6 +375,55 @@ behind an unchanging buffer list."
             (should (= 0 rename-calls))))
       (kill-buffer first) (kill-buffer second)))))
 
+;;; The pane this Emacs is running in
+
+(ert-deftest herdr-term-refuses-to-attach-to-its-own-pane ()
+  "Attaching to the pane drawing the frame renders Emacs inside itself.
+
+herdr exports HERDR_PANE_ID into every pane it starts, so an Emacs
+launched from one can be asked to go to that very pane - the dashboard
+lists it like any other, and RET on the row is a reasonable mistake."
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+                                  '((panes . (((pane_id . "w1:p1")
+                                               (agent . "claude")))))))
+    (let* ((connection (herdr-current-connection))
+           (herdr-self-pane-id "w1:p1")
+           (herdr-self-socket-path (herdr-connection-socket-path connection)))
+      (should-error (herdr-term-select-pane connection "w1:p1")
+                    :type 'user-error)
+      ;; Every other pane on that same server is unaffected.
+      (should-not (herdr-self-pane-p connection "w1:p2")))))
+
+(ert-deftest herdr-self-pane-needs-the-server-to-match-not-just-the-id ()
+  "Ids are per-server counters, so the id alone names a pane everywhere.
+
+Two machines each hold a `w1:p1\\='.  Refusing both would make the machine
+this Emacs happens to sit on able to veto a pane on every other one."
+  (let ((herdr-self-pane-id "w1:p1")
+        (herdr-self-socket-path "/tmp/herdr-mine.sock"))
+    (let ((mine (herdr-connection--make :name "mine"
+                                        :socket-path "/tmp/herdr-mine.sock"))
+          (other (herdr-connection--make :name "other"
+                                         :socket-path "/tmp/herdr-other.sock"))
+          (remote (herdr-connection--make :name "shadow"
+                                          :socket-path "/tmp/herdr-mine.sock"
+                                          :ssh-target "shadow")))
+      (should (herdr-self-pane-p mine "w1:p1"))
+      (should-not (herdr-self-pane-p other "w1:p1"))
+      ;; A forward binds its local end wherever it likes, so a remote
+      ;; connection can wear the same socket path and still not be us.
+      (should-not (herdr-self-pane-p remote "w1:p1")))))
+
+(ert-deftest herdr-self-pane-is-nothing-outside-a-herdr-pane ()
+  "An Emacs started from the dock has no HERDR_PANE_ID, and everything
+reading one has to degrade to doing nothing rather than to guessing."
+  (let ((herdr-self-pane-id nil)
+        (herdr-self-socket-path nil))
+    (should-not (herdr-self-pane-p
+                 (herdr-connection--make :name "local"
+                                         :socket-path "/tmp/herdr.sock")
+                 "w1:p1"))))
+
 ;;; Starting herdr must not rearrange windows
 
 (ert-deftest herdr-term-select-pane-does-not-split-the-frame ()

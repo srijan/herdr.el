@@ -10,7 +10,7 @@ herdr.el binds no key. `herdr-command-map` is a prefix keymap that you bind your
 
 | Option | Default | Function |
 |---|---|---|
-| `herdr-socket-path` | `"~/.config/herdr/herdr.sock"` | The path to the unix socket of the server. |
+| `herdr-socket-path` | `$HERDR_SOCKET_PATH`, else `"~/.config/herdr/herdr.sock"` | The path to the unix socket of the server. |
 | `herdr-executable` | `"herdr"` | The name of the herdr program, or the path to it. |
 | `herdr-protocol-version` | `22` | The protocol version that this package targets. |
 | `herdr-rpc-timeout` | `10.0` | The number of seconds to wait for a synchronous response. |
@@ -23,6 +23,25 @@ waits for 2 seconds only.
 
 Change `herdr-protocol-version` only to stop the mismatch warning. The value does not change
 what herdr.el sends.
+
+### An Emacs started inside a herdr pane
+
+herdr exports `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`,
+`HERDR_SOCKET_PATH` and `HERDR_BIN_PATH` into every pane it starts. An Emacs launched from one
+inherits them, and herdr.el reads two.
+
+`herdr-socket-path` defaults to `HERDR_SOCKET_PATH`, so an Emacs started inside a
+`herdr --session work` pane talks to that session. The literal default is the *default* session's
+socket, which for a named session is the wrong server — one that may not be running, and that
+holds none of the panes on screen. Set the option yourself to override this.
+
+`HERDR_PANE_ID` names the pane Emacs is running in. Going to that pane is refused, because
+attaching to it points a terminal buffer at the terminal drawing the buffer. The id is only
+believed for the server `HERDR_SOCKET_PATH` names: ids are per-server counters, so the same
+`w1:p1` exists on every machine you follow.
+
+An Emacs started any other way — from a desktop launcher, as a daemon — has none of these, and
+nothing above applies. An exported-but-empty variable counts as absent.
 
 ## Remote servers
 

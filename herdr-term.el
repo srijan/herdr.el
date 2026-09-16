@@ -206,7 +206,16 @@ selects that buffer.
 Attaching happens here rather than in reconciliation because the client
 needs a window at startup, so attaching every agent up front would mean
 `M-x herdr\\=' seizing a window per agent before being asked for anything.
-Returns the buffer when it showed one."
+Returns the buffer when it showed one.
+
+Refuses the pane this Emacs is running in.  Attaching to it points a
+terminal buffer at the terminal that is drawing the buffer, and the
+frame renders itself inside itself until something gives.  The refusal
+is a message rather than an error: going to where you already are is a
+misunderstanding, not a failure, and the dashboard row is a reasonable
+thing to have pressed RET on."
+  (when (herdr-self-pane-p connection pane-id)
+    (user-error "herdr: %s is the pane this Emacs is running in" pane-id))
   (let ((buffer (herdr-term-buffer-for-pane connection pane-id)))
     (unless (buffer-live-p buffer)
       (setq buffer (herdr-term--attach-if-possible connection pane-id)))

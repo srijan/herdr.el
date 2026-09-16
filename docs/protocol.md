@@ -270,6 +270,11 @@ Writing `done` into `agent_status` would put it in `herdr-pane-significant-field
 `pane.list` reconcile would see cached `done` against a fresh `idle`, call it a change, and
 redraw the dashboard on the repair interval for as long as anything was finished.
 
+**herdr tells a pane what it is.** Every pane it starts carries `HERDR_ENV=1`, `HERDR_PANE_ID`,
+`HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`, `HERDR_SOCKET_PATH` and `HERDR_BIN_PATH`. Read out of a live
+pane on 0.9.0, so a process inside a pane can name itself without asking the server anything, and
+an Emacs started from one can find the session it belongs to rather than assuming the default.
+
 **A workspace closes with its last pane.** A workspace with zero panes therefore cannot exist.
 That fact is the reason `herdr-new-terminal` offers `project.el` roots beside the open
 workspaces: the server knows nothing about a project you are not working in right now.

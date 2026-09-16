@@ -19,6 +19,16 @@
 (require 'herdr-connection)
 (require 'herdr-select)
 
+;; `herdr-self-pane-id' and `herdr-self-socket-path' are read from the
+;; environment when the package loads, and herdr exports both into every
+;; pane it starts.  A suite run from inside a herdr pane would otherwise
+;; disagree with one run outside it - and it did: with HERDR_PANE_ID set
+;; to a pane id the fixtures use, `herdr-term-select-pane' refused to
+;; attach and a test that had nothing to do with any of this failed.
+;; Neutralised here so every test states its own self-pane or has none.
+(setq herdr-self-pane-id nil
+      herdr-self-socket-path nil)
+
 ;; macOS caps unix socket paths near 104 bytes and the standard temp
 ;; directory is already long, so build paths under /tmp directly.
 (defvar herdr-test--socket-counter 0)
