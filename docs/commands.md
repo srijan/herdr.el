@@ -144,6 +144,16 @@ server cannot find a repository that has no open workspace.
 |---|---|---|
 | `herdr-agent-prompt` | `agent.prompt` | Send a prompt to an agent. |
 
+`herdr-agent-prompt` sends the region when one is active, and the whole buffer under
+`C-u`. With neither, it asks you to type the prompt. This is the half of prompting that Emacs
+is better at than a terminal: the prompt is usually a function, a failing test or a diff that is
+already on screen.
+
+herdr refuses a prompt to an agent that is already **blocked**, answering `agent_blocked` before
+sending anything, so a question waiting on screen is never answered by accident. It also refuses
+a pane whose agent is not the foreground process, with `agent_not_ready` — a plain shell that was
+merely *reported* as an agent is not enough.
+
 To run an agent, open a terminal with `herdr-new-terminal` and run the agent in it. herdr detects
 the agent and names the pane a few seconds later. This is the mechanism the herdr TUI uses, and
 it is the only one here.

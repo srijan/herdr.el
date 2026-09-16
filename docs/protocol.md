@@ -270,6 +270,23 @@ Writing `done` into `agent_status` would put it in `herdr-pane-significant-field
 `pane.list` reconcile would see cached `done` against a fresh `idle`, call it a change, and
 redraw the dashboard on the repair interval for as long as anything was finished.
 
+**A blocked agent cannot be prompted.** `agent.prompt` answers `agent_blocked` — "agent NAME is
+blocked and requires interactive input" — and sends nothing. Measured on 0.9.0, and the check runs
+before the one below, so it is what a blocked agent answers whatever else is true of the pane.
+A question waiting on screen is therefore never answered by accident; `agent.send_keys` is the
+verb for that.
+
+**`agent.prompt` and `agent.send_keys` need a live agent, not a reported one.** A plain shell that
+`pane.report_agent` has labelled is enough for the agent list, the sidebar and
+`pane.agent_status_changed`, and not enough for these two: they answer `agent_not_ready`, with
+"no longer the pane foreground process" and "is not an active named agent" respectively.
+
+**`agent.wait` on `done` can only ever time out.** `--until` accepts every `AgentStatus`, and the
+server never enters `done` (see above), so `agent.wait --until done` waits out its deadline and
+returns `timeout`. Measured. Without `--until`, herdr matches idle, done or blocked — which is
+why the default works: `idle` is in it. herdr also documents that `--wait` on a prompt does not
+track turns, so prompting an agent that is already working may match that earlier turn finishing.
+
 **herdr tells a pane what it is.** Every pane it starts carries `HERDR_ENV=1`, `HERDR_PANE_ID`,
 `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`, `HERDR_SOCKET_PATH` and `HERDR_BIN_PATH`. Read out of a live
 pane on 0.9.0, so a process inside a pane can name itself without asking the server anything, and

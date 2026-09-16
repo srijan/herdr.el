@@ -315,12 +315,46 @@ directory."
 
 ;;; Agents
 
+(defun herdr-cmd--prompt-text (whole-buffer)
+  "Return the text to prompt an agent with, read from this buffer.
+
+The active region, or the whole buffer with WHOLE-BUFFER, or a string
+you type when there is no region to take.  This is the half of prompting
+that Emacs is better at than a terminal is: the interesting prompt is
+usually a function, a failing test or a diff that is already on screen,
+and retyping it into a pane is what the region is for."
+  (cond
+   (whole-buffer (buffer-substring-no-properties (point-min) (point-max)))
+   ((use-region-p)
+    (buffer-substring-no-properties (region-beginning) (region-end)))
+   (t (read-string "Prompt: "))))
+
 (defun herdr-agent-prompt (text &optional target)
-  "Send TEXT as a prompt to the agent in TARGET."
-  (interactive (list (read-string "Prompt: ")))
+  "Send TEXT as a prompt to the agent in TARGET.
+
+Interactively, TEXT is the region when one is active and the whole
+buffer under \\[universal-argument]; with neither, you are asked for it.
+
+herdr refuses a prompt to an agent that is already blocked, with
+`agent_blocked\\=', before sending anything - so a question waiting on
+screen is never answered by accident.  It also refuses a pane whose
+agent is not the foreground process, with `agent_not_ready\\='; both
+arrive as an ordinary herdr error naming the reason."
+  (interactive (list (herdr-cmd--prompt-text current-prefix-arg)))
   (let ((target (or target (herdr-select-agent "Prompt agent: "))))
     (herdr-rpc-call (herdr-current-connection) "agent.prompt"
-                    `((target . ,target) (text . ,text)))))
+                    `((target . ,target) (text . ,text)))
+    (message "herdr: sent %s to %s"
+             (herdr-cmd--prompt-size text) target)))
+
+(defun herdr-cmd--prompt-size (text)
+  "Describe TEXT by size, for a confirmation that must not echo it back.
+A prompt can be a whole buffer, and echoing one into the minibuffer
+buries the rest of the message."
+  (let ((lines (length (split-string text "\n"))))
+    (if (= lines 1)
+        (format "%d characters" (length text))
+      (format "%d lines" lines))))
 
 ;;; Opening a place to run something
 

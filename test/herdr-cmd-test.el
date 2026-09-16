@@ -120,6 +120,34 @@ deleting them safe."
 
 ;;; Focus must move Emacs, not just the server
 
+(ert-deftest herdr-agent-prompt-takes-the-region-the-buffer-or-a-typed-string ()
+  "The point of prompting from Emacs: the prompt is usually already here.
+
+A function, a failing test, a diff - all on screen, and retyping one
+into a pane is what the region is for."
+  (with-temp-buffer
+    (insert "first line\nsecond line\nthird line")
+    (let ((transient-mark-mode t))
+      (goto-char (point-min))
+      (set-mark (point))
+      (forward-line 2)
+      (should (use-region-p))
+      (should (equal "first line\nsecond line\n"
+                     (herdr-cmd--prompt-text nil)))
+      ;; A prefix argument takes the whole buffer, region or not.
+      (should (equal "first line\nsecond line\nthird line"
+                     (herdr-cmd--prompt-text t)))
+      ;; With no region, it asks.
+      (deactivate-mark)
+      (should-not (use-region-p))
+      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "typed")))
+        (should (equal "typed" (herdr-cmd--prompt-text nil)))))))
+
+(ert-deftest herdr-agent-prompt-reports-size-rather-than-echoing-the-prompt ()
+  "A prompt can be a whole buffer, and echoing one buries the message."
+  (should (equal "11 characters" (herdr-cmd--prompt-size "hello world")))
+  (should (equal "3 lines" (herdr-cmd--prompt-size "a\nb\nc"))))
+
 (ert-deftest herdr-pane-read-does-not-focus-what-it-reads ()
   "herdr\\='s rule, and the half of it that is an absence.
 
