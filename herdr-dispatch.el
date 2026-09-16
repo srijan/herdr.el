@@ -3,6 +3,7 @@
 ;; Copyright (C) 2026 Eddie Jesinsky
 
 ;; Author: Eddie Jesinsky
+;; Maintainer: Srijan Choudhary
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;; Package-Requires: ((emacs "28.1") (magit-section "4.0"))

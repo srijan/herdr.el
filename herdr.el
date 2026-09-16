@@ -3,7 +3,8 @@
 ;; Copyright (C) 2026 Eddie Jesinsky
 
 ;; Author: Eddie Jesinsky
-;; URL: https://github.com/ejesinsky/herdr.el
+;; Maintainer: Srijan Choudhary
+;; URL: https://github.com/srijan/herdr.el
 ;; Version: 0.1.0
 ;; Keywords: processes, terminals, tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
