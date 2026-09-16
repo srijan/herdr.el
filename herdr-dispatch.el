@@ -76,6 +76,7 @@ tells itself apart from a redraw of an empty session.")
     (define-key map "q" #'quit-window)
     (define-key map (kbd "RET") #'herdr-dispatch-visit)
     (define-key map "p" #'herdr-dispatch-prompt)
+    (define-key map "a" #'herdr-dispatch-send-keys)
     (define-key map "r" #'herdr-dispatch-read)
     (define-key map "R" #'herdr-dispatch-rename)
     (define-key map "k" #'herdr-dispatch-close)
@@ -96,22 +97,6 @@ tells itself apart from a redraw of an empty session.")
 Lowercase letters are the read-only verbs; each acts on whatever the
 line under point names, so no key needs a target of its own.")
 
-(defcustom herdr-dispatch-show-known-projects nil
-  "Whether the dashboard lists projects with no herdr workspace open.
-
-The `Inactive\\=' section, built from `project-known-project-roots\\='.  It
-is a way to start a workspace somewhere you have worked before, which is
-useful the first time and noise every time after: the list grows with
-every project you visit and never shrinks on its own, so it is soon
-longer than the session it sits under.
-
-Off by default for a second reason.  Each root costs an asynchronous
-`worktree.list\\=' every time the dashboard forgets its cache, and the
-roots outnumber the workspaces — on the machine this was measured on,
-thirty-odd roots against five workspaces."
-  :type 'boolean
-  :group 'herdr)
-
 (defun herdr-dispatch--fold-indicators ()
   "Return `magit-section-visibility-indicators\\=' for the current frame.
 The same margin character in graphical and terminal frames, asked on
@@ -126,6 +111,17 @@ frame."
               (lambda (&rest _) (herdr-dispatch-refresh t)))
   (setq-local magit-section-visibility-indicators
               (herdr-dispatch--fold-indicators))
+  ;; The queue above already lists every agent, so MACHINES is topology:
+  ;; machine, workspace, branch, directory.  A workspace opens to its
+  ;; panes and checkouts when asked, which is how herdr\='s own sidebar and
+  ;; Collie both read — neither lists a pane twice on one screen.
+  ;;
+  ;; magit\='s own mechanism rather than a hidden slot set by hand: it is
+  ;; consulted by `magit-insert-section\=', so a redraw keeps whatever the
+  ;; reader has since toggled instead of folding it shut again.
+  (setq-local magit-section-initial-visibility-alist
+              (append '((herdr-worktrees . hide) (herdr-workspace . hide))
+                      magit-section-initial-visibility-alist))
   ;; Two columns: one for the indicator, one of air between it and the
   ;; text.  A margin of zero width silently drops margin overlays, which
   ;; would leave the indicators configured and invisible.
@@ -257,11 +253,6 @@ foldable headings."
         (setq separate t)
         (let ((type (nth 0 node))
               (leaf (memq (nth 0 node) '(herdr-pane herdr-worktree))))
-          ;; A known project is a heading when it owns rows, a leaf when
-          ;; it owns none: a fold indicator beside nothing to fold is
-          ;; what `herdr-dispatch--insert-container' exists to avoid.
-          (when (and (eq type 'herdr-known-project) (null children))
-            (setq leaf t))
           (herdr-dispatch--apply-fold
            (magit-insert-section ((eval type) value)
              (if leaf
@@ -272,8 +263,8 @@ foldable headings."
 ;;; The object at point
 
 (defconst herdr-dispatch-target-types
-  '(herdr-server herdr-workspace herdr-panes herdr-pane herdr-worktree
-                 herdr-known-project herdr-known-projects)
+  '(herdr-machine herdr-machines herdr-queue
+                  herdr-workspace herdr-pane herdr-worktree herdr-worktrees)
   "The section types a verb can be aimed at.
 Every type `herdr-tree-build\\=' draws.  A section of any other type - the
 buffer\\='s root, the header - is not a target, and the verbs say so.")
@@ -364,14 +355,27 @@ carrying nothing, so the resolver falls through."
 (defun herdr-dispatch--row-connection (section)
   "Return the connection SECTION\\='s row came from.
 
-The enclosing `herdr-server\\=' row names it.  With one connection there
+The enclosing `herdr-machine\\=' row names it.  With one connection there
 is no such row — nothing draws a level that says nothing — and the sole
 connection is the answer.
 
 A name rather than the connection itself, because a section outlives the
 redraws around it and a reconnect replaces the struct: the name is what
 both sides still agree on."
-  (or (when-let* ((name (herdr-dispatch--enclosing-value section 'herdr-server)))
+  (or (when-let* ((name (herdr-dispatch--enclosing-value section
+                                                           'herdr-machine)))
+        (herdr-connection-named name))
+      ;; A queue row has no machine heading above it: the queue is
+      ;; ordered by attention, not by machine.  It carries the name on
+      ;; its own line instead; see `herdr-tree--queue-row\='.
+      ;;
+      ;; Scanned across the row rather than read at its start, because
+      ;; `herdr-dispatch--indent\=' puts plain spaces in front of every
+      ;; line and the section begins on one of those.
+      (when-let* ((at (text-property-not-all (oref section start)
+                                             (oref section end)
+                                             'herdr-machine nil))
+                  (name (get-text-property at 'herdr-machine)))
         (herdr-connection-named name))
       (herdr-connection--only)))
 
@@ -418,7 +422,7 @@ reported rather than raised.  DOCSTRING documents the command."
 ;;; Worktrees
 ;;
 ;; The listings live on the connection, as an alist keyed by workspace
-;; id or by known-project root, the shape `herdr-tree-build' takes.
+;; id, the shape `herdr-tree-build' takes.
 
 (defun herdr-dispatch--worktrees-answered-p (connection key)
   "Return non-nil when KEY has an answer.
@@ -491,8 +495,13 @@ the whole cache is invalidated."
         (assoc-delete-all key
                           (herdr-connection-worktrees-unanswered connection))))
 
-(defun herdr-dispatch--worktrees-received (connection key generation found error)
-  "Cache FOUND as KEY\\='s worktrees and ask for a redraw.
+(defun herdr-dispatch--worktrees-received (connection key generation listing error)
+  "Cache LISTING as KEY\\='s `worktree.list\\=' reply and ask for a redraw.
+
+The whole reply, not its `worktrees\\=' array alone: `source.repo_root\\='
+states which repository the listing was taken from, which
+`herdr-tree--workspace-repository\\=' would otherwise have to infer by
+scanning for the entry that is not a linked worktree.
 
 GENERATION is the connection\\='s worktrees generation when the request
 went out.  A reply from an older generation was invalidated while
@@ -526,7 +535,7 @@ rather than a buffer written to."
             'error))
     (setf (alist-get key (herdr-connection-worktrees connection)
                      nil nil #'equal)
-          found)
+          listing)
     (when (get-buffer herdr-dispatch-buffer-name)
       (herdr-dispatch--schedule-refresh))))
 
@@ -568,7 +577,7 @@ callers are not inside `herdr-dispatch--protect\\='."
            ;; returns, and it belongs to the cache it was asked of.
            (lambda (result error)
              (herdr-dispatch--worktrees-received
-              connection key generation (alist-get 'worktrees result) error))
+              connection key generation result error))
            herdr-rpc-timeout)
         (error
          (herdr-dispatch--worktrees-received
@@ -615,26 +624,6 @@ here."
         (herdr-dispatch--forget-one-worktrees connection id))
       (when (herdr-dispatch--worktrees-wanted-p connection id)
         (herdr-dispatch--fetch-worktrees connection id directory)))))
-
-(defun herdr-dispatch--request-known-project-worktrees (connection known-project-roots)
-  "Ask for the worktrees of every root in KNOWN-PROJECT-ROOTS with none cached.
-
-The known-project sibling of `herdr-dispatch--request-worktrees\\=', reusing
-the same cache and the same `herdr-dispatch--fetch-worktrees\\=' — a root
-here is both the id the reply is cached under and the directory the
-request is made about, since a known project always has a directory to
-ask about.  That is the one case `herdr-dispatch--request-worktrees\\='
-handles specially for a workspace with no panes yet — no-directory,
-retried once a directory exists — and it cannot arise here, so there is
-nothing to mirror from it."
-  (dolist (root known-project-roots)
-    (when (herdr-dispatch--worktrees-wanted-p connection root)
-      ;; The root is a file name Emacs holds; the request is a directory
-      ;; the server has to be able to open.
-      (herdr-dispatch--fetch-worktrees
-       connection root
-       (file-name-as-directory
-        (herdr-connection-server-path connection root))))))
 
 (defun herdr-dispatch--retry-unanswered-worktrees (connection)
   "Forget every workspace that has no answer, and ask again.
@@ -715,7 +704,9 @@ not the same repository."
   (seq-find (lambda (candidate)
               (equal path (herdr-worktree-path candidate)))
             (apply #'append
-                   (mapcar #'cdr (herdr-connection-worktrees connection)))))
+                   (mapcar (lambda (entry)
+                             (herdr-worktree-listing-worktrees (cdr entry)))
+                           (herdr-connection-worktrees connection)))))
 
 (defun herdr-dispatch--checked-worktree (target)
   "Return TARGET\\='s WorktreeInfo, or refuse the row.
@@ -819,66 +810,21 @@ others refuse."
                           (cwd . ,dir)
                           (focus . t)))))))
 
-(herdr-dispatch-defverb herdr-dispatch-open-known-project (&optional target)
-  "Open the known project at point as a new workspace.
-
-Reached only from a `herdr-known-project\\=' row, which
-`herdr-tree--known-project-nodes\\=' builds only for a root with no
-workspace currently open — so this always creates one.  The check for
-an existing workspace stays anyway: the row was built from a state that
-could be one poll tick behind by the time RET lands, and creating a
-second workspace for a directory that already has one is the exact bug
-`herdr-state-workspace-for-directory\\=' exists to prevent — the same
-guard `herdr-project\\=' makes before it creates.  Both share
-`herdr-cmd-open-workspace-for\\=', which makes that guard, focuses what
-it creates, and goes there under either terminal backend."
-  (herdr-cmd-open-workspace-for
-   (herdr-dispatch--aimed-at (or target (herdr-dispatch-target-at-point))
-                             'herdr-known-project "a known project")))
-
-;;; The read-only verbs
-
-(defun herdr-dispatch--main-checkout-p (target)
-  "Return non-nil when TARGET is a repository\\='s own checkout row.
-
-`herdr-tree--main-checkout-node\\=' draws the `main\\=' row of an inactive
-project with `herdr-tree--worktree-node\\=', so it is a `herdr-worktree\\='
-section like any other, and `herdr-dispatch-visit\\=' used to send it to
-`herdr-dispatch-open-worktree\\='.  The guard there refused it for not
-being a linked worktree, which it is not and cannot be: the row IS the
-checkout the worktrees hang off.  The guard is right; the row had no
-business reaching it.
-
-Nil when no record is cached, so such a row still gets the refetch error
-rather than being opened on a guess."
-  (when-let* ((record (herdr-dispatch-target-record target)))
-    (not (herdr-worktree-linked-p record))))
-
 (herdr-dispatch-defverb herdr-dispatch-visit ()
   "Go to the thing at point.
 A pane is focused and its buffer shown.  A workspace is focused and then
 followed to whichever pane herdr lands on, which is the server\\='s
-choice rather than ours.  A known project with no workspace open yet is
-created and focused instead; see `herdr-dispatch-open-known-project\\='.
-So is that project's own `main\\=' checkout row, which names the same
-directory; see `herdr-dispatch--main-checkout-p\\='.  A heading
-has nowhere to go; see `herdr-dispatch--refuse-heading\\='."
+choice rather than ours.  A worktree is opened as a workspace.  A
+heading has nowhere to go; see `herdr-dispatch--refuse-heading\\='."
   (let ((target (herdr-dispatch-target-at-point)))
     (pcase (herdr-dispatch--target-type target)
       ('herdr-pane (herdr-pane-focus (herdr-dispatch-target-value target)))
       ('herdr-workspace
        (herdr-workspace-focus (herdr-dispatch-target-value target)))
-      ('herdr-worktree
-       (if (herdr-dispatch--main-checkout-p target)
-           (herdr-cmd-open-workspace-for (herdr-dispatch-target-value target))
-         (herdr-dispatch-open-worktree target)))
-      ('herdr-known-project (herdr-dispatch-open-known-project target))
-      ('herdr-panes
+      ('herdr-worktree (herdr-dispatch-open-worktree target))
+      ((or 'herdr-worktrees 'herdr-queue 'herdr-machines)
        (herdr-dispatch--refuse-heading
-        "a workspace's main group is not somewhere to go"))
-      ('herdr-known-projects
-       (herdr-dispatch--refuse-heading
-        "the inactive-projects group is not somewhere to go"))
+        "a grouping heading is not somewhere to go"))
       (_ (user-error "herdr: nothing at point")))))
 
 (herdr-dispatch-defverb herdr-dispatch-prompt ()
@@ -886,6 +832,18 @@ has nowhere to go; see `herdr-dispatch--refuse-heading\\='."
   (let ((pane (herdr-dispatch--aimed-at (herdr-dispatch-target-at-point)
                                         'herdr-pane "an agent")))
     (herdr-agent-prompt (read-string "Prompt: ") pane)))
+
+(herdr-dispatch-defverb herdr-dispatch-send-keys ()
+  "Answer the agent at point with key presses.
+
+Named in the prompt, because this is the one verb that answers a
+question somebody else is being asked, and answering the wrong agent is
+the mistake worth making hard."
+  (let ((pane (herdr-dispatch--aimed-at (herdr-dispatch-target-at-point)
+                                        'herdr-pane "an agent")))
+    (herdr-agent-send-keys
+     (read-string (format "Keys for %s: " (herdr-cmd--pane-description pane)))
+     pane)))
 
 (herdr-dispatch-defverb herdr-dispatch-read ()
   "Read the pane at point into a buffer."
@@ -914,14 +872,9 @@ them; see `herdr-dispatch--refuse-heading\\='."
       ('herdr-worktree
        (user-error
         "herdr: a worktree cannot be renamed; rename its branch with git"))
-      ('herdr-known-project
-       (user-error "herdr: a known project has no label of its own to rename"))
-      ('herdr-panes
+      ((or 'herdr-worktrees 'herdr-queue 'herdr-machines)
        (herdr-dispatch--refuse-heading
-        "a workspace's main group cannot be renamed"))
-      ('herdr-known-projects
-       (herdr-dispatch--refuse-heading
-        "the inactive-projects group cannot be renamed"))
+        "a grouping heading cannot be renamed"))
       (_ (user-error "herdr: nothing at point to rename")))))
 
 (herdr-dispatch-defverb herdr-dispatch-close ()
@@ -945,15 +898,9 @@ the same reason and with more at stake; see
       ('herdr-worktree
        (herdr-worktree-remove
         (herdr-dispatch--worktree-workspace target)))
-      ('herdr-known-project
-       (user-error
-        "herdr: a known project with no workspace open has nothing to close"))
-      ('herdr-panes
+      ((or 'herdr-worktrees 'herdr-queue 'herdr-machines)
        (herdr-dispatch--refuse-heading
-        "a workspace's main group cannot be closed"))
-      ('herdr-known-projects
-       (herdr-dispatch--refuse-heading
-        "the inactive-projects group cannot be closed"))
+        "a grouping heading cannot be closed"))
       (_ (user-error "herdr: nothing at point to close")))))
 
 ;;; The create verbs
@@ -985,11 +932,9 @@ label is left to herdr, which names a workspace after its directory."
 
 (defun herdr-dispatch--pane-for-directory (target)
   "Return a pane for a new terminal in the directory TARGET names, or nil.
-A directory row — a worktree, the `main\\=' row, an inactive project —
-wins over the workspace it sits inside, which would be the repository the
-user was pointing past."
-  (when (memq (herdr-dispatch--target-type target)
-              '(herdr-worktree herdr-known-project))
+A worktree row wins over the workspace it sits inside, which would be
+the repository the user was pointing past."
+  (when (eq 'herdr-worktree (herdr-dispatch--target-type target))
     (herdr-cmd-pane-in-directory (herdr-dispatch-target-value target))))
 
 (defun herdr-dispatch--terminal-workspace (target)
@@ -1020,9 +965,6 @@ A directory row wins; otherwise a fresh tab in the workspace at point.
 A row naming neither is refused rather than sent to the server\\='s
 focused workspace."
   (let ((target (herdr-dispatch-target-at-point)))
-    (when (eq 'herdr-known-projects (herdr-dispatch--target-type target))
-      (herdr-dispatch--refuse-heading
-       "the inactive-projects group is not a place to open a terminal"))
     (herdr-cmd--follow-new-pane
      (or (herdr-dispatch--pane-for-directory target)
          (herdr-dispatch--workspace-target-pane target)))))
@@ -1043,37 +985,6 @@ An empty base ref means the current HEAD and is omitted from the call."
     (herdr-dispatch--forget-worktrees connection)
     (herdr-dispatch-refresh)))
 
-(defun herdr-dispatch--live-project-root-p (root)
-  "Return non-nil when ROOT is a directory that still exists.
-project.el remembers a project until told to forget one, and nothing
-tells it when a directory is deleted, so a removed worktree keeps
-drawing an `Inactive\\=' row that `RET\\=' can only fail on.
-
-A remote root is taken on trust: `file-directory-p\\=' over TRAMP is a
-round trip, and this runs on every redraw.
-
-Hides the row, does not forget the project.  That is
-`project-forget-zombie-projects\\=', which writes to `project-list-file\\='
-and is not something a redraw should do."
-  (or (file-remote-p root)
-      (file-directory-p root)))
-
-(defun herdr-dispatch--known-project-roots ()
-  "Return the still-existing `project-known-project-roots\\=', or nil.
-
-Nil when `herdr-dispatch-show-known-projects\\=' is off, which is the
-default, and nil without project.el, which is guarded rather than
-required.
-
-Deleted roots are dropped here, not in `herdr-tree.el\\=', which is pure
-and stays that way.  This is the boundary where project.el's answer
-enters, and the only place that touches the filesystem.  It also spares
-each dropped root a `worktree.list\\=' round trip."
-  (when (and herdr-dispatch-show-known-projects
-             (fboundp 'project-known-project-roots))
-    (seq-filter #'herdr-dispatch--live-project-root-p
-                (project-known-project-roots))))
-
 (defun herdr-dispatch--header (connections)
   "Return the header line summarising CONNECTIONS.
 
@@ -1082,14 +993,14 @@ count that is always true stops being read, the same reasoning that
 already keeps idle out of the modeline segment.
 
 Counts across every connection, and says how many there are only when
-there are several: one server needs no telling that it is the only one."
+there are several: one machine needs no telling that it is the only one."
   (let* ((merged (herdr-state-merged
                   (mapcar #'herdr-state-current connections)))
          (summary (herdr-tree-status-summary merged)))
     (format "herdr   %s%s  %s%s"
             (if (cdr connections)
                 (format "%s  " (herdr-dispatch--count
-                                (length connections) "server"))
+                                (length connections) "machine"))
               "")
             (herdr-dispatch--count (length (herdr-state-workspaces merged))
                                    "workspace")
@@ -1201,14 +1112,7 @@ agent is working."
         ;; something this call papers over.
         (dolist (connection connections)
           (herdr-dispatch--request-worktrees
-           connection (herdr-state-current connection))
-          (herdr-dispatch--request-known-project-worktrees
-           connection (herdr-dispatch--roots-for connection)))))))
-
-(defun herdr-dispatch--roots-for (connection)
-  "Return the known-project roots that belong to CONNECTION."
-  (herdr-connection-roots-for connection
-                              (herdr-dispatch--known-project-roots)))
+           connection (herdr-state-current connection)))))))
 
 (defun herdr-dispatch--tree (connections)
   "Return the dashboard tree for CONNECTIONS.
@@ -1221,20 +1125,26 @@ nothing.
 Merged here and nowhere else, per KTD6: each connection\\='s cache is
 built from its own server alone, and this is the one place that knows
 they are being shown together."
-  (if (cdr connections)
-      (mapcar (lambda (connection)
-                (herdr-tree-server-node
-                 (herdr-connection-name connection)
-                 (herdr-state-running-p connection)
-                 (herdr-dispatch--tree-for connection)))
-              connections)
-    (herdr-dispatch--tree-for (car connections))))
+  (append
+   (herdr-tree-queue-nodes
+    (mapcar (lambda (connection)
+              (cons (and (cdr connections) (herdr-connection-name connection))
+                    (herdr-state-current connection)))
+            connections))
+   (list (list 'herdr-machines "machines" "MACHINES"
+               (if (cdr connections)
+                   (mapcar (lambda (connection)
+                             (herdr-tree-machine-node
+                              (herdr-connection-name connection)
+                              (herdr-state-running-p connection)
+                              (herdr-dispatch--tree-for connection)))
+                           connections)
+                 (herdr-dispatch--tree-for (car connections)))))))
 
 (defun herdr-dispatch--tree-for (connection)
   "Return CONNECTION\\='s own subtree."
   (herdr-tree-build (herdr-state-current connection)
-                    (herdr-connection-worktrees connection)
-                    (herdr-dispatch--roots-for connection)))
+                    (herdr-connection-worktrees connection)))
 
 (defun herdr-dispatch--cancel-refresh ()
   "Cancel the pending debounced redraw, if there is one."

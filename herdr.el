@@ -116,6 +116,7 @@ The one entry point that runs the start sequence first, which is why
 (defvar herdr-command-map
   (let ((map (make-sparse-keymap)))
     (define-key map "s" #'herdr)
+    (define-key map "a" #'herdr-agent-send-keys)
     (define-key map "f" #'herdr-pane-focus)
     (define-key map "n" #'herdr-new-terminal)
     (define-key map "k" #'herdr-pane-close)

@@ -443,21 +443,6 @@ it cannot open."
       (should (equal "/srv/app/" (alist-get 'cwd sent)))
       (should-not (file-remote-p (alist-get 'cwd sent))))))
 
-(ert-deftest herdr-dispatch-a-known-root-reaches-its-server-as-a-server-path ()
-  "A TRAMP root survives `expand-file-name' unchanged and would reach the
-server as `/ssh:host:/srv/project/'."
-  (let ((remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
-        (asked nil))
-    (cl-letf (((symbol-function 'herdr-dispatch--fetch-worktrees)
-               (lambda (_connection _key directory) (push directory asked))))
-      (herdr-dispatch--request-known-project-worktrees
-       remote '("/ssh:shadow:/srv/project"))
-      (should (equal '("/srv/project/") asked))
-      (should-not (file-remote-p (car asked))))))
-
-
-;;; The machine catalog
-
 (defmacro herdr-connection-test--catalog (output status &rest body)
   "Run BODY with `herdr machine list --json' printing OUTPUT and exiting STATUS."
   (declare (indent 2) (debug t))
@@ -510,15 +495,16 @@ being told a target directly."
 nothing to it, so there is no second place a machine can be described."
   (herdr-connection-test--catalog "[]" 0
     (herdr-connection-machines))
-  ;; Nothing else in the package runs `herdr machine' at all.
+  ;; `list' is the only `herdr machine' subcommand the package runs.  The
+  ;; search is for "machine" followed by another string literal -- an
+  ;; argument list -- so that the word used as a display noun, which the
+  ;; dashboard header counts with, is not mistaken for an invocation.
   (dolist (file (directory-files default-directory t "\\`herdr.*\\.el\\'"))
     (with-temp-buffer
       (insert-file-contents file)
       (goto-char (point-min))
-      (while (re-search-forward "\"machine\"" nil t)
-        (should (save-excursion
-                  (beginning-of-line)
-                  (looking-at-p ".*\"machine\" \"list\"")))))))
+      (while (re-search-forward "\"machine\"[ \t\n]+\"\\([a-z-]+\\)\"" nil t)
+        (should (equal "list" (match-string 1)))))))
 
 (ert-deftest herdr-connection-a-renamed-machine-keeps-its-connection ()
   "A profile keeps its id through a rename.  Reconnecting to a renamed

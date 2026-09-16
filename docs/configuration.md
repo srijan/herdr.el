@@ -10,7 +10,7 @@ herdr.el binds no key. `herdr-command-map` is a prefix keymap that you bind your
 
 | Option | Default | Function |
 |---|---|---|
-| `herdr-socket-path` | `"~/.config/herdr/herdr.sock"` | The path to the unix socket of the server. |
+| `herdr-socket-path` | `$HERDR_SOCKET_PATH`, else `"~/.config/herdr/herdr.sock"` | The path to the unix socket of the server. |
 | `herdr-executable` | `"herdr"` | The name of the herdr program, or the path to it. |
 | `herdr-protocol-version` | `22` | The protocol version that this package targets. |
 | `herdr-rpc-timeout` | `10.0` | The number of seconds to wait for a synchronous response. |
@@ -23,6 +23,25 @@ waits for 2 seconds only.
 
 Change `herdr-protocol-version` only to stop the mismatch warning. The value does not change
 what herdr.el sends.
+
+### An Emacs started inside a herdr pane
+
+herdr exports `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`,
+`HERDR_SOCKET_PATH` and `HERDR_BIN_PATH` into every pane it starts. An Emacs launched from one
+inherits them, and herdr.el reads two.
+
+`herdr-socket-path` defaults to `HERDR_SOCKET_PATH`, so an Emacs started inside a
+`herdr --session work` pane talks to that session. The literal default is the *default* session's
+socket, which for a named session is the wrong server — one that may not be running, and that
+holds none of the panes on screen. Set the option yourself to override this.
+
+`HERDR_PANE_ID` names the pane Emacs is running in. Going to that pane is refused, because
+attaching to it points a terminal buffer at the terminal drawing the buffer. The id is only
+believed for the server `HERDR_SOCKET_PATH` names: ids are per-server counters, so the same
+`w1:p1` exists on every machine you follow.
+
+An Emacs started any other way — from a desktop launcher, as a daemon — has none of these, and
+nothing above applies. An exported-but-empty variable counts as absent.
 
 ## Remote servers
 
@@ -174,7 +193,6 @@ rather than at the backstop's.
 
 | Option | Default | Function |
 |---|---|---|
-| `herdr-dispatch-show-known-projects` | `nil` | Whether to list projects with no workspace open. |
 | `herdr-dispatch-buffer-name` | `"*herdr-agents*"` | The name of the dashboard buffer. |
 | `herdr-dispatch-display-action` | `(display-buffer-same-window)` | Where the dashboard appears. |
 | `herdr-dispatch-refresh-debounce` | `0.2` | The number of seconds to group the dashboard redraws. |
@@ -211,6 +229,19 @@ To get desktop notifications, set the statuses that you want:
 ```
 
 herdr.el uses the `alert` package when the package is present.
+
+`"done"` is worth having here and is the one status the server never sends: it means an agent
+finished and you have not looked at it yet, which herdr.el works out for itself.
+
+These are herdr.el's own notifications, and they do not come from the server. herdr has a notifier
+of its own under `[ui.toast]` in `config.toml` — `off`, `inside herdr`, `via terminal` or
+`via system` in its settings screen — but every one of those needs a herdr TUI attached: with none,
+`notification.show` answers `no_foreground_client` and nothing is delivered whichever mode is set.
+So for the usual herdr.el session, where the terminals are Emacs buffers and no TUI is running,
+`herdr-notify-statuses` is the only thing that can notify you.
+
+If you do keep a TUI attached and turn `[ui.toast]` on, set one or the other rather than both, or
+each finished agent notifies you twice.
 
 ## The event stream
 

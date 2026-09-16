@@ -143,6 +143,37 @@ server cannot find a repository that has no open workspace.
 | Command | Method | Function |
 |---|---|---|
 | `herdr-agent-prompt` | `agent.prompt` | Send a prompt to an agent. |
+| `herdr-agent-send-keys` | `agent.send_keys` | Send key presses to an agent. |
+| `herdr-agent-rename` | `agent.rename` | Name an agent, or clear its name. |
+
+`herdr-agent-prompt` sends the region when one is active, and the whole buffer under
+`C-u`. With neither, it asks you to type the prompt. This is the half of prompting that Emacs
+is better at than a terminal: the prompt is usually a function, a failing test or a diff that is
+already on screen.
+
+herdr refuses a prompt to an agent that is already **blocked**, answering `agent_blocked` before
+sending anything, so a question waiting on screen is never answered by accident. It also refuses
+a pane whose agent is not the foreground process, with `agent_not_ready` — a plain shell that was
+merely *reported* as an agent is not enough.
+
+`herdr-agent-send-keys` is what answers a blocked agent, since a prompt cannot. It takes
+whitespace-separated key names — `y`, `n`, `Enter`, `esc` — and sends them as they are. `esc` is
+herdr's canonical spelling for Escape, though it accepts `escape` too. From the dashboard, `a`
+names the agent in its prompt: this is the one verb that answers a question somebody else is
+being asked, and answering the wrong agent is the mistake worth making hard.
+
+`herdr-agent-rename` names an agent. **A name is not a label.** The pane's label is what the pane
+is *doing* and moves as the work moves; the agent's name is what you *call* it, and herdr takes one
+anywhere it takes a target — `agent.get`, a prompt, a wait. In Emacs it is also what stops a buffer
+name moving: `herdr-pane-identity` prefers it over everything else, so a named agent keeps
+`*herdr: reviewer*` however its terminal title churns.
+
+Clearing a name means giving an empty one. herdr requires a name to start with a lowercase letter
+and to hold only lowercase letters, digits, `-` or `_`, and refuses one already in use with
+`agent_name_taken`.
+
+herdr publishes no event when an agent is renamed, so the reply is the only news of one. herdr.el
+folds it into the cache itself; a name set outside Emacs appears at the next snapshot instead.
 
 To run an agent, open a terminal with `herdr-new-terminal` and run the agent in it. herdr detects
 the agent and names the pane a few seconds later. This is the mechanism the herdr TUI uses, and

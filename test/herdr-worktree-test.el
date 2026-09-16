@@ -35,5 +35,22 @@ linked costs whatever a verb on that row would do to the repository."
   (should-not (herdr-worktree-linked-p '((path . "/tmp/x"))))
   (should-not (herdr-worktree-linked-p '((is_linked_worktree . nil)))))
 
+(ert-deftest herdr-worktree-listing-repo-root-is-read-not-inferred ()
+  "MEASURED: `worktree.list' answers with a `source' object naming the
+repository the listing was taken from, so the main checkout is read
+rather than found by scanning for the entry that is not a linked
+worktree.  The scan agreed whenever such an entry was present and
+answered nil when it was not; `repo_root' is required."
+  (let ((listing '((source . ((repo_key . "/tmp/repo/.git")
+                              (repo_name . "repo")
+                              (repo_root . "/tmp/repo")))
+                   (worktrees . (((path . "/tmp/repo-worktrees/feature")
+                                  (is_linked_worktree . t)))))))
+    (should (equal "/tmp/repo" (herdr-worktree-listing-repo-root listing)))
+    (should (equal 1 (length (herdr-worktree-listing-worktrees listing))))
+    ;; A listing that never landed answers nil rather than signalling.
+    (should-not (herdr-worktree-listing-repo-root nil))
+    (should-not (herdr-worktree-listing-worktrees nil))))
+
 (provide 'herdr-worktree-test)
 ;;; herdr-worktree-test.el ends here

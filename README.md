@@ -25,18 +25,33 @@ of repositories, their checkouts and their panes. Every command is reachable fro
 ```
 herdr   3 workspaces  5 panes  2▶1✓
 
-example-api (1)              ~/src/example-api/
-  · shell       idle      w4:p1   npm run watch
-  ✓ claude      done      w4:p5   Add the pagination endpoint
+BLOCKED (1)
+  ⏸ codex       Approve the migration?             example-api
 
-herdr.el (2)                 ~/src/herdr.el/
-  main (1)
-    ▶ claude    working   w7:p1   Fix the reconcile order
-  feat-dispatch (1)          ~/src/herdr.el-worktrees/feat-dispatch/ ▶
-    ▶ claude    working   w9:p1   Nest worktrees under their repository
+READY (1)
+  ✓ claude      Add the pagination endpoint        example-api
 
-Inactive (24)
+WORKING (2)
+  ▶ claude      Fix the reconcile order            herdr.el
+  ▶ claude      Nest worktrees under repositories  feat-dispatch
+
+MACHINES
+  ▸ example-api   main        ~/src/example-api/
+  ▾ herdr.el      main        ~/src/herdr.el/
+      ▶ claude    working   w7:p1   Fix the reconcile order
+      ▸ feat-dispatch feat/nest  ~/src/herdr.el-worktrees/feat-dispatch/ ▶
+      ▸ worktrees (2)
 ```
+
+The queue comes first, because what wants you is not where it lives. A section per status,
+worst first, and inside one the most recent news leads. `MACHINES` below is the topology:
+machine, workspace, branch, directory. A workspace opens to its panes and checkouts when you
+press `TAB` on it — the queue already lists every agent, so nothing is shown twice.
+
+`READY` holds agents that finished while you were elsewhere. Going to one marks it seen and drops
+it to `IDLE`; reading its output with `r` does not, so you can look through what finished without
+emptying the list. herdr keeps that seen state per client and never sends it, so herdr.el works it
+out from the transitions it watches.
 
 The dashboard opens in the selected window and leaves your other windows alone. `q` restores the
 buffer that window held before.
@@ -48,6 +63,7 @@ buffer that window held before.
 | `w` / `n` / `%` | create workspace / terminal / worktree |
 | `p` | prompt the agent at point |
 | `r` | read the pane at point into a buffer |
+| `a` | answer the agent at point with key presses |
 | `R` | rename the thing at point |
 | `k` | close or remove the thing at point |
 | `g` | refresh from the cache |
@@ -86,40 +102,6 @@ chat arrives as a workspace of one pane and reads as exactly that.
 
 The count on a repository row is its checkouts: its own, plus one for each worktree. Where a
 `main` group is drawn, the pane count sits on the group.
-
-### Inactive projects
-
-Set `herdr-dispatch-show-known-projects` to `t` and the dashboard ends with one foldable
-`Inactive (N)` heading. It lists every `project.el` project with no herdr workspace open.
-
-It is off by default. The list grows with every project you visit and never shrinks, so it is
-soon longer than the session above it, and each root costs a `worktree.list` round trip whenever
-the dashboard refetches. Each row is dimmed, folds, and carries the repository's
-checkouts underneath: a `main` row for its own, then one for each worktree.
-
-```
-Inactive (24)
-  example-api (16)           ~/src/example-api/
-    main                     ~/src/example-api
-    release-1.4              ~/src/example-api-worktrees/release-1.4
-    …
-```
-
-`RET` on the project row creates its workspace. `n` on any row under it opens a terminal in that
-directory. A worktree you have not touched in a week is two keystrokes from having a shell in it.
-
-Two kinds of row are left out. A worktree you have also opened as a project in Emacs gets no row
-of its own, because it is already listed under the repository it belongs to. A project whose
-directory has been deleted gets no row either. `project.el` remembers a project until something
-tells it to forget one, and nothing tells it when a directory goes away. Run
-`project-forget-zombie-projects` to drop those.
-
-This list comes from `project-known-project-roots`, not from herdr. A herdr workspace closes when
-its last pane closes, so the server knows nothing about a project you are not working in right
-now. Reading `project.el` is what makes the dashboard a place to start work from.
-
-Directories render with `~/` in place of the home path. The abbreviation is display only. The row
-still carries the real path for the commands that act on it.
 
 ## One prefix key
 
@@ -190,25 +172,26 @@ machine. Terminals do not use that forward: a remote pane's buffer gets a TRAMP
 `default-directory` and runs the far host's own herdr, which is how it reaches a pane running
 there.
 
-With two servers connected the dashboard grows an outer level, one row per server, and a server
-that is down keeps its row rather than disappearing:
+With two machines connected the dashboard grows an outer level, one row per machine — herdr's own
+word for it, and the level its TUI heads `machines` — and a machine that is down keeps its row
+rather than disappearing:
 
 ```
-herdr   2 servers  4 workspaces  6 panes  1▶1✓
+herdr   2 machines  4 workspaces  6 panes  1▶1✓
 
 local (3)
-  herdr.el (2)                 ~/src/herdr.el/
+  herdr.el       main          ~/src/herdr.el/
     ▶ claude    working   w7:p1   Fix the reconcile order
 
 shadow (1)
-  example-api (1)              /ssh:shadow:~/src/example-api/
+  example-api    main          /ssh:shadow:~/src/example-api/
     ✓ codex     done      w1:p1   Port the retry helper
 
 scratch  not connected
 ```
 
 Ids are per-server counters, so two machines can each hold a `w1:p1`. Every structure keyed by
-one distinguishes them, and a command acts on the server of the row or candidate you chose.
+one distinguishes them, and a command acts on the machine of the row or candidate you chose.
 
 Nothing connects at startup. A laptop opened in a cafe must not slow to a stack of SSH timeouts
 for servers nobody asked about, and a server that has gone quiet costs its own freshness rather

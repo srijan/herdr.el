@@ -248,9 +248,65 @@ Reporting only gives a pane an entry in herdr's own agent list: the sidebar, and
 **Focus is shared.** The session has one focused pane, not one for each client. When you move
 the focus in Emacs, the focus moves in every attached TUI.
 
+**`done` never crosses the socket API.** The `AgentStatus` enum in the schema lists it, and the
+server never sends it. Measured against 0.9.0: `agent.list`, `agent.get` and
+`pane.agent_status_changed` report only `idle`, `working`, `blocked` and `unknown`, and no reply
+carries a `seen` field. `pane.report_agent` will not even accept `done` — its `--state` takes the
+other four.
+
+herdr says why in its own agent skill: `idle` and `done` both mean the agent is ready for input,
+the seen state is what tells them apart, and each client tracks it independently. So `done` is a
+client's word for a completion it has not looked at, and a client that wants one derives it.
+
+herdr.el derives it in `herdr-state--track-seen`: an agent that was `working` and is now `idle`
+is a completion, and `pane_focused` for that pane clears it. Both halves are measured. `pane.focus`,
+`agent.focus`, `workspace.focus` and a focusing `workspace.create` all emit `pane_focused` — including
+for a pane that already holds focus, which is why the clear reads the event rather than watching
+the focused id move. `pane.read` and `agent.read` emit no event at all, which is what makes
+"focus marks seen, reads do not" hold here without herdr.el having to suppress anything.
+
+The mark lives beside the cache, in the state's `done-panes`, and never in the pane record.
+Writing `done` into `agent_status` would put it in `herdr-pane-significant-fields`, so every
+`pane.list` reconcile would see cached `done` against a fresh `idle`, call it a change, and
+redraw the dashboard on the repair interval for as long as anything was finished.
+
+**There is no `agent_renamed` event.** The event schema carries `workspace_renamed` and
+`tab_renamed` and nothing for an agent, so `agent.rename` is announced only in its own reply, which
+returns the whole `AgentInfo`. A client caching names has to fold that in or wait for the next
+`session.snapshot` — and `agents`, the only array carrying a name, comes from the snapshot alone.
+
+**An absent `name` clears one.** `agent.rename` with only a target leaves the agent unnamed in the
+next snapshot, which is what the CLI's `--clear` does; an empty string is refused as
+`invalid_agent_name`. Names must start with a lowercase letter and hold only lowercase letters,
+digits, `-` or `_`, are 1-32 long, and are unique per server — a second agent taking one answers
+`agent_name_taken`. A cleared name stops resolving: the old name then answers `agent_not_found`.
+All measured on 0.9.0.
+
+**A blocked agent cannot be prompted.** `agent.prompt` answers `agent_blocked` — "agent NAME is
+blocked and requires interactive input" — and sends nothing. Measured on 0.9.0, and the check runs
+before the one below, so it is what a blocked agent answers whatever else is true of the pane.
+A question waiting on screen is therefore never answered by accident; `agent.send_keys` is the
+verb for that.
+
+**`agent.prompt` and `agent.send_keys` need a live agent, not a reported one.** A plain shell that
+`pane.report_agent` has labelled is enough for the agent list, the sidebar and
+`pane.agent_status_changed`, and not enough for these two: they answer `agent_not_ready`, with
+"no longer the pane foreground process" and "is not an active named agent" respectively.
+
+**`agent.wait` on `done` can only ever time out.** `--until` accepts every `AgentStatus`, and the
+server never enters `done` (see above), so `agent.wait --until done` waits out its deadline and
+returns `timeout`. Measured. Without `--until`, herdr matches idle, done or blocked — which is
+why the default works: `idle` is in it. herdr also documents that `--wait` on a prompt does not
+track turns, so prompting an agent that is already working may match that earlier turn finishing.
+
+**herdr tells a pane what it is.** Every pane it starts carries `HERDR_ENV=1`, `HERDR_PANE_ID`,
+`HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`, `HERDR_SOCKET_PATH` and `HERDR_BIN_PATH`. Read out of a live
+pane on 0.9.0, so a process inside a pane can name itself without asking the server anything, and
+an Emacs started from one can find the session it belongs to rather than assuming the default.
+
 **A workspace closes with its last pane.** A workspace with zero panes therefore cannot exist.
-That fact is the reason that the `Inactive` section of the dashboard comes from `project.el` and
-not from the server.
+That fact is the reason `herdr-new-terminal` offers `project.el` roots beside the open
+workspaces: the server knows nothing about a project you are not working in right now.
 
 ## Throughput and terminals
 

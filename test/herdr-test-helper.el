@@ -9,7 +9,6 @@
 
 ;;; Code:
 
-(require 'json)
 (require 'ert)
 (require 'cl-lib)
 ;; The connection struct and its `setf' expanders have to exist before
@@ -19,6 +18,16 @@
 (require 'herdr-state)
 (require 'herdr-connection)
 (require 'herdr-select)
+
+;; `herdr-self-pane-id' and `herdr-self-socket-path' are read from the
+;; environment when the package loads, and herdr exports both into every
+;; pane it starts.  A suite run from inside a herdr pane would otherwise
+;; disagree with one run outside it - and it did: with HERDR_PANE_ID set
+;; to a pane id the fixtures use, `herdr-term-select-pane' refused to
+;; attach and a test that had nothing to do with any of this failed.
+;; Neutralised here so every test states its own self-pane or has none.
+(setq herdr-self-pane-id nil
+      herdr-self-socket-path nil)
 
 ;; macOS caps unix socket paths near 104 bytes and the standard temp
 ;; directory is already long, so build paths under /tmp directly.
@@ -35,12 +44,6 @@ connections sharing one would replace each other.")
           (emacs-pid)
           (cl-incf herdr-test--socket-counter)))
 
-(defun herdr-test-parse (string)
-  "Parse STRING as herdr does: alists, lists, nil for null and false."
-  (json-parse-string string
-                     :object-type 'alist :array-type 'list
-                     :null-object nil :false-object nil))
-
 (defun herdr-test-start-server (path responder)
   "Listen on PATH, answering with RESPONDER.
 RESPONDER is called with each decoded request alist and must return a
@@ -54,7 +57,7 @@ real server sends after every non-subscription request."
    :filter
    (lambda (client chunk)
      (dolist (line (split-string chunk "\n" t "[ \t\r]+"))
-       (let* ((request (herdr-test-parse line))
+       (let* ((request (herdr-rpc-decode line))
               (reply (funcall responder request)))
          (when (car reply)
            (process-send-string client (car reply)))

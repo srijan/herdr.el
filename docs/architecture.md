@@ -101,6 +101,25 @@ runs both.
 Reconcile the workspace set as well as the pane set. Reconciling panes alone lets ghost
 workspaces collect for the life of a session.
 
+## Seen state
+
+The cache holds one thing the server did not say: which agents have finished without anybody
+looking at them. herdr keeps that per client and never puts it on the wire, so the `done` status
+the dashboard heads `READY` exists only here.
+
+`herdr-state-reduce` maintains it, in `herdr-state--track-seen`, because every write to a pane
+record already goes through that one function — the status events, the `final_status` a release
+carries, and the `pane_updated` a reconcile folds in. A completion noticed in one place is
+noticed in all three.
+
+It lives in the state's `done-panes` slot, beside the records rather than inside them. Writing
+`done` into a record's `agent_status` would put it in `herdr-pane-significant-fields`, and every
+reconcile would then read cached `done` against a fresh `idle`, call it a change, and redraw on
+the repair interval.
+
+Read it with `herdr-state-pane-status`, never `herdr-pane-status`. A surface that reads the
+record directly shows `idle` for a pane the queue is heading `READY`.
+
 ## The pure half and the impure half
 
 The dashboard has two layers. The split is the reason that the test suite can cover it.
@@ -113,9 +132,9 @@ returns a nested list of nodes. Each node has this shape:
 (TYPE VALUE LINE CHILDREN)
 ```
 
-- `TYPE` is one of `herdr-workspace`, `herdr-panes` (a workspace's `main` group),
-  `herdr-pane`, `herdr-worktree`, `herdr-known-project` or `herdr-known-projects` (the
-  `Inactive` container). The renderer's `pcase` has no fallback clause, so a type with no branch
+- `TYPE` is one of `herdr-workspace`, `herdr-pane`, `herdr-worktree`, `herdr-worktrees`
+  (the foldable heading over a repository's other checkouts), `herdr-queue` (one status section
+  of the attention queue), `herdr-machine` or `herdr-machines`. The renderer's `pcase` has no fallback clause, so a type with no branch
   is dropped silently along with everything under it.
 - `VALUE` is the identifier that a command acts on. It must never be `nil` for a real row.
 - `LINE` is the propertized string to insert.
@@ -156,5 +175,3 @@ Apply the abbreviation to the `LINE` string only. Never apply it to `VALUE`. A c
 - A synchronous call on a timer must bind `herdr-rpc-timeout` to
   `herdr-rpc-background-timeout`. A slow server must not freeze the editor.
 - Guard every use of `project.el` with `fboundp`.
-- Stub `herdr-dispatch--known-project-roots` in a test. Without the stub, the test reads the real
-  project list of the machine.

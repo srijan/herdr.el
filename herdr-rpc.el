@@ -21,7 +21,6 @@
 
 ;;; Code:
 
-(require 'json)
 (require 'subr-x)
 (require 'cl-lib)
 
@@ -30,8 +29,38 @@
   :group 'tools
   :prefix "herdr-")
 
-(defcustom herdr-socket-path "~/.config/herdr/herdr.sock"
-  "Path to the herdr server's unix domain socket."
+(defun herdr-rpc--env (name)
+  "Return environment variable NAME, or nil when it is unset or empty.
+An exported-but-empty variable is the same fact as an unset one, and
+`getenv\=' tells them apart where nothing here wants to.  An empty
+string is non-nil, so an empty HERDR_SOCKET_PATH fell straight through
+`or\=' and became a socket path with nothing in it."
+  (let ((value (getenv name)))
+    (unless (or (null value) (string-empty-p value)) value)))
+
+(defconst herdr-self-socket-path (herdr-rpc--env "HERDR_SOCKET_PATH")
+  "Socket of the server whose pane this Emacs is running inside, or nil.
+herdr exports it into every pane it starts, along with `HERDR_ENV\=',
+`HERDR_PANE_ID\=', `HERDR_TAB_ID\=' and `HERDR_WORKSPACE_ID\='.")
+
+(defconst herdr-self-pane-id (herdr-rpc--env "HERDR_PANE_ID")
+  "The herdr pane this Emacs is running inside, or nil.
+
+Set for an Emacs started from a herdr pane and absent for one started
+any other way, which is why everything reading it degrades to doing
+nothing rather than to guessing.  Meaningful only against the server at
+`herdr-self-socket-path\=': ids are per-server counters, so this names a
+pane on that server and some unrelated pane on every other.")
+
+(defcustom herdr-socket-path (or herdr-self-socket-path
+                                 "~/.config/herdr/herdr.sock")
+  "Path to the herdr server's unix domain socket.
+
+Defaults to the socket of the session this Emacs was started from when
+there is one.  The literal path is the default session\\='s, so an Emacs
+started inside a `herdr --session work\\=' pane used to talk to the
+default session instead of the one around it - a server that may not be
+running, and that holds none of the panes on screen."
   :type 'file
   :group 'herdr)
 
@@ -110,6 +139,22 @@ under it; a composite key holds the token instead."
 (defun herdr-connection-remote-p (connection)
   "Return non-nil when CONNECTION reaches its server over SSH."
   (and (herdr-connection-ssh-target connection) t))
+
+(defun herdr-self-pane-p (connection pane-id)
+  "Return non-nil when PANE-ID on CONNECTION is the pane hosting this Emacs.
+
+Both halves are required.  A bare id match is not enough: ids are
+per-server counters, so the `w1:p1\=' this Emacs sits in and the `w1:p1\='
+on a machine it follows are different panes with the same name.  The
+socket is what tells the two servers apart, and a remote connection
+reaches its server through a forward bound somewhere else entirely, so
+it can never be the one that started us."
+  (and herdr-self-pane-id
+       herdr-self-socket-path
+       (equal pane-id herdr-self-pane-id)
+       (not (herdr-connection-remote-p connection))
+       (equal (expand-file-name (herdr-connection-socket-path connection))
+              (expand-file-name herdr-self-socket-path))))
 
 (defun herdr-connection-host-directory (connection)
   "Return a `default-directory\\=' for running herdr on CONNECTION\\='s host.

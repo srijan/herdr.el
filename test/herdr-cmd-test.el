@@ -73,7 +73,9 @@ worth arguing about now."
                    herdr-workspace-rename
                    herdr-worktree-create
                    herdr-worktree-remove
-                   herdr-agent-prompt)
+                   herdr-agent-prompt
+                   herdr-agent-send-keys
+                   herdr-agent-rename)
                  (mapcar #'car herdr-cmd-methods))))
 
 (ert-deftest herdr-cmd-offers-no-surface-the-dashboard-does-not-use ()
@@ -119,6 +121,141 @@ deleting them safe."
   (should-not (herdr-cmd-read-truncated-p '((read . ((truncated . nil)))))))
 
 ;;; Focus must move Emacs, not just the server
+
+(ert-deftest herdr-agent-rename-clears-by-sending-no-name-at-all ()
+  "herdr reads an absent `name\\=' as `--clear\\=' and refuses an empty string.
+
+Measured on 0.9.0: `agent.rename\\=' with only a target leaves the agent
+with no name in the next snapshot, while `\"\"\\=' is refused as
+`invalid_agent_name\\='.  The transport already drops nil params rather
+than sending null, so clearing needs nothing of its own - which is the
+whole reason this is asserted rather than assumed."
+  (let (seen)
+    (cl-letf (((symbol-function 'message) #'ignore))
+      (herdr-test-with-state (:cache (herdr-state-empty))
+        (herdr-test-with-server
+            (lambda (req)
+              (setq seen req)
+              (cons (herdr-test-ok req '((type . "agent_info")
+                                         (agent . ((pane_id . "w1:p1")))))
+                    nil))
+          (herdr-agent-rename "   " "w1:p1"))))
+    (let ((params (alist-get 'params seen)))
+      (should (equal "w1:p1" (alist-get 'target params)))
+      (should-not (assq 'name params)))))
+
+(ert-deftest herdr-agent-rename-shows-the-new-name-without-waiting-for-a-snapshot ()
+  "herdr publishes no `agent_renamed\\=' event, so the reply is the only news.
+
+Its event schema carries `workspace_renamed\\=' and `tab_renamed\\=' and
+nothing for an agent, and the `agents\\=' array this reads comes from
+`session.snapshot\\=' alone - fetched on a resubscribe rather than on any
+timer.  Without folding the reply in, a name you just set stays
+invisible for as long as the pane set holds still."
+  (cl-letf (((symbol-function 'message) #'ignore))
+    (herdr-test-with-state (:cache (herdr-state-from-snapshot
+                                    '((panes . (((pane_id . "w1:p1")
+                                                 (agent . "claude")))))))
+      (should-not (herdr-state-agent-name (herdr-state-current) "w1:p1"))
+      (herdr-test-with-server
+          (lambda (req)
+            (cons (herdr-test-ok req '((type . "agent_info")
+                                       (agent . ((pane_id . "w1:p1")
+                                                 (name . "reviewer")))))
+                  nil))
+        (herdr-agent-rename "reviewer" "w1:p1"))
+      (should (equal "reviewer"
+                     (herdr-state-agent-name (herdr-state-current) "w1:p1")))
+      ;; And clearing it takes the name back off, by the same path.
+      (herdr-test-with-server
+          (lambda (req)
+            (cons (herdr-test-ok req '((type . "agent_info")
+                                       (agent . ((pane_id . "w1:p1")))))
+                  nil))
+        (herdr-agent-rename "" "w1:p1"))
+      (should-not (herdr-state-agent-name (herdr-state-current) "w1:p1")))))
+
+(ert-deftest herdr-agent-send-keys-sends-an-array-of-key-names ()
+  "The verb for a blocked agent, which cannot be prompted at all.
+
+`keys\\=' is a JSON array, and the package sends vectors for arrays
+everywhere: `json-serialize\\=' reads a list as an alist and signals
+`Wrong type argument: symbolp\\=' on a list of plain strings.  The fake
+server decodes arrays back to lists, so that is what arrives here."
+  (let (seen)
+    (cl-letf (((symbol-function 'message) #'ignore))
+      (herdr-test-with-server
+          (lambda (req)
+            (setq seen req)
+            (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-agent-send-keys "y Enter" "w1:p1")))
+    (should (equal "agent.send_keys" (alist-get 'method seen)))
+    (let ((params (alist-get 'params seen)))
+      (should (equal "w1:p1" (alist-get 'target params)))
+      ;; An array on the wire: several key names, not one string.
+      (should (equal '("y" "Enter") (alist-get 'keys params))))))
+
+(ert-deftest herdr-agent-send-keys-splits-on-whitespace-and-drops-nothing ()
+  "Key names arrive as one string and go out as several."
+  (let (seen)
+    (cl-letf (((symbol-function 'message) #'ignore))
+      (herdr-test-with-server
+          (lambda (req)
+            (setq seen req)
+            (cons (herdr-test-ok req '((type . "ok"))) nil))
+        (herdr-agent-send-keys "  esc   y  " "w1:p1")))
+    (should (equal '("esc" "y") (alist-get 'keys (alist-get 'params seen))))))
+
+(ert-deftest herdr-agent-prompt-takes-the-region-the-buffer-or-a-typed-string ()
+  "The point of prompting from Emacs: the prompt is usually already here.
+
+A function, a failing test, a diff - all on screen, and retyping one
+into a pane is what the region is for."
+  (with-temp-buffer
+    (insert "first line\nsecond line\nthird line")
+    (let ((transient-mark-mode t))
+      (goto-char (point-min))
+      (set-mark (point))
+      (forward-line 2)
+      (should (use-region-p))
+      (should (equal "first line\nsecond line\n"
+                     (herdr-cmd--prompt-text nil)))
+      ;; A prefix argument takes the whole buffer, region or not.
+      (should (equal "first line\nsecond line\nthird line"
+                     (herdr-cmd--prompt-text t)))
+      ;; With no region, it asks.
+      (deactivate-mark)
+      (should-not (use-region-p))
+      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "typed")))
+        (should (equal "typed" (herdr-cmd--prompt-text nil)))))))
+
+(ert-deftest herdr-agent-prompt-reports-size-rather-than-echoing-the-prompt ()
+  "A prompt can be a whole buffer, and echoing one buries the message."
+  (should (equal "11 characters" (herdr-cmd--prompt-size "hello world")))
+  (should (equal "3 lines" (herdr-cmd--prompt-size "a\nb\nc"))))
+
+(ert-deftest herdr-pane-read-does-not-focus-what-it-reads ()
+  "herdr\\='s rule, and the half of it that is an absence.
+
+Focus marks an agent seen and a read does not, so a read that focused
+on the way past would quietly clear the READY mark on the work it was
+showing you - and the dashboard would empty as you looked through it.
+Nothing here forwards focus today; this is what keeps it that way."
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+                                  '((panes . (((pane_id . "w1:p1")
+                                               (workspace_id . "w1")
+                                               (agent . "claude")
+                                               (agent_status . "idle")))))))
+    (let ((wire nil))
+      (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
+        (herdr-test-with-server
+            (lambda (req)
+              (push (alist-get 'method req) wire)
+              (cons (herdr-test-ok
+                     req '((type . "pane_read") (read . ((text . "hi")))))
+                    nil))
+          (herdr-pane-read "w1:p1" "recent_unwrapped" 10)))
+      (should (equal '("pane.read") wire)))))
 
 (ert-deftest herdr-pane-focus-selects-the-buffer-for-that-pane ()
   "Focusing is server-side and nothing repaints, so

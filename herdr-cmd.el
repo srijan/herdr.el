@@ -41,7 +41,9 @@
     (herdr-workspace-rename      "workspace.rename"     "workspace_id" "label")
     (herdr-worktree-create       "worktree.create"      "branch" "base" "cwd" "focus")
     (herdr-worktree-remove       "worktree.remove"      "workspace_id" "force")
-    (herdr-agent-prompt          "agent.prompt"         "target" "text"))
+    (herdr-agent-prompt          "agent.prompt"         "target" "text")
+    (herdr-agent-send-keys       "agent.send_keys"      "target" "keys")
+    (herdr-agent-rename          "agent.rename"         "target" "name"))
   "Every curated command, with the method and parameters it uses.
 Each entry is (COMMAND METHOD PARAM...).  Verified against the live
 schema by the drift test.")
@@ -315,12 +317,92 @@ directory."
 
 ;;; Agents
 
+(defun herdr-cmd--prompt-text (whole-buffer)
+  "Return the text to prompt an agent with, read from this buffer.
+
+The active region, or the whole buffer with WHOLE-BUFFER, or a string
+you type when there is no region to take.  This is the half of prompting
+that Emacs is better at than a terminal is: the interesting prompt is
+usually a function, a failing test or a diff that is already on screen,
+and retyping it into a pane is what the region is for."
+  (cond
+   (whole-buffer (buffer-substring-no-properties (point-min) (point-max)))
+   ((use-region-p)
+    (buffer-substring-no-properties (region-beginning) (region-end)))
+   (t (read-string "Prompt: "))))
+
 (defun herdr-agent-prompt (text &optional target)
-  "Send TEXT as a prompt to the agent in TARGET."
-  (interactive (list (read-string "Prompt: ")))
+  "Send TEXT as a prompt to the agent in TARGET.
+
+Interactively, TEXT is the region when one is active and the whole
+buffer under \\[universal-argument]; with neither, you are asked for it.
+
+herdr refuses a prompt to an agent that is already blocked, with
+`agent_blocked\\=', before sending anything - so a question waiting on
+screen is never answered by accident.  It also refuses a pane whose
+agent is not the foreground process, with `agent_not_ready\\='; both
+arrive as an ordinary herdr error naming the reason."
+  (interactive (list (herdr-cmd--prompt-text current-prefix-arg)))
   (let ((target (or target (herdr-select-agent "Prompt agent: "))))
     (herdr-rpc-call (herdr-current-connection) "agent.prompt"
-                    `((target . ,target) (text . ,text)))))
+                    `((target . ,target) (text . ,text)))
+    (message "herdr: sent %s to %s"
+             (herdr-cmd--prompt-size text) target)))
+
+(defun herdr-cmd--prompt-size (text)
+  "Describe TEXT by size, for a confirmation that must not echo it back.
+A prompt can be a whole buffer, and echoing one into the minibuffer
+buries the rest of the message."
+  (let ((lines (length (split-string text "\n"))))
+    (if (= lines 1)
+        (format "%d characters" (length text))
+      (format "%d lines" lines))))
+
+(defun herdr-agent-rename (name &optional target)
+  "Name the agent in TARGET NAME, or clear its name when NAME is empty.
+
+An agent\='s name is not its pane\='s label.  The label is what the pane is
+doing and moves as the work moves; the name is what you call the agent,
+and herdr takes one anywhere it takes a target - `agent.get\=', a prompt,
+a wait.  In Emacs it is also what stops a buffer name moving, since
+`herdr-pane-identity\=' prefers it over everything else.
+
+Clearing is sending no name at all, which is what the transport already
+does with a nil: herdr reads an absent `name\=' as `--clear\=', measured,
+while an empty string is refused as an invalid name.
+
+herdr requires a name to start with a lowercase letter and to hold only
+lowercase letters, digits, `-\=' or `_\=', and refuses one already in use
+with `agent_name_taken\='.  Both arrive as ordinary herdr errors naming
+the rule."
+  (interactive (list (read-string "Agent name (empty clears): ")))
+  (let* ((target (or target (herdr-select-agent "Rename agent: ")))
+         (name (unless (string-empty-p (string-trim name)) (string-trim name)))
+         (reply (herdr-rpc-call (herdr-current-connection) "agent.rename"
+                                `((target . ,target) (name . ,name)))))
+    (when-let* ((agent (alist-get 'agent reply)))
+      (herdr-state-note-agent (herdr-current-connection) agent))
+    (message "herdr: %s" (if name
+                             (format "named %s %s" target name)
+                           (format "cleared the name on %s" target)))))
+
+(defun herdr-agent-send-keys (keys &optional target)
+  "Send KEYS to the agent in TARGET, as whitespace-separated key names.
+
+The one thing a prompt cannot do.  herdr refuses `agent.prompt\=' to a
+blocked agent with `agent_blocked\=' and sends nothing, so an approval or
+a question waiting on screen has to be answered with the keys
+themselves: `y\=', `n\=', `Enter\=', `esc\='.
+
+`esc\=' is herdr\='s canonical spelling for Escape; it accepts `escape\='
+too.  A vector, because `keys\=' is a JSON array and a list would be
+serialized as one object."
+  (interactive (list (read-string "Keys: ")))
+  (let ((target (or target (herdr-select-agent "Send keys to agent: "))))
+    (herdr-rpc-call (herdr-current-connection) "agent.send_keys"
+                    `((target . ,target)
+                      (keys . ,(vconcat (split-string keys nil t)))))
+    (message "herdr: sent %s to %s" keys target)))
 
 ;;; Opening a place to run something
 

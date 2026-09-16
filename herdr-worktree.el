@@ -24,8 +24,6 @@
 
 ;;; Code:
 
-(require 'subr-x)
-
 ;;; Fields
 
 (defun herdr-worktree-path (worktree)
@@ -56,6 +54,24 @@ reply the schema does not describe: treating it as the main checkout
 costs a row, treating it as linked costs whatever a verb on that row
 would do to the repository."
   (and (alist-get 'is_linked_worktree worktree) t))
+
+;;; The listing
+;;
+;; `worktree.list' answers with more than its array: a `source' object
+;; naming the repository the listing was taken from.
+
+(defun herdr-worktree-listing-worktrees (listing)
+  "Return the WorktreeInfo records in a `worktree.list\\=' LISTING."
+  (alist-get 'worktrees listing))
+
+(defun herdr-worktree-listing-repo-root (listing)
+  "Return the main checkout of the repository LISTING was taken from.
+
+`worktree.list\\=' states this in its `source\\=' object, so it is read
+rather than inferred.  Scanning the array for the entry that is not a
+linked worktree answers the same question only while such an entry is
+present — a bare repository has none — whereas `repo_root\\=' is required."
+  (alist-get 'repo_root (alist-get 'source listing)))
 
 (defun herdr-worktree-open-workspace-id (worktree)
   "Return the id of the workspace WORKTREE is open as, or nil."

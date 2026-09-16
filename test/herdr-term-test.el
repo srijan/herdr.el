@@ -375,6 +375,55 @@ behind an unchanging buffer list."
             (should (= 0 rename-calls))))
       (kill-buffer first) (kill-buffer second)))))
 
+;;; The pane this Emacs is running in
+
+(ert-deftest herdr-term-refuses-to-attach-to-its-own-pane ()
+  "Attaching to the pane drawing the frame renders Emacs inside itself.
+
+herdr exports HERDR_PANE_ID into every pane it starts, so an Emacs
+launched from one can be asked to go to that very pane - the dashboard
+lists it like any other, and RET on the row is a reasonable mistake."
+  (herdr-test-with-state (:cache (herdr-state-from-snapshot
+                                  '((panes . (((pane_id . "w1:p1")
+                                               (agent . "claude")))))))
+    (let* ((connection (herdr-current-connection))
+           (herdr-self-pane-id "w1:p1")
+           (herdr-self-socket-path (herdr-connection-socket-path connection)))
+      (should-error (herdr-term-select-pane connection "w1:p1")
+                    :type 'user-error)
+      ;; Every other pane on that same server is unaffected.
+      (should-not (herdr-self-pane-p connection "w1:p2")))))
+
+(ert-deftest herdr-self-pane-needs-the-server-to-match-not-just-the-id ()
+  "Ids are per-server counters, so the id alone names a pane everywhere.
+
+Two machines each hold a `w1:p1\\='.  Refusing both would make the machine
+this Emacs happens to sit on able to veto a pane on every other one."
+  (let ((herdr-self-pane-id "w1:p1")
+        (herdr-self-socket-path "/tmp/herdr-mine.sock"))
+    (let ((mine (herdr-connection--make :name "mine"
+                                        :socket-path "/tmp/herdr-mine.sock"))
+          (other (herdr-connection--make :name "other"
+                                         :socket-path "/tmp/herdr-other.sock"))
+          (remote (herdr-connection--make :name "shadow"
+                                          :socket-path "/tmp/herdr-mine.sock"
+                                          :ssh-target "shadow")))
+      (should (herdr-self-pane-p mine "w1:p1"))
+      (should-not (herdr-self-pane-p other "w1:p1"))
+      ;; A forward binds its local end wherever it likes, so a remote
+      ;; connection can wear the same socket path and still not be us.
+      (should-not (herdr-self-pane-p remote "w1:p1")))))
+
+(ert-deftest herdr-self-pane-is-nothing-outside-a-herdr-pane ()
+  "An Emacs started from the dock has no HERDR_PANE_ID, and everything
+reading one has to degrade to doing nothing rather than to guessing."
+  (let ((herdr-self-pane-id nil)
+        (herdr-self-socket-path nil))
+    (should-not (herdr-self-pane-p
+                 (herdr-connection--make :name "local"
+                                         :socket-path "/tmp/herdr.sock")
+                 "w1:p1"))))
+
 ;;; Starting herdr must not rearrange windows
 
 (ert-deftest herdr-term-select-pane-does-not-split-the-frame ()
@@ -410,44 +459,53 @@ business, not a side effect of navigation."
   (should (equal '((display-buffer-reuse-window display-buffer-same-window))
                  (default-value 'herdr-display-action))))
 
-;;; Bootstrap must give ghostel a displayed window
+;;; Bootstrap must outlive Emacs
 
-(ert-deftest herdr-term-bootstrap-server-shows-the-buffer ()
-  "ghostel sizes its PTY from a displayed window and paints nothing into
-a zero-sized one.  Skipping the show, on the belief that the bootstrap
-client is discarded right after, would leave first startup stuck with an
-unusable PTY."
-  (let (shown quit)
-    (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
-              ((symbol-function 'ghostel-exec) #'ignore)
-              ((symbol-function 'herdr-server-live-p) (lambda (_connection) t))
-              ((symbol-function 'herdr-term--show)
-               (lambda (buf) (setq shown buf)))
-              ((symbol-function 'quit-windows-on)
-               (lambda (buf &rest _) (setq quit buf))))
-      (let ((buffer (herdr-term--bootstrap-server (herdr-current-connection))))
-        (unwind-protect
-            (progn
-              (should (eq buffer shown))
-              (should (eq buffer quit)))
-          (kill-buffer buffer))))))
+(ert-deftest herdr-term-bootstrap-server-orphans-the-server ()
+  "`herdr server\\=' blocks and has no detach flag, so an Emacs child would
+die with Emacs.  The spawn must go through a shell and end in `&\\='."
+  (let (command)
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (program &rest args)
+                 (setq command (cons program (nthcdr 4 args)))
+                 0))
+              ((symbol-function 'herdr-server-live-p) (lambda (_connection) t)))
+      (herdr-term--bootstrap-server (herdr-current-connection))
+      (should (equal "sh" (car command)))
+      (should (member "-c" (list (nth 1 command) "-c")))
+      (let ((script (car (last command))))
+        (should (string-match-p " server " script))
+        (should (string-suffix-p "&" script))))))
 
-(ert-deftest herdr-term-bootstrap-server-quits-the-window-even-on-failure ()
-  "A bootstrap that never comes up must not leave its window lingering."
-  (let ((herdr-server-start-timeout 0.01)
-        quit)
-    (cl-letf (((symbol-function 'ghostel-mode) #'ignore)
-              ((symbol-function 'ghostel-exec) #'ignore)
-              ((symbol-function 'herdr-term--show) #'ignore)
-              ((symbol-function 'herdr-server-live-p) (lambda (_connection) nil))
-              ((symbol-function 'quit-windows-on)
-               (lambda (buf &rest _) (setq quit buf))))
-      (unwind-protect
-          (progn
-            (should-error (herdr-term--bootstrap-server (herdr-current-connection)))
-            (should (eq (get-buffer herdr-term-bootstrap-buffer-name) quit)))
-        (when (get-buffer herdr-term-bootstrap-buffer-name)
-          (kill-buffer herdr-term-bootstrap-buffer-name))))))
+(ert-deftest herdr-term-bootstrap-server-refuses-a-remote-connection ()
+  "A remote server lives on the far host.  Starting one here would bring
+up a local server the tunnel does not point at and report success."
+  (let ((remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
+        (spawned nil))
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (&rest _) (setq spawned t) 0)))
+      (should-error (herdr-term--bootstrap-server remote))
+      (should-not spawned))))
+
+(ert-deftest herdr-term-bootstrap-server-reports-what-the-server-said ()
+  "A timeout with no reason is the failure the ghostel buffer used to
+show.  The log the spawn redirects to is what replaces it."
+  (let ((herdr-server-start-timeout 0.01))
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (_program &rest args)
+                 ;; Write into the log the real script redirects to.
+                 (let ((script (car (last args))))
+                   (should (string-match ">\\([^ ]+\\) 2>&1" script))
+                   (write-region "address already in use" nil
+                                 (match-string 1 script) nil 'quiet))
+                 0))
+              ((symbol-function 'herdr-server-live-p) (lambda (_connection) nil)))
+      (let ((complaint (cadr (should-error
+                              (herdr-term--bootstrap-server
+                               (herdr-current-connection))))))
+        (should (string-match-p "did not come up" complaint))
+        (should (string-match-p "address already in use" complaint))
+        (should (string-match-p "brew services" complaint))))))
 
 ;;; Timer teardown must cancel, not merely forget
 

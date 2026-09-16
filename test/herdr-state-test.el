@@ -181,6 +181,175 @@ rather than signal."
     (should-not (fboundp 'herdr-state-tabs))
     (should-not (fboundp 'herdr-state-reconcile-tabs))))
 
+;;; Seen, which herdr keeps per client and never puts on the wire
+
+(defun herdr-state-test--finish (state id)
+  "Return STATE after the agent in pane ID works and then goes idle."
+  (let ((working (herdr-state-reduce
+                  state "pane.agent_status_changed"
+                  `((pane_id . ,id) (agent_status . "working")))))
+    (herdr-state-reduce working "pane.agent_status_changed"
+                        `((pane_id . ,id) (agent_status . "idle")))))
+
+(defun herdr-state-test--shown (state id)
+  "Return the status STATE shows for pane ID."
+  (herdr-state-pane-status state (herdr-state-pane state id)))
+
+(ert-deftest herdr-state-a-finished-agent-nobody-looked-at-is-done ()
+  "The queue's whole premise, and it cannot come from the record.
+
+Measured against a 0.9.0 server: `agent.list\\=' and the event stream both
+report only idle, working, blocked and unknown, and no reply carries a
+`seen\\=' field.  herdr keeps that per client and says so, so an agent
+that worked and went idle is `done\\=' here or nowhere."
+  (let ((next (herdr-state-test--finish (herdr-state-test--seed) "w1:p2")))
+    ;; The record still says exactly what the server said.
+    (should (equal "idle" (herdr-pane-status (herdr-state-pane next "w1:p2"))))
+    (should (equal "done" (herdr-state-test--shown next "w1:p2")))))
+
+(ert-deftest herdr-state-focus-marks-seen-and-a-read-does-not ()
+  "herdr\\='s own rule: focus commands mark the target seen, reads do not.
+
+The read half is an absence, which is why it is asserted rather than
+assumed: `pane.read\\=' and `agent.read\\=' were measured against a 0.9.0
+server and emit no event at all, so every event herdr can deliver about
+a pane nobody focused has to leave it done."
+  (let ((done (herdr-state-test--finish (herdr-state-test--seed) "w1:p2")))
+    (should (equal "done" (herdr-state-test--shown done "w1:p2")))
+    ;; Everything a read could possibly stir up, and none of it counts.
+    (let ((busy done))
+      (dolist (event `(("pane.scroll_changed" . ((pane_id . "w1:p2")
+                                                 (scroll . ((offset . 3)))))
+                       ("pane_updated"
+                        . ((pane . ,(herdr-state-test--pane
+                                     "w1:p2" "claude" "idle"))))
+                       ("pane_focused" . ((pane_id . "w1:p1")))))
+        (setq busy (herdr-state-reduce busy (car event) (cdr event))))
+      (should (equal "done" (herdr-state-test--shown busy "w1:p2"))))
+    ;; Focusing it is what clears it.
+    (let ((seen (herdr-state-reduce done "pane_focused"
+                                    '((pane_id . "w1:p2")))))
+      (should (equal "idle" (herdr-state-test--shown seen "w1:p2"))))))
+
+(ert-deftest herdr-state-marking-seen-leaves-the-state-it-was-given-alone ()
+  "The reduce is pure, and the done set is the easy place to lose that.
+
+The new set starts out as the very list the old state holds, so
+clearing a mark with a destructive `delete\\=' would edit that state in
+place: a caller still holding it - the dashboard comparing against the
+tree it last drew, a test asserting what a step produced - would find
+its own copy quietly rewritten."
+  (let* ((done (herdr-state-test--finish
+                (herdr-state-test--finish (herdr-state-test--seed) "w1:p1")
+                "w1:p2"))
+         (marks (herdr-state-done-panes done))
+         ;; The LAST mark, deliberately: `delete\=' of a head element
+         ;; returns the cdr and mutates nothing, so a one-entry set or a
+         ;; head hit proves nothing about the destructive case.
+         (tail (car (last marks))))
+    (should (equal 2 (length marks)))
+    (herdr-state-reduce done "pane_focused" `((pane_id . ,tail)))
+    (should (equal 2 (length (herdr-state-done-panes done))))
+    (should (equal 2 (length marks)))
+    (should (equal "done" (herdr-state-test--shown done tail)))))
+
+(ert-deftest herdr-state-refocusing-the-focused-pane-still-marks-it-seen ()
+  "Why the clear reads the event rather than comparing the focused id.
+
+herdr emits `pane_focused\\=' even for a pane that already holds focus -
+measured - and pressing RET on the row you are already sitting on is
+exactly how you look at the thing that just finished.  A clear keyed on
+the focused id moving would do nothing here."
+  (let* ((state (herdr-state-test--seed))
+         (done (herdr-state-test--finish state "w1:p1")))
+    ;; w1:p1 is the focused pane in the seed and never stopped being it.
+    (should (equal "w1:p1" (herdr-state-focused-pane-id done)))
+    (should (equal "done" (herdr-state-test--shown done "w1:p1")))
+    (should (equal "idle" (herdr-state-test--shown
+                           (herdr-state-reduce done "pane_focused"
+                                               '((pane_id . "w1:p1")))
+                           "w1:p1")))))
+
+(ert-deftest herdr-state-only-a-finish-is-a-completion ()
+  "An idle pane is not news; herdr cannot read the two other arrivals.
+
+A snapshot is mostly panes that were already idle, and flagging those
+would head the queue READY with everything that exists.  `blocked\\=' to
+`idle\\=' is a question that stopped being asked, which herdr cannot tell
+from one somebody answered, and `unknown\\=' does not prove completion on
+herdr\\='s own account."
+  (let ((seed (herdr-state-test--seed)))
+    ;; Arrived idle, never worked.
+    (should (equal "idle" (herdr-state-test--shown seed "w1:p1")))
+    (dolist (from '("blocked" "unknown"))
+      (let* ((a (herdr-state-reduce seed "pane.agent_status_changed"
+                                    `((pane_id . "w1:p2") (agent_status . ,from))))
+             (b (herdr-state-reduce a "pane.agent_status_changed"
+                                    '((pane_id . "w1:p2") (agent_status . "idle")))))
+        (should (equal "idle" (herdr-state-test--shown b "w1:p2")))))))
+
+(ert-deftest herdr-state-a-closed-pane-takes-its-done-mark-with-it ()
+  "herdr reuses pane ids within a workspace, so a mark left behind would
+land on whatever pane is called that next."
+  (let* ((done (herdr-state-test--finish (herdr-state-test--seed) "w1:p2"))
+         (closed (herdr-state-reduce done "pane_closed"
+                                     '((pane_id . "w1:p2")))))
+    (should-not (herdr-state-done-panes closed))
+    (let ((reborn (herdr-state-reduce
+                   closed "pane_created"
+                   `((pane . ,(herdr-state-test--pane
+                               "w1:p2" "claude" "idle"))))))
+      (should (equal "idle" (herdr-state-test--shown reborn "w1:p2"))))))
+
+(ert-deftest herdr-state-one-machines-done-mark-does-not-answer-for-another ()
+  "Pane ids are per-server counters, so two machines both have a `w1:p1\\='.
+
+`herdr-state-merged\\=' folds each state\\='s own marks into the records it
+contributes before merging, rather than merging the id lists - which
+would let the machine that finished answer for the one that did not."
+  (let* ((a (herdr-state-test--finish (herdr-state-test--seed) "w1:p1"))
+         (b (herdr-state-test--seed))
+         (merged (herdr-state-merged (list a b)))
+         (shown (mapcar (lambda (pane)
+                          (cons (herdr-pane-id pane)
+                                (herdr-state-pane-status merged pane)))
+                        (herdr-state-panes merged))))
+    (should (equal '("done" "idle")
+                   (mapcar #'cdr (seq-filter (lambda (cell)
+                                               (equal "w1:p1" (car cell)))
+                                             shown))))
+    ;; The contributing state is untouched by the projection.
+    (should (equal "idle" (herdr-pane-status (herdr-state-pane a "w1:p1"))))))
+
+(defconst herdr-state-test--source-directory
+  (file-name-directory
+   (directory-file-name
+    (file-name-directory (or load-file-name buffer-file-name))))
+  "The package root, found from this file rather than from `default-directory\\='.")
+
+(ert-deftest herdr-state-only-the-cache-reads-a-raw-agent-status ()
+  "A surface reading the record shows idle for what the queue heads READY.
+
+`done\\=' is not in any record - herdr keeps the seen state per client -
+so it exists only in the projection `herdr-state-pane-status\\=' applies.
+Every file that shows a status therefore has to go through that one,
+and `herdr-pane.el\\=' and `herdr-state.el\\=' are the only two with reason
+to touch the raw field: one defines it, the other projects it and
+copies it out of a snapshot."
+  (let (offenders)
+    (dolist (file (directory-files herdr-state-test--source-directory t
+                                   "\\`herdr.*\\.el\\'"))
+      (unless (member (file-name-nondirectory file)
+                      '("herdr-pane.el" "herdr-state.el"))
+        (with-temp-buffer
+          (insert-file-contents file)
+          (goto-char (point-min))
+          (while (re-search-forward "(herdr-pane-status[ \t\n)]" nil t)
+            (push (format "%s:%d" (file-name-nondirectory file)
+                          (line-number-at-pos))
+                  offenders)))))
+    (should-not offenders)))
+
 ;;; Renames and moves, whose events carry no nested record
 
 (ert-deftest herdr-state-reduce-workspace-renamed-updates-the-label ()
@@ -255,24 +424,32 @@ riding along on it."
     (should (equal "renamed" (herdr-workspace-label w2)))
     (should (equal '("w2" "w1" "w3" "w4") (herdr-state-test--ws-order next)))))
 
-(ert-deftest herdr-state-reduce-workspace-moved-forward-pins-an-unverified-reading ()
-  "UNVERIFIED: this fixes one of two possible readings of `insert_index'.
+(ert-deftest herdr-state-reduce-workspace-moved-counts-the-index-with-the-entry-in ()
+  "MEASURED against herdr 0.9.0, not assumed.
 
-`herdr-state--move-within' counts the index against the list with the
-moved workspace already taken out, so w2 to index 3 of (w1 w2 w3 w4)
-gives (w1 w3 w4 w2).  Counting against the list with w2 still in it
-gives (w1 w3 w2 w4) instead.  Only a forward move can tell them apart.
+`insert_index\\=' counts against the list with the moved workspace STILL IN
+IT, so w2 to index 3 of (w1 w2 w3 w4) gives (w1 w3 w2 w4).  Counting
+against the list with w2 already taken out gives (w1 w3 w4 w2), which is
+what this package used to do.  Only a forward move tells them apart.
 
-Nothing has been measured: provoking one means calling
-`workspace.move' on a live session, which was out of bounds here.  A
-single real `workspace_moved' watched read-only on the event stream
-settles it.  This test is here to be found and corrected if the other
-reading is right — correct it, do not delete it."
+Provoked on a throwaway session: four workspaces, `workspace.move\\=' with
+insert_index 3, then `workspace.list\\='.  Backward moves agree under both
+readings, which is why the other tests here never caught it."
   (let ((next (herdr-state-reduce
                (herdr-state-test--ws-seed) "workspace_moved"
                `((workspace_id . "w2") (insert_index . 3)
                  (workspaces . [])))))
-    (should (equal '("w1" "w3" "w4" "w2") (herdr-state-test--ws-order next)))))
+    (should (equal '("w1" "w3" "w2" "w4") (herdr-state-test--ws-order next)))))
+
+(ert-deftest herdr-state-reduce-workspace-moved-to-the-length-goes-last ()
+  "MEASURED: an index equal to the length is the last valid one and puts
+the workspace at the end.  One past it is refused by the server with
+`workspace_move_failed\\=', so no event carries it."
+  (let ((next (herdr-state-reduce
+               (herdr-state-test--ws-seed) "workspace_moved"
+               `((workspace_id . "w1") (insert_index . 4)
+                 (workspaces . [])))))
+    (should (equal '("w2" "w3" "w4" "w1") (herdr-state-test--ws-order next)))))
 
 (ert-deftest herdr-state-reduce-workspace-moved-is-pure ()
   (let* ((state (herdr-state-test--ws-seed))
@@ -290,7 +467,9 @@ reading is right — correct it, do not delete it."
     (should (equal '("w1" "w2" "w3" "w4") (herdr-state-test--ws-order next)))))
 
 (ert-deftest herdr-state-reduce-workspace-moved-clamps-a-past-the-end-index ()
-  "Clamping puts it at the end under either reading of the index."
+  "Defensive, not a spec: herdr refuses such a move with
+`workspace_move_failed\\=' and sends no event.  A reducer must not signal
+on a payload it did not expect, so it clamps."
   (let ((next (herdr-state-reduce
                (herdr-state-test--ws-seed) "workspace_moved"
                `((workspace_id . "w1") (insert_index . 99) (workspaces . [])))))

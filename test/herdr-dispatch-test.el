@@ -11,9 +11,41 @@
 ;; skip every test here and report success.
 (require 'herdr-dispatch)
 
+(defun herdr-dispatch-test--machines (tree)
+  "Return the children of TREE\\='s MACHINES container.
+The dashboard leads with the attention queue, so the topology sits one
+level in rather than at top level."
+  (nth 3 (seq-find (lambda (node) (eq 'herdr-machines (nth 0 node))) tree)))
+
+(defun herdr-dispatch-test--in-machines (text)
+  "Move point past TEXT inside the MACHINES section.
+
+The queue above lists every agent under its own status heading, so a
+bare `search-forward\\=' from point-min finds the queue\\='s copy of a name
+first.  These tests mean the topology.
+
+Fixtures built from raw nodes have no MACHINES container and nothing
+above them to disambiguate from, so there the search is plain.
+
+Case-sensitively: the header counts \"2 machines\" in lower case, and a
+folding search matches that first and then finds the queue below it."
+  (goto-char (point-min))
+  (let ((case-fold-search nil))
+    (when (save-excursion (search-forward "MACHINES" nil t))
+      (search-forward "MACHINES")))
+  (search-forward text)
+  ;; On the row, not past it.  A row whose columns are all empty trims to
+  ;; the text searched for, which leaves point at end of line, where
+  ;; `magit-current-section\\=' answers with whatever section starts next.
+  (goto-char (line-beginning-position)))
+
 (defun herdr-dispatch-test--listing (key)
-  "Return the worktrees cached under KEY on the current connection."
-  (cdr (assoc key (herdr-connection-worktrees (herdr-current-connection)))))
+  "Return the worktree records cached under KEY on the current connection.
+The cache holds the whole `worktree.list' reply; this is its array, so a
+workspace with an entry but no worktrees still reads as nil here and
+`herdr-dispatch--worktrees-answered-p' is what asks about presence."
+  (herdr-worktree-listing-worktrees
+   (cdr (assoc key (herdr-connection-worktrees (herdr-current-connection))))))
 
 (defmacro herdr-dispatch-test-with-buffer (nodes &rest body)
   "Render NODES into a temporary dispatcher buffer and run BODY there."
@@ -27,20 +59,18 @@
      ,@body))
 
 (defconst herdr-dispatch-test--nodes
-  '((herdr-workspace "w1" "herdr.el  /tmp/herdr.el  2 panes"
-     ((herdr-panes "w1" "main 2"
-       ((herdr-pane "w1:p1" "> claude working w1:p1" nil)
-        (herdr-pane "w1:p2" "| codex blocked w1:p2" nil)))
-      (herdr-worktree "/tmp/herdr.el-fix" "fix  open as w2" nil)))
-    (herdr-workspace "w2" "api  /tmp/api  2 panes"
+  '((herdr-workspace "w1" "herdr.el  main  /tmp/herdr.el"
+     ((herdr-pane "w1:p1" "> claude working w1:p1" nil)
+      (herdr-pane "w1:p2" "| codex blocked w1:p2" nil)
+      (herdr-worktrees "w1" "worktrees (1)"
+       ((herdr-worktree "/tmp/herdr.el-fix" "fix  open as w2" nil)))))
+    (herdr-workspace "w2" "api  main  /tmp/api"
      ((herdr-pane "w2:p1" "> claude working w2:p1" nil)
       (herdr-pane "w2:p2" "· gemini idle w2:p2" nil))))
   "One workspace of each shape `herdr-tree-build' emits.
-`w1' has worktrees, so its own panes sit in a `main (N)' group and the
-worktree hangs off the workspace beside it; `w2' has none, so its panes
-sit directly under it.  There is no tab level in either —
-`herdr-tree-build' never nests a pane under one — so between them every
-node type the renderer must handle still appears.")
+Panes hang directly off a workspace in both; `w1' also has a
+`worktrees (N)' heading over its other checkouts and `w2' has none, so
+between them every node type the renderer must handle appears.")
 
 (defun herdr-dispatch-test--section-at (text)
   "Return the section whose line contains TEXT."
@@ -75,42 +105,45 @@ also where the reason both exist is written down."
       (should (equal "w1:p1" (oref section value))))))
 
 (ert-deftest herdr-dispatch-nests-panes-under-their-workspace ()
-  "A workspace without worktrees holds its panes directly; one with them
-holds them in the `main' group, which is itself a child of the
-workspace.  Either way a pane is inside its own workspace and nothing
-else."
+  "A pane sits directly inside its own workspace, worktrees or not.
+There is no level between them any more: the `main' group that used to
+hold the panes of a workspace with worktrees is gone, and the
+`worktrees (N)' heading beside them holds checkouts, never panes."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "w2:p1")
-    (should (eq 'herdr-workspace
-                (oref (oref (magit-current-section) parent) type)))
+    (dolist (pane '("w2:p1" "w1:p1"))
+      (goto-char (point-min))
+      (search-forward pane)
+      (let ((parent (oref (magit-current-section) parent)))
+        (should (eq 'herdr-workspace (oref parent type)))))
     (goto-char (point-min))
     (search-forward "w1:p1")
-    (let ((group (oref (magit-current-section) parent)))
-      (should (eq 'herdr-panes (oref group type)))
-      (should (eq 'herdr-workspace (oref (oref group parent) type)))
-      (should (equal "w1" (oref (oref group parent) value))))))
+    (should (equal "w1" (oref (oref (magit-current-section) parent) value)))))
 
 (ert-deftest herdr-dispatch-renders-every-node-type ()
   "Every node type must reach a branch of its own.
 
 The `pcase' in `herdr-dispatch--insert-nodes' has no fallback clause, so
-a mistyped branch head — `herdr-worktree' where `herdr-panes' was
+a mistyped branch head — `herdr-worktree' where `herdr-worktrees' was
 meant — drops that node and everything under it without signalling.
 herdr-tree-test covers the model emitting these types; this covers the
 renderer consuming them, which is the seam such a typo would hide in."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (should (eq 'herdr-workspace (herdr-dispatch-test--type-at "herdr.el")))
     (should (eq 'herdr-pane      (herdr-dispatch-test--type-at "w1:p1")))
-    (should (eq 'herdr-panes     (herdr-dispatch-test--type-at "main 2")))
+    (should (eq 'herdr-worktrees (herdr-dispatch-test--type-at "worktrees (1)")))
     (should (eq 'herdr-worktree  (herdr-dispatch-test--type-at "open as w2")))))
 
 (defun herdr-dispatch-test--indent-at (text)
-  "Return the leading whitespace width of the line containing TEXT."
+  "Return the leading whitespace width of the line containing TEXT.
+
+Counted in characters rather than with `current-column\\=', which measures
+displayed width: a workspace starts collapsed, so its rows are invisible
+and every one of them would measure zero."
   (goto-char (point-min))
   (search-forward text)
   (goto-char (line-beginning-position))
-  (skip-chars-forward " ")
-  (current-column))
+  (- (save-excursion (skip-chars-forward " ") (point))
+     (line-beginning-position)))
 
 (ert-deftest herdr-dispatch-panes-of-a-two-tab-workspace-render-at-the-same-depth ()
   "The hierarchy has to be visible, not just navigable.
@@ -146,7 +179,7 @@ heading keymap, `magit-section-content-p' — keys on it, so it is the
 assertion that catches a leaf promoted back to a heading no matter how
 the promotion is spelled."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (dolist (text '("herdr.el" "api" "main 2"))
+    (dolist (text '("herdr.el" "api" "worktrees (1)"))
       (should (oref (herdr-dispatch-test--section-at text) content)))
     (dolist (text '("w1:p1" "w2:p2" "open as w2"))
       (should-not (oref (herdr-dispatch-test--section-at text) content)))))
@@ -158,7 +191,7 @@ A heading whose face said nothing was the reported problem, so the
 difference is asserted where it shows: `magit-section-heading' begins a
 container line and does not begin a leaf line."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (dolist (text '("herdr.el" "api" "main 2"))
+    (dolist (text '("herdr.el" "api" "worktrees (1)"))
       (should (eq 'magit-section-heading (herdr-dispatch-test--face-at text))))
     (dolist (text '("w1:p1" "w2:p2" "open as w2"))
       (should-not (eq 'magit-section-heading
@@ -323,7 +356,7 @@ pair is the entire interface the verbs have to the tree."
     (dolist (spec '(("herdr.el"    herdr-workspace "w1")
                     ("w1:p1"       herdr-pane      "w1:p1")
                     ("w2:p2"       herdr-pane      "w2:p2")
-                    ("main 2"      herdr-panes     "w1")
+                    ("worktrees (1)" herdr-worktrees "w1")
                     ("open as w2"  herdr-worktree  "/tmp/herdr.el-fix")))
       (let ((section (herdr-dispatch-test--section-at (nth 0 spec))))
         (should (eq (nth 1 spec) (oref section type)))
@@ -365,27 +398,15 @@ last line would satisfy a test that only looked at the text."
 (defmacro herdr-dispatch-test-in-dispatcher (snapshot &rest body)
   "Run BODY in a real dispatcher buffer built from SNAPSHOT.
 The worktree cache needs no rebinding of its own: it lives in the
-connection, and the connection here is a fresh one.
-
-`herdr-dispatch--known-project-roots\\=' is stubbed to nil for the same
-reason project.el must not be: it reads the real `project-list-file\\=' on
-whatever machine runs the suite, so an unstubbed test would see a
-different known-project list — and, since `herdr-dispatch-refresh\\=' now
-fetches worktrees for each one, a different set of `worktree.list\\=' calls
-too — in CI than on a contributor's machine with years of project
-history.  A test that means to exercise known projects wraps its own body
-in a nested `cl-letf\\=' on the same symbol; the inner binding wins for its
-extent and this one still restores it afterwards."
+connection, and the connection here is a fresh one."
   (declare (indent 1) (debug t))
   `(let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-from-snapshot ,snapshot))))
          (herdr-dispatch--refresh-timer nil)
          (buffer (get-buffer-create herdr-dispatch-buffer-name)))
      (unwind-protect
-         (cl-letf (((symbol-function 'herdr-dispatch--known-project-roots)
-                    (lambda () nil)))
-           (with-current-buffer buffer
-             (herdr-dispatch-mode)
-             ,@body))
+         (with-current-buffer buffer
+           (herdr-dispatch-mode)
+           ,@body)
        (herdr-dispatch--cancel-refresh)
        (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
@@ -495,25 +516,26 @@ refresh that had no restore path whatsoever.  The change is what makes
 this a test of a redraw again rather than a test of the skip."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
-    (goto-char (point-min))
-    (search-forward "web")
-    (magit-section-hide (magit-current-section))
-    (should (oref (magit-current-section) hidden))
-    (goto-char (point-min))
-    (search-forward "w1:p2")
+    ;; Open it first: a workspace starts folded, so the state worth
+    ;; carrying across a redraw is the one the reader chose.
+    (herdr-dispatch-test--in-machines "web")
+    (magit-section-show (magit-current-section))
+    (should-not (oref (magit-current-section) hidden))
+    (herdr-dispatch-test--in-machines "w1:p2")
     (let ((ident (magit-section-ident (magit-current-section))))
-      ;; No `herdr-panes' level: the fixture has no worktrees.  The
-      ;; ident is what point is restored through, so pin it.
+      ;; No `herdr-worktrees' heading: the fixture has no worktrees.  The
+      ;; ident is what point is restored through, so pin it — MACHINES
+      ;; included, since the topology sits inside it now.
       (should (equal '((herdr-pane . "w1:p2")
-                       (herdr-workspace . "w1") (herdr-root))
+                       (herdr-workspace . "w1")
+                       (herdr-machines . "machines") (herdr-root))
                      ident))
       (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
       (should (equal 1 (herdr-dispatch-test-counting-rebuilds
                          (herdr-dispatch-refresh))))
       (should (equal ident (magit-section-ident (magit-current-section))))
-      (goto-char (point-min))
-      (search-forward "web")
-      (should (oref (magit-current-section) hidden)))))
+      (herdr-dispatch-test--in-machines "web")
+      (should-not (oref (magit-current-section) hidden)))))
 
 ;;; Redraw suppression, debouncing and point
 
@@ -664,15 +686,14 @@ buffer.  `magit-section-goto-successor' lands on a surviving sibling,
 else the parent."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
-    (goto-char (point-min))
-    (search-forward "w1:p2")
-    (goto-char (line-beginning-position))
+    (herdr-dispatch-test--in-machines "w1:p2")
     (setf (herdr-connection-cache (herdr-current-connection))
           (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_closed"
                               '((pane_id . "w1:p2"))))
     (herdr-dispatch-refresh)
     (should-not (= (point) (point-max)))
-    (should (equal '((herdr-pane . "w1:p1") (herdr-workspace . "w1") (herdr-root))
+    (should (equal '((herdr-pane . "w1:p1") (herdr-workspace . "w1")
+                     (herdr-machines . "machines") (herdr-root))
                    (magit-section-ident (magit-current-section))))))
 
 (ert-deftest herdr-dispatch-refresh-lands-near-a-workspace-that-went-with-its-pane ()
@@ -687,9 +708,7 @@ that took the dead one's place, not the header."
                   ((pane_id . "w2:p1") (agent . "codex") (agent_status . "idle")
                    (workspace_id . "w2")))))
     (herdr-dispatch-refresh t)
-    (goto-char (point-min))
-    (search-forward "w1:p1")
-    (goto-char (line-beginning-position))
+    (herdr-dispatch-test--in-machines "w1:p1")
     (setf (herdr-connection-cache (herdr-current-connection))
           (herdr-state-reduce (herdr-connection-cache (herdr-current-connection)) "pane_closed"
                               '((pane_id . "w1:p1"))))
@@ -702,7 +721,8 @@ that took the dead one's place, not the header."
     ;; is expected to leave you on.
     (should-not (= (point) (point-max)))
     (should-not (= (point) (point-min)))
-    (should (equal '((herdr-workspace . "w2") (herdr-root))
+    (should (equal '((herdr-workspace . "w2")
+                     (herdr-machines . "machines") (herdr-root))
                    (magit-section-ident (magit-current-section))))))
 
 (ert-deftest herdr-dispatch-refresh-skips-the-blank-line-between-rows ()
@@ -764,10 +784,13 @@ restore resolved the root ident the same way."
                   ((pane_id . "w2:p1") (agent . "codex") (agent_status . "idle")
                    (workspace_id . "w2")))))
     (herdr-dispatch-refresh t)
+    ;; The separator above MACHINES.  Workspaces sit inside it now, and
+    ;; only top-level nodes get a blank line between them.
     (goto-char (point-min))
-    (search-forward "api")
+    (let ((case-fold-search nil)) (search-forward "MACHINES"))
     (forward-line -1)
     (goto-char (line-beginning-position))
+    (should (looking-at-p "$"))
     (should (eq magit-root-section (magit-current-section)))
     (should-not (= (point) (point-min)))
     (herdr-dispatch-test--pane-event "w1:p1" "working" 2)
@@ -775,8 +798,9 @@ restore resolved the root ident the same way."
     (should-not (= (point) (point-min)))
     ;; The nearest row below, not the separator: a blank line has no
     ;; identity to restore, and the exact character position cannot
-    ;; survive a row above it changing width.
-    (should (equal '((herdr-workspace . "w2") (herdr-root))
+    ;; survive a row above it changing width.  The nearest row below the
+    ;; separator is the MACHINES heading now.
+    (should (equal '((herdr-machines . "machines") (herdr-root))
                    (magit-section-ident (magit-current-section))))))
 
 (ert-deftest herdr-dispatch-refresh-keeps-point-on-the-header ()
@@ -800,8 +824,7 @@ usually fires while the dashboard is not the selected window."
       (unwind-protect
           (progn
             (set-window-buffer window (current-buffer))
-            (goto-char (point-min))
-            (search-forward "w1:p2")
+            (herdr-dispatch-test--in-machines "w1:p2")
             (set-window-point window (line-beginning-position))
             (goto-char (point-min))
             (setf (herdr-connection-cache (herdr-current-connection))
@@ -810,7 +833,7 @@ usually fires while the dashboard is not the selected window."
             (herdr-dispatch-refresh)
             (should-not (= (window-point window) (point-max)))
             (should (equal '((herdr-pane . "w1:p1") (herdr-workspace . "w1")
-                             (herdr-root))
+                             (herdr-machines . "machines") (herdr-root))
                            (save-excursion
                              (goto-char (window-point window))
                              (magit-section-ident (magit-current-section))))))
@@ -912,8 +935,8 @@ workspace arm to notice.  The innermost section is the heading itself,
 which is why a `pcase' over the type cannot be mis-ordered."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (goto-char (point-min))
-    (search-forward "main")
-    (should (eq 'herdr-panes
+    (search-forward "worktrees (1)")
+    (should (eq 'herdr-worktrees
                 (herdr-dispatch-target-type (herdr-dispatch-target-at-point))))))
 
 (ert-deftest herdr-dispatch-aimed-at-errors-with-a-specific-message ()
@@ -1212,21 +1235,6 @@ the case that tells the two apart."
       (should (equal '("/tmp/web/" "/tmp/api/")
                      (herdr-dispatch-test--requested))))))
 
-(ert-deftest herdr-dispatch-fetches-worktrees-for-known-projects-too ()
-  "The known-project sibling of the once-per-workspace guarantee above: a
-root with no workspace open still gets its own worktrees fetched, the
-same way an open workspace's do, and still only once."
-  (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
-    (cl-letf (((symbol-function 'herdr-dispatch--known-project-roots)
-               (lambda () '("/tmp/known-a/" "/tmp/known-b/"))))
-      (herdr-dispatch-test-with-async
-        (herdr-dispatch-refresh t)
-        (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/known-a/" "/tmp/known-b/")
-                       (herdr-dispatch-test--requested)))
-        (dotimes (_ 19) (herdr-dispatch-refresh))
-        (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/known-a/" "/tmp/known-b/")
-                       (herdr-dispatch-test--requested)))))))
-
 (ert-deftest herdr-dispatch-renders-worktrees-when-the-reply-lands ()
   "The reported bug, from the user's end: no keystroke is involved.
 
@@ -1246,7 +1254,7 @@ to redraw."
                             (branch . "feat/x")
                             (open_workspace_id . nil))))))
         (sit-for 0.2)
-        (should (string-match-p "main (" (buffer-string)))
+        (should (string-match-p "worktrees (" (buffer-string)))
         (should (string-match-p "feat/x" (buffer-string)))))))
 
 (ert-deftest herdr-dispatch-several-replies-cost-one-redraw ()
@@ -1552,7 +1560,7 @@ Returning to a dashboard that is already open is the other half, and it
 must not forget: that would make every invocation of the command a full
 refetch of the session."
   (herdr-test-with-state (:cache (herdr-state-from-snapshot herdr-dispatch-test--worktree-snapshot))
-   (herdr-dispatch-test--with-worktrees '(("w1" . (stale)))
+   (herdr-dispatch-test--with-worktrees '(("w1" . ((worktrees . (stale)))))
     (let* ((herdr-state-change-functions nil) (herdr-dispatch--refresh-timer nil))
     (should-not (get-buffer herdr-dispatch-buffer-name))
     (unwind-protect
@@ -1611,9 +1619,9 @@ just closed: `w2' here still claims a worktree is \"open as w1\".
 Dropping only `w1' would leave that claim standing, on a row a user
 would then press RET on."
   (herdr-dispatch-test--with-worktrees
-      '(("w1" . (((path . "/tmp/gone") (is_linked_worktree . t))))
-        ("w2" . (((path . "/tmp/sibling") (is_linked_worktree . t)
-                  (open_workspace_id . "w1")))))
+      '(("w1" . ((worktrees . (((path . "/tmp/gone") (is_linked_worktree . t))))))
+        ("w2" . ((worktrees . (((path . "/tmp/sibling") (is_linked_worktree . t)
+                  (open_workspace_id . "w1")))))))
     :pending '("w3") :unanswered '(("w4" . error)) :generation 7
     (let ((before (herdr-connection-worktrees-generation (herdr-current-connection))))
       (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "workspace_closed"
@@ -1673,7 +1681,7 @@ or every visit pays for a full re-fetch."
               ((symbol-function 'pop-to-buffer) #'ignore))
       (let ((buffer (get-buffer herdr-dispatch-buffer-name)))
         (when buffer (kill-buffer buffer)))
-      (herdr-dispatch-test--with-worktrees '(("w1" . (stale)))
+      (herdr-dispatch-test--with-worktrees '(("w1" . ((worktrees . (stale)))))
         :generation 3
         (let ((before (herdr-connection-worktrees-generation (herdr-current-connection))))
          (unwind-protect
@@ -1686,7 +1694,7 @@ or every visit pays for a full re-fetch."
               (should (with-current-buffer herdr-dispatch-buffer-name
                         (derived-mode-p 'herdr-dispatch-mode)))
               ;; Already open: reopening keeps what is known.
-              (herdr-dispatch-test--with-worktrees '(("w1" . (fresh)))
+              (herdr-dispatch-test--with-worktrees '(("w1" . ((worktrees . (fresh)))))
                 :generation (herdr-connection-worktrees-generation (herdr-current-connection))
                 (let ((kept (herdr-connection-worktrees-generation (herdr-current-connection))))
                   (herdr-agents)
@@ -1714,19 +1722,19 @@ so nothing has ever pushed a real cache entry through
 closes that gap."
   (herdr-test-with-state (:cache (herdr-state-from-snapshot herdr-dispatch-test--snapshot))
    (herdr-dispatch-test--with-worktrees
-       '(("w1" . (((path . "/tmp/web-feat")
+       '(("w1" . ((worktrees . (((path . "/tmp/web-feat")
                    (is_linked_worktree . t)
                    (branch . "feat/x")
                    (label . "feat/x")
-                   (open_workspace_id . nil)))))
+                   (open_workspace_id . nil)))))))
     (let* ((buffer (get-buffer-create herdr-dispatch-buffer-name)))
     (unwind-protect
         (with-current-buffer buffer
           (herdr-dispatch-mode)
           (herdr-dispatch-refresh)
-          (should (string-match-p "main (" (buffer-string)))
-          (should (eq 'herdr-panes
-                      (herdr-dispatch-test--type-at "main (")))
+          (should (string-match-p "worktrees (" (buffer-string)))
+          (should (eq 'herdr-worktrees
+                      (herdr-dispatch-test--type-at "worktrees (")))
           (should (eq 'herdr-worktree
                       (herdr-dispatch-test--type-at "feat/x"))))
       (kill-buffer buffer))))))
@@ -1765,18 +1773,18 @@ by a rendered change between every keystroke, because a single toggle in
 a static buffer never meets the erase that broke this."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
+    ;; A workspace starts folded, so the first toggle opens it: hidden on
+    ;; the odd passes rather than the even ones.
     (dotimes (i 4)
-      (goto-char (point-min))
-      (search-forward "web")
+      (herdr-dispatch-test--in-machines "web")
       (call-interactively #'magit-section-toggle)
-      (should (equal (cl-evenp i)
+      (should (equal (cl-oddp i)
                      (and (oref (magit-current-section) hidden) t)))
       (herdr-dispatch-test--pane-event
        "w1:p1" (if (cl-evenp i) "idle" "working") i)
       (herdr-dispatch-refresh)
-      (goto-char (point-min))
-      (search-forward "web")
-      (should (equal (cl-evenp i)
+      (herdr-dispatch-test--in-machines "web")
+      (should (equal (cl-oddp i)
                      (and (oref (magit-current-section) hidden) t))))))
 
 ;;; Fold indicators and the current-section highlight
@@ -1785,9 +1793,11 @@ a static buffer never meets the erase that broke this."
   "Return the fold indicator drawn beside the line holding TEXT, or nil.
 The indicator is a margin overlay carrying a `display' property, which is
 where the character actually ends up — reading it back out is the only
-way to tell a configured indicator from a drawn one."
-  (goto-char (point-min))
-  (search-forward text)
+way to tell a configured indicator from a drawn one.
+
+Inside MACHINES: the queue above lists the same names, and a queue row is
+a leaf with no indicator to find."
+  (herdr-dispatch-test--in-machines text)
   (goto-char (line-beginning-position))
   (seq-some (lambda (overlay)
               (when (eq 'margin (overlay-get overlay 'magit-vis-indicator))
@@ -1797,9 +1807,12 @@ way to tell a configured indicator from a drawn one."
             (overlays-in (point) (1+ (point)))))
 
 (defun herdr-dispatch-test--hidden-p (text)
-  "Return non-nil when the line holding TEXT is invisible on screen."
-  (goto-char (point-min))
-  (search-forward text)
+  "Return non-nil when the MACHINES line holding TEXT is invisible.
+
+Inside MACHINES: the queue lists every agent above, and a queue row is
+never folded away — it is what folding the topology leaves you with."
+  (herdr-dispatch-test--in-machines text)
+  (end-of-line)
   (and (invisible-p (point)) t))
 
 (ert-deftest herdr-dispatch-marks-foldable-headings-in-any-frame ()
@@ -1830,10 +1843,14 @@ room for it, or the overlay is silently dropped."
   "magit writes indicators in `magit-section-show' and
 `magit-section-hide' and nowhere else, so a buffer that has only ever
 been drawn has none — configuring the option is not the same as showing
-one.  A leaf has nothing to fold and must stay unmarked."
+one.  A leaf has nothing to fold and must stay unmarked.
+
+A workspace starts collapsed now, so the indicator beside it is the
+closed one: `herdr-dispatch--apply-fold' hides it on the way in, and
+hiding is one of the two places magit draws an indicator at all."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
-    (should (equal (cdar (herdr-dispatch--fold-indicators))
+    (should (equal (caar (herdr-dispatch--fold-indicators))
                    (herdr-dispatch-test--fold-glyph "web")))
     (should-not (herdr-dispatch-test--fold-glyph "w1:p1"))))
 
@@ -1850,18 +1867,26 @@ screen: the panes stay invisible and the heading keeps the collapsed
 glyph."
   (herdr-dispatch-test-with-dispatcher
     (herdr-dispatch-refresh t)
-    (should-not (herdr-dispatch-test--hidden-p "w1:p1"))
-    (goto-char (point-min))
-    (search-forward "web")
-    (magit-section-hide (magit-current-section))
+    ;; A workspace starts folded, so it is the unfold that has to
+    ;; survive: the failure this guards is a redraw putting the tree back
+    ;; the way the code wanted it rather than the way it was left.
     (should (herdr-dispatch-test--hidden-p "w1:p1"))
-    (should (equal (caar (herdr-dispatch--fold-indicators))
+    (herdr-dispatch-test--in-machines "web")
+    (magit-section-show (magit-current-section))
+    (should-not (herdr-dispatch-test--hidden-p "w1:p1"))
+    (should (equal (cdar (herdr-dispatch--fold-indicators))
                    (herdr-dispatch-test--fold-glyph "web")))
     (herdr-dispatch-test--pane-event "w1:p1" "idle" 1)
     (herdr-dispatch-refresh)
-    (should (herdr-dispatch-test--hidden-p "w1:p1"))
-    (should (equal (caar (herdr-dispatch--fold-indicators))
-                   (herdr-dispatch-test--fold-glyph "web")))))
+    (should-not (herdr-dispatch-test--hidden-p "w1:p1"))
+    (should (equal (cdar (herdr-dispatch--fold-indicators))
+                   (herdr-dispatch-test--fold-glyph "web")))
+    ;; And folding it again survives just as well.
+    (herdr-dispatch-test--in-machines "web")
+    (magit-section-hide (magit-current-section))
+    (herdr-dispatch-test--pane-event "w1:p1" "working" 2)
+    (herdr-dispatch-refresh)
+    (should (herdr-dispatch-test--hidden-p "w1:p1"))))
 
 (ert-deftest herdr-dispatch-highlights-the-section-at-point ()
   "magit-section wires this up itself, and the point is that we add nothing.
@@ -2028,10 +2053,10 @@ used to take the mutating branch rather than the focusing one."
 (ert-deftest herdr-dispatch-open-worktree-focuses-an-already-open-worktree ()
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (herdr-dispatch-test--with-worktrees
-           '(("w1" . (((path . "/tmp/herdr.el-fix")
+           '(("w1" . ((worktrees . (((path . "/tmp/herdr.el-fix")
                        (is_linked_worktree . t)
                        (branch . "fix")
-                       (open_workspace_id . "w2")))))
+                       (open_workspace_id . "w2")))))))
       (search-forward "open as w2")
       (should (equal '((herdr-workspace-focus "w2"))
                      (herdr-dispatch-test-with-recorders
@@ -2053,10 +2078,10 @@ worktree's directory, and asserting the exact params reaching
 `herdr-rpc-call\\=', is what would catch that."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (herdr-dispatch-test--with-worktrees
-        '(("w1" . (((path . "/tmp/herdr.el-fix")
+        '(("w1" . ((worktrees . (((path . "/tmp/herdr.el-fix")
                     (is_linked_worktree . t)
                     (branch . "fix")
-                    (open_workspace_id . nil)))))
+                    (open_workspace_id . nil)))))))
      (let ((default-directory "/totally/unrelated/directory/"))
       (search-forward "open as w2")
       (cl-letf (((symbol-function 'herdr-state-workspace-directory)
@@ -2071,235 +2096,18 @@ worktree's directory, and asserting the exact params reaching
                            (herdr-workspace-focus herdr-rpc-call)
                          (herdr-dispatch-open-worktree)))))))))
 
-;;; Known projects with no workspace open
-
-(ert-deftest herdr-dispatch-live-project-root-p-answers-for-the-filesystem ()
-  "project.el remembers a project until told to forget one, and nothing
-tells it when a directory is deleted -- so a removed worktree kept an
-`Inactive' row for a path that is not there."
-  (let ((directory (make-temp-file "herdr-dispatch-test-" t)))
-    (unwind-protect
-        (progn
-          (should (herdr-dispatch--live-project-root-p directory))
-          (should-not (herdr-dispatch--live-project-root-p
-                       (expand-file-name "gone/" directory))))
-      (delete-directory directory t))
-    (should-not (herdr-dispatch--live-project-root-p directory))))
-
-(ert-deftest herdr-dispatch-live-project-root-p-trusts-a-remote-root ()
-  "`file-directory-p' over TRAMP is a round trip to another machine, and
-this runs on every redraw.  A stale row costs a line; a redraw that
-blocks on an unreachable host costs the dashboard.  No connection is
-attempted here -- `file-remote-p' answers from the name alone."
-  (should (herdr-dispatch--live-project-root-p
-           "/ssh:nowhere.invalid:/tmp/never-existed/")))
-
-(ert-deftest herdr-dispatch-known-project-roots-drops-a-deleted-directory ()
-  "The filter runs where project.el's answer enters the dashboard, so
-everything downstream -- the `Inactive' rows and the `worktree.list'
-round trip each one would otherwise cost -- sees only live roots."
-  (let ((directory (make-temp-file "herdr-dispatch-test-" t))
-        (herdr-dispatch-show-known-projects t))
-    (unwind-protect
-        (cl-letf (((symbol-function 'project-known-project-roots)
-                   (lambda () (list directory
-                                    (expand-file-name "gone/" directory)))))
-          (should (equal (list directory)
-                         (herdr-dispatch--known-project-roots))))
-      (delete-directory directory t))))
-
-(ert-deftest herdr-dispatch-known-projects-are-off-until-asked-for ()
-  "The list grows with every project visited and never shrinks, so it is
-soon longer than the session it sits under — and each root costs an
-asynchronous `worktree.list' every time the cache is forgotten."
-  (cl-letf (((symbol-function 'project-known-project-roots)
-             (lambda () (list "/tmp"))))
-    (let ((herdr-dispatch-show-known-projects nil))
-      (should-not (herdr-dispatch--known-project-roots)))
-    (let ((herdr-dispatch-show-known-projects t))
-      (should (equal '("/tmp") (herdr-dispatch--known-project-roots))))))
-
-(defconst herdr-dispatch-test--known-project-nodes
-  '((herdr-known-project "/tmp/other-project/" "other-project (0)  /tmp/other-project/" nil))
-  "One `herdr-known-project\\=' row, for the tests below.")
-
-(ert-deftest herdr-dispatch-visit-creates-a-workspace-for-a-known-project ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty)))))
-      (search-forward "other-project (0)")
-      ;; `focus' rides on the create: without it the workspace is made
-      ;; but not focused, and going to "wherever the server is now"
-      ;; lands on the pane the user was already on.
-      (should (equal '((herdr-rpc-call "workspace.create"
-                                       ((cwd . "/tmp/other-project/")
-                                        (label . "other-project")
-                                        (focus . t)))
-                       ;; Both recorders answer nil, so the fallback
-                       ;; fires: no created pane id, then no focused
-                       ;; pane.  A real server answers the first.
-                       (herdr-term-select-focused))
-                     (herdr-dispatch-test-with-recorders
-                         (herdr-rpc-call herdr-term-select-pane
-                                         herdr-term-select-focused)
-                       (herdr-dispatch-visit)))))))
-
-(ert-deftest herdr-dispatch-visit-focuses-rather-than-double-creates ()
-  "The row is built only for a root with no workspace open, but the
-render can be one poll tick behind by the time RET lands — this is the
-same TOCTOU `herdr-state-workspace-for-directory' exists to close, and
-the test that would catch losing the check."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (herdr-test-with-state (:cache (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w9"))))
-              (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
-                         (cwd . "/tmp/other-project")))))))
-      (search-forward "other-project (0)")
-      (should (equal '((herdr-rpc-call "workspace.focus"
-                                       ((workspace_id . "w9")))
-                       (herdr-term-select-focused))
-                     (herdr-dispatch-test-with-recorders
-                         (herdr-rpc-call herdr-term-select-pane
-                                         herdr-term-select-focused)
-                       (herdr-dispatch-visit)))))))
-
-(defconst herdr-dispatch-test--main-checkout-nodes
-  '((herdr-known-project "/tmp/other-project/" "other-project (1)  /tmp/other-project/"
-     ((herdr-worktree "/tmp/other-project/" "main  /tmp/other-project" nil))))
-  "A known project and the `main\\=' row for its own checkout.
-`herdr-tree--main-checkout-node\\=' draws that row with
-`herdr-tree--worktree-node\\=', so it is a `herdr-worktree\\=' section
-whose value is the repository root itself.")
-
-(defconst herdr-dispatch-test--main-checkout-worktrees
-  '(("/tmp/other-project/"
-     ((path . "/tmp/other-project/") (branch . "trunk"))))
-  "The reply behind the row above: one entry, the repository's own
-checkout, so `is_linked_worktree\\=' is absent and
-`herdr-tree-linked-worktree-p\\=' says no.")
-
-(ert-deftest herdr-dispatch-visit-opens-the-main-checkout-of-a-known-project ()
-  "RET on the `main\\=' row of an inactive project must do what RET on the
-project row above it does: create the workspace for that directory.
-
-The row is a `herdr-worktree\\=' section, and `herdr-dispatch-visit\\='
-tests that type before `herdr-known-project\\=', so it used to reach
-`herdr-dispatch-open-worktree\\=' and be refused by the guard there for
-not being a linked worktree.  The guard is right; the row had no
-business arriving at it."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
-    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty)))))
-     (herdr-dispatch-test--with-worktrees herdr-dispatch-test--main-checkout-worktrees
-      (search-forward "main")
-      (should (equal '((herdr-rpc-call "workspace.create"
-                                       ((cwd . "/tmp/other-project/")
-                                        (label . "other-project")
-                                        (focus . t)))
-                       (herdr-term-select-focused))
-                     (herdr-dispatch-test-with-recorders
-                         (herdr-rpc-call herdr-term-select-pane
-                                         herdr-term-select-focused)
-                       (herdr-dispatch-visit))))))))
-
-(ert-deftest herdr-dispatch-visit-focuses-an-already-open-main-checkout ()
-  "The same TOCTOU the known-project row guards: the listing can be a
-poll behind, and a second workspace for one directory is the bug
-`herdr-state-workspace-for-directory\\=' exists to prevent."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
-    (herdr-test-with-state (:cache (herdr-state-from-snapshot
-             '((workspaces . (((workspace_id . "w9"))))
-               (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
-                          (cwd . "/tmp/other-project")))))))
-     (herdr-dispatch-test--with-worktrees herdr-dispatch-test--main-checkout-worktrees
-      (search-forward "main")
-      (should (equal '((herdr-rpc-call "workspace.focus" ((workspace_id . "w9")))
-                       (herdr-term-select-focused))
-                     (herdr-dispatch-test-with-recorders
-                         (herdr-rpc-call herdr-term-select-pane
-                                         herdr-term-select-focused)
-                       (herdr-dispatch-visit))))))))
-
 (ert-deftest herdr-dispatch-visit-still-refuses-a-worktree-row-with-no-record ()
-  "The main-checkout branch must not swallow the no-listing-cached case.
-A row whose record cannot be found says so; it does not get treated as a
-checkout and opened."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--main-checkout-nodes
+  "A worktree row whose record is not cached says so rather than being
+opened on a guess."
+  (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty)))))
      (herdr-dispatch-test--with-worktrees nil
-      (search-forward "main")
+      (search-forward "fix")
       (should (equal nil
                      (herdr-dispatch-test-with-recorders
                          (herdr-rpc-call herdr-term-select-pane
                                          herdr-term-select-focused)
                        (should-error (herdr-dispatch-visit) :type 'user-error))))))))
-
-(ert-deftest herdr-dispatch-rename-refuses-a-known-project ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (search-forward "other-project (0)")
-    (should (equal nil
-                   (herdr-dispatch-test-with-recorders
-                       (herdr-pane-rename
-                                          herdr-workspace-rename)
-                     (should-error (herdr-dispatch-rename)
-                                   :type 'user-error))))))
-
-(ert-deftest herdr-dispatch-close-refuses-a-known-project ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (search-forward "other-project (0)")
-    (should (equal nil
-                   (herdr-dispatch-test-with-recorders
-                       (herdr-pane-close herdr-workspace-close
-                                         herdr-worktree-remove herdr-rpc-call)
-                     (should-error (herdr-dispatch-close)
-                                   :type 'user-error))))))
-
-(defconst herdr-dispatch-test--known-projects-container-nodes
-  '((herdr-known-projects "inactive" "Inactive (2)"
-     ((herdr-known-project "/tmp/a/" "a (0)  /tmp/a/" nil)
-      (herdr-known-project "/tmp/b/" "b (0)  /tmp/b/" nil))))
-  "One `herdr-known-projects\\=' container holding two rows.")
-
-(ert-deftest herdr-dispatch-close-refuses-the-inactive-heading ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
-    (search-forward "Inactive (2)")
-    (should (equal nil
-                   (herdr-dispatch-test-with-recorders
-                       (herdr-pane-close herdr-workspace-close
-                                         herdr-worktree-remove herdr-rpc-call)
-                     (should-error (herdr-dispatch-close)
-                                   :type 'user-error))))))
-
-(ert-deftest herdr-dispatch-rename-refuses-the-inactive-heading ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
-    (search-forward "Inactive (2)")
-    (should (equal nil
-                   (herdr-dispatch-test-with-recorders
-                       (herdr-pane-rename
-                                          herdr-workspace-rename)
-                     (should-error (herdr-dispatch-rename)
-                                   :type 'user-error))))))
-
-(ert-deftest herdr-dispatch-visit-refuses-the-inactive-heading ()
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
-    (search-forward "Inactive (2)")
-    (should (equal nil
-                   (herdr-dispatch-test-with-recorders
-                       (herdr-pane-focus herdr-workspace-focus
-                                         herdr-rpc-call)
-                     (should-error (herdr-dispatch-visit)
-                                   :type 'user-error))))))
-
-(ert-deftest herdr-dispatch-inactive-heading-folds-and-has-no-gap-between-its-rows ()
-  "The container is what removes the blank line: only top-level siblings
-get one from `herdr-dispatch--insert-nodes', and inside `Inactive (N)'
-these rows are children of it, not siblings of the workspaces above."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
-    (goto-char (point-min))
-    (should (herdr-dispatch-test--section-at "Inactive (2)"))
-    (search-forward "a (0)")
-    (let ((after-a (line-end-position)))
-      (forward-line 1)
-      (should (looking-at-p "\\s-*b (0)"))
-      (should (= after-a (1- (point)))))))
 
 (ert-deftest herdr-dispatch-binds-no-help-key ()
   "Not nil but \"not one of ours\": `magit-section-mode\\=' links
@@ -2397,10 +2205,10 @@ workspace cannot pass by luck: the row sits inside `w1\\=' but names the
 worktree open as `w2\\='."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (herdr-dispatch-test--with-worktrees
-           '(("w1" . (((path . "/tmp/herdr.el-fix")
+           '(("w1" . ((worktrees . (((path . "/tmp/herdr.el-fix")
                        (is_linked_worktree . t)
                        (branch . "fix")
-                       (open_workspace_id . "w2")))))
+                       (open_workspace_id . "w2")))))))
       (search-forward "open as w2")
       (should (equal '((herdr-worktree-remove "w2"))
                      (herdr-dispatch-test-with-recorders
@@ -2415,10 +2223,10 @@ workspace is what made this destructive; refusing is the alternative, and
 nothing may reach the server on the way out."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (herdr-dispatch-test--with-worktrees
-           '(("w1" . (((path . "/tmp/herdr.el-fix")
+           '(("w1" . ((worktrees . (((path . "/tmp/herdr.el-fix")
                        (is_linked_worktree . t)
                        (branch . "fix")
-                       (open_workspace_id . nil)))))
+                       (open_workspace_id . nil)))))))
       (search-forward "open as w2")
       (should (equal nil
                      (herdr-dispatch-test-with-recorders
@@ -2444,10 +2252,10 @@ The fixture is the live shape exactly: the row sits inside `w1' and its
 how the bug survived the previous fix."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (herdr-dispatch-test--with-worktrees
-           '(("w1" . (((path . "/tmp/herdr.el-fix")
+           '(("w1" . ((worktrees . (((path . "/tmp/herdr.el-fix")
                        (is_linked_worktree . nil)
                        (branch . "main")
-                       (open_workspace_id . "w1")))))
+                       (open_workspace_id . "w1")))))))
       (search-forward "open as w2")
       (should (equal nil
                      (herdr-dispatch-test-with-recorders
@@ -2466,10 +2274,10 @@ here, so the main-checkout guard does not fire — this row is a real
 worktree, and it is also this section's own workspace."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (herdr-dispatch-test--with-worktrees
-           '(("w1" . (((path . "/tmp/herdr.el-fix")
+           '(("w1" . ((worktrees . (((path . "/tmp/herdr.el-fix")
                        (is_linked_worktree . t)
                        (branch . "fix")
-                       (open_workspace_id . "w1")))))
+                       (open_workspace_id . "w1")))))))
       (search-forward "open as w2")
       (should (equal nil
                      (herdr-dispatch-test-with-recorders
@@ -2487,9 +2295,9 @@ every appearance of confidence — that the row is the repository's own
 checkout, which is a different problem with a different fix."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
     (herdr-dispatch-test--with-worktrees
-           '(("w1" . (((path . "/tmp/somewhere-else")
+           '(("w1" . ((worktrees . (((path . "/tmp/somewhere-else")
                        (is_linked_worktree . t)
-                       (branch . "other")))))
+                       (branch . "other")))))))
       (search-forward "open as w2")
       (let ((message (cadr (should-error
                             (herdr-dispatch--checked-worktree
@@ -2504,7 +2312,7 @@ checkout, which is a different problem with a different fix."
 
 ;;; The main group heading
 
-(ert-deftest herdr-dispatch-close-refuses-the-main-heading ()
+(ert-deftest herdr-dispatch-close-refuses-a-grouping-heading ()
   "`k' on `main (N)' must not close the enclosing workspace.
 
 There was no `cond' arm for `herdr-worktrees', and
@@ -2513,7 +2321,7 @@ not fail — it found `w1' and closed it.  Nothing may reach the server,
 which is what tells a refusal apart from a fall-through that happened to
 be harmless."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "main 2")
+    (search-forward "worktrees (1)")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
                        (herdr-pane-close herdr-workspace-close
@@ -2521,11 +2329,11 @@ be harmless."
                      (should-error (herdr-dispatch-close)
                                    :type 'user-error))))))
 
-(ert-deftest herdr-dispatch-rename-refuses-the-main-heading ()
+(ert-deftest herdr-dispatch-rename-refuses-a-grouping-heading ()
   "`R' on `main (N)' must not rename the enclosing workspace, giving
 the workspace a name the user had aimed at a group of its panes."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "main 2")
+    (search-forward "worktrees (1)")
     (should (equal nil
                    (cl-letf (((symbol-function 'read-string)
                               (lambda (&rest _) "new")))
@@ -2535,7 +2343,7 @@ the workspace a name the user had aimed at a group of its panes."
                        (should-error (herdr-dispatch-rename)
                                      :type 'user-error)))))))
 
-(ert-deftest herdr-dispatch-visit-refuses-the-main-heading ()
+(ert-deftest herdr-dispatch-visit-refuses-a-grouping-heading ()
   "`RET' on `main (N)' must not focus and follow the enclosing
 workspace.
 
@@ -2544,7 +2352,7 @@ object under this heading to go to, and sending `RET' to the enclosing
 workspace would be the old fall-through dressed up as an answer.  The
 message points at TAB, which is the heading's one real action."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nodes
-    (search-forward "main 2")
+    (search-forward "worktrees (1)")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
                        (herdr-pane-focus herdr-workspace-focus
@@ -2557,15 +2365,14 @@ message points at TAB, which is the heading's one real action."
                                  :type 'user-error))))))
 
 (defconst herdr-dispatch-test--nested-nodes
-  '((herdr-workspace "w1" "herdr.el  /tmp/herdr.el  1 pane"
-     ((herdr-panes "w1" "main 1"
-       ((herdr-pane "w1:p1" "> claude working w1:p1" nil)))
-      (herdr-workspace "w2" "project-el  /tmp/herdr.el-feat  1 pane"
-       ((herdr-pane "w2:p1" "- shell idle w2:p1" nil))))))
+  '((herdr-workspace "w1" "herdr.el  main  /tmp/herdr.el"
+     ((herdr-pane "w1:p1" "> claude working w1:p1" nil)
+      (herdr-worktrees "w1" "worktrees (1)"
+       ((herdr-workspace "w2" "project-el  feat  /tmp/herdr.el-feat"
+         ((herdr-pane "w2:p1" "- shell idle w2:p1" nil))))))))
   "The shape `herdr-tree-build' emits for a worktree open as a workspace.
-`w2' is a child of `w1' rather than a sibling, and `w1''s own panes sit
-in the `main' group beside it -- so a pane has a heading or a second
-workspace above it either way.")
+`w2' takes the place its worktree row would have had, inside `w1''s
+`worktrees (N)' heading, while `w1''s own pane hangs directly off it.")
 
 (ert-deftest herdr-dispatch-close-closes-a-pane-inside-a-nested-workspace ()
   "The heading arms used to walk up, and a pane two levels inside a
@@ -2596,7 +2403,7 @@ reach the repository it is nested under."
   "Aiming the refusal at the section under point rather than at an
 ancestor must not stop it firing when point really is on the heading."
   (herdr-dispatch-test-with-buffer herdr-dispatch-test--nested-nodes
-    (search-forward "main 1")
+    (search-forward "worktrees (1)")
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
                        (herdr-pane-close herdr-workspace-close
@@ -2660,8 +2467,8 @@ where the verb it replaced said which row you needed."
 this is the half of that which the visit test cannot see: point is
 somewhere else entirely while the verb runs."
   (herdr-dispatch-test--with-worktrees
-         '(("w1" . (((path . "/tmp/wt") (is_linked_worktree . t)
-                     (branch . "topic") (open_workspace_id . "w5")))))
+         '(("w1" . ((worktrees . (((path . "/tmp/wt") (is_linked_worktree . t)
+                     (branch . "topic") (open_workspace_id . "w5")))))))
     (herdr-dispatch-test-with-buffer
         '((herdr-workspace "w1" "workspace w1"
                            ((herdr-worktree "/tmp/wt" "topic /tmp/wt" nil))))
@@ -2823,55 +2630,12 @@ Real state rather than mocked accessors, for the reason given in
 
 ;;; `n' on a row that names a directory rather than a workspace
 
-(ert-deftest herdr-dispatch-create-terminal-opens-a-known-project-first ()
-  "A nil `workspace_id\\=' makes `tab.create\\=' fall back to whatever the
-server has focused, so `n\\=' here used to open a terminal in some other
-repository.  Nothing is open at this directory, so its root pane is what
-gets followed."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty))))
-          (calls nil)
-          (followed nil))
-      (search-forward "other-project (0)")
-      (cl-letf (((symbol-function 'herdr-rpc-call)
-                 (lambda (_connection method params)
-                   (push (cons method params) calls)
-                   '((root_pane . ((pane_id . "w7:p1"))))))
-                ((symbol-function 'herdr-cmd--follow-new-pane)
-                 (lambda (pane) (setq followed pane))))
-        (herdr-dispatch-create-terminal))
-      (should (equal '(("workspace.create" . ((cwd . "/tmp/other-project/")
-                                              (label . "other-project")
-                                              (focus . t))))
-                     (reverse calls)))
-      (should (equal "w7:p1" followed)))))
-
-(ert-deftest herdr-dispatch-create-terminal-reuses-a-workspace-already-open-there ()
-  "The row can be a poll tick stale; creating a second workspace for the
-same directory is what `herdr-state-workspace-for-directory\\=' prevents."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-project-nodes
-    (herdr-test-with-state (:cache (herdr-state-from-snapshot
-            '((workspaces . (((workspace_id . "w9"))))
-              (panes . (((pane_id . "w9:p1") (workspace_id . "w9")
-                         (cwd . "/tmp/other-project")))))))(let* ((calls nil))
-      (search-forward "other-project (0)")
-      (cl-letf (((symbol-function 'herdr-rpc-call)
-                 (lambda (_connection method params)
-                   (push (cons method params) calls)
-                   '((root_pane . ((pane_id . "w9:p2"))))))
-                ((symbol-function 'herdr-cmd--follow-new-pane) #'ignore))
-        (herdr-dispatch-create-terminal))
-      (should (equal '(("tab.create" . ((workspace_id . "w9")
-                                        (cwd . nil)
-                                        (focus . t))))
-                     (reverse calls)))))))
-
 (ert-deftest herdr-dispatch-create-terminal-prefers-a-worktree-row-to-its-repository ()
   "Walking up would open the terminal in the repository the user was
 pointing past."
   (herdr-dispatch-test-with-buffer
       '((herdr-workspace "w1" "herdr.el (2)"
-         ((herdr-panes "w1" "main (1)" ((herdr-pane "w1:p1" "claude" nil)))
+         ((herdr-worktrees "w1" "worktrees (1)" ((herdr-pane "w1:p1" "claude" nil)))
           (herdr-worktree "/tmp/herdr.el-fix/" "fix" nil))))
     (herdr-test-with-state (:cache (herdr-state-from-snapshot
             '((workspaces . (((workspace_id . "w1"))))
@@ -2888,21 +2652,22 @@ pointing past."
       (should (equal "/tmp/herdr.el-fix/"
                      (alist-get 'cwd (cdr (car (reverse calls))))))))))
 
-(ert-deftest herdr-dispatch-create-terminal-refuses-a-heading-that-names-no-place ()
-  "The `Inactive (N)\\=' heading and the header line name no place, and a
-nil `workspace_id\\=' would send the terminal to the focused workspace.
-Every other verb already refuses both."
-  (herdr-dispatch-test-with-buffer herdr-dispatch-test--known-projects-container-nodes
-    (dolist (target '("Inactive (2)" :header))
-      (if (eq target :header)
-          (goto-char (point-min))
-        (goto-char (point-min))
-        (search-forward target))
-      (should (equal nil
-                     (herdr-dispatch-test-with-recorders
-                         (herdr-rpc-call herdr-cmd--follow-new-pane)
-                       (should-error (herdr-dispatch-create-terminal)
-                                     :type 'user-error)))))))
+(ert-deftest herdr-dispatch-create-terminal-refuses-a-row-naming-no-workspace ()
+  "A server row names no workspace, and a nil `workspace_id\\=' would send
+the terminal to whichever workspace the server has focused rather than
+refusing.
+
+A `main (N)\\=' heading is not refused: it sits inside a workspace, so the
+terminal goes there.  Only a row with no workspace above it has nowhere
+to send one."
+  (herdr-dispatch-test-with-buffer
+      '((herdr-machine "local" "local (1)" nil))
+    (goto-char (point-min))
+    (should (equal nil
+                   (herdr-dispatch-test-with-recorders
+                       (herdr-rpc-call herdr-cmd--follow-new-pane)
+                     (should-error (herdr-dispatch-create-terminal)
+                                   :type 'user-error))))))
 
 (ert-deftest herdr-dispatch-create-terminal-creates-a-tab-from-a-flattened-workspace-heading ()
   "`herdr-tree\\=' renders a single-tab workspace flattened, dropping the
@@ -2940,10 +2705,15 @@ arguments, and was the last transient prefix in the package."
 
 (ert-deftest herdr-dispatch-offers-no-second-way-to-create-a-place-to-run-in ()
   "`a\\=' called `agent.start\\=', asking for a kind and a name that herdr\\='s
-own TUI never asks for."
-  (should-not (lookup-key herdr-dispatch-mode-map "a"))
+own TUI never asks for.
+
+The key is bound again, to answering a blocked agent, so the absent verb
+is what this asserts.  Pinning the keystroke only ever pinned where the
+cut verb happened to live."
   (should-not (fboundp 'herdr-dispatch-create-agent))
-  (should-not (fboundp 'herdr-agent-start)))
+  (should-not (fboundp 'herdr-agent-start))
+  (should (eq 'herdr-dispatch-send-keys
+              (lookup-key herdr-dispatch-mode-map "a"))))
 
 ;;; The worktree cache answers questions
 
@@ -2999,7 +2769,7 @@ one waits for the keystroke.  Collapsing the two loses that."
   "A worktree row knows its path and not which listing answered for it,
 so the search flattens every listing together."
   (herdr-dispatch-test--with-worktrees
-      '(("w1" . (((path . "/tmp/a/")))) ("w2" . (((path . "/tmp/b/")))))
+      '(("w1" . ((worktrees . (((path . "/tmp/a/")))))) ("w2" . ((worktrees . (((path . "/tmp/b/")))))))
     (should (equal '((path . "/tmp/b/")) (herdr-dispatch--worktree-record (herdr-current-connection) "/tmp/b/")))
     (should-not (herdr-dispatch--worktree-record (herdr-current-connection) "/tmp/missing/"))))
 
@@ -3047,9 +2817,9 @@ connection the row came from and nowhere else."
   (let ((one (herdr-test-connection))
         (two (herdr-test-connection)))
     (setf (herdr-connection-worktrees one)
-          '(("w1" . (((path . "/tmp/repo/") (branch . "on-one")))))
+          '(("w1" . ((worktrees . (((path . "/tmp/repo/") (branch . "on-one")))))))
           (herdr-connection-worktrees two)
-          '(("w1" . (((path . "/tmp/repo/") (branch . "on-two"))))))
+          '(("w1" . ((worktrees . (((path . "/tmp/repo/") (branch . "on-two"))))))))
     (should (equal "on-one"
                    (herdr-worktree-branch
                     (herdr-dispatch--worktree-record one "/tmp/repo/"))))
@@ -3058,7 +2828,7 @@ connection the row came from and nowhere else."
                     (herdr-dispatch--worktree-record two "/tmp/repo/"))))
     ;; A path only the other server has is not found here.
     (setf (herdr-connection-worktrees two)
-          '(("w1" . (((path . "/tmp/only-on-two/"))))))
+          '(("w1" . ((worktrees . (((path . "/tmp/only-on-two/"))))))))
     (should-not (herdr-dispatch--worktree-record one "/tmp/only-on-two/"))))
 
 (ert-deftest herdr-dispatch-a-target-carries-the-server-its-row-came-from ()
@@ -3103,16 +2873,13 @@ Binds ONE and TWO, and draws the dashboard from both."
                               (agent . "codex"))))))))
           (herdr-connections (list (cons "one" one) (cons "two" two)))
           (herdr-dispatch--refresh-timer nil)
-          (herdr-dispatch-show-known-projects nil)
           (buffer (get-buffer-create herdr-dispatch-buffer-name)))
      (setf (herdr-connection-name one) "one"
            (herdr-connection-name two) "two"
            (herdr-connection-running one) t
            (herdr-connection-running two) t)
      (unwind-protect
-         (cl-letf (((symbol-function 'herdr-dispatch--request-worktrees) #'ignore)
-                   ((symbol-function
-                     'herdr-dispatch--request-known-project-worktrees)
+         (cl-letf (((symbol-function 'herdr-dispatch--request-worktrees)
                     #'ignore))
            (with-current-buffer buffer
              (herdr-dispatch-mode)
@@ -3127,34 +2894,50 @@ as one workspace, and whichever verb ran would reach whichever server
 answered last."
   (herdr-dispatch-test--with-two-servers
     (let ((text (buffer-string)))
-      (should (string-match-p "^one" text))
-      (should (string-match-p "^two" text))
+      (should (string-match-p "^ *one (" text))
+      (should (string-match-p "^ *two (" text))
       (should (string-match-p "on-one" text))
       (should (string-match-p "on-two" text)))
     ;; The header counts across both.
-    (should (string-match-p "2 servers" herdr-dispatch--rendered-header))
+    (should (string-match-p "2 machines" herdr-dispatch--rendered-header))
     (should (string-match-p "2 workspaces" herdr-dispatch--rendered-header))))
 
 (ert-deftest herdr-dispatch-a-row-resolves-to-the-server-it-came-from ()
   "The guard this unit owes: a colliding id has to reach the connection
 whose subtree the row sits in, not whichever the resolver would answer."
   (herdr-dispatch-test--with-two-servers
-    (goto-char (point-min))
-    (search-forward "on-one")
+    (herdr-dispatch-test--in-machines "on-one")
     (let ((target (herdr-dispatch-target-at-point)))
       (should (eq one (herdr-dispatch-target-connection target)))
       (should (equal "on-one" (herdr-workspace-label
                                (herdr-dispatch-target-record target)))))
-    (goto-char (point-min))
-    (search-forward "on-two")
+    (herdr-dispatch-test--in-machines "on-two")
     (let ((target (herdr-dispatch-target-at-point)))
       (should (eq two (herdr-dispatch-target-connection target)))
       (should (equal "on-two" (herdr-workspace-label
                                (herdr-dispatch-target-record target)))))
     ;; And a verb invoked by name reaches the same one.
-    (goto-char (point-min))
-    (search-forward "on-two")
+    (herdr-dispatch-test--in-machines "on-two")
     (should (eq two (herdr-current-connection)))))
+
+(ert-deftest herdr-dispatch-a-queue-row-resolves-to-its-own-machine ()
+  "The same guard for the queue, which is where it is hardest: a queue is
+ordered by attention, so a row has no machine heading above it to walk up
+to, and both machines here issued `w1:p1\='.
+
+The row carries the machine name on its own line instead, which is what
+`herdr-dispatch--row-connection\=' reads when there is no heading.  A name
+rather than the connection, because a section outlives the redraws around
+it and a reconnect replaces the struct."
+  (herdr-dispatch-test--with-two-servers
+    (dolist (case (list (cons "claude" one) (cons "codex" two)))
+      (goto-char (point-min))
+      ;; The queue is above MACHINES, so this finds the queue row.
+      (search-forward (car case))
+      (let ((target (herdr-dispatch-target-at-point)))
+        (should (eq 'herdr-pane (herdr-dispatch-target-type target)))
+        (should (equal "w1:p1" (herdr-dispatch-target-value target)))
+        (should (eq (cdr case) (herdr-dispatch-target-connection target)))))))
 
 (ert-deftest herdr-dispatch-one-connection-draws-no-server-level ()
   "Nobody following one server should see a row that says nothing."
@@ -3163,14 +2946,14 @@ whose subtree the row sits in, not whichever the resolver would answer."
                        '((workspaces . (((workspace_id . "w1")
                                          (label . "solo")))))))))
     (setf (herdr-connection-name connection) "local")
-    (let ((herdr-connections (herdr-test-connections connection))
-          (herdr-dispatch-show-known-projects nil))
-      (let ((tree (herdr-dispatch--tree (herdr-connection-list))))
-        (should-not (seq-find (lambda (node) (eq 'herdr-server (car node)))
-                              tree))
-        (should (eq 'herdr-workspace (car (car tree)))))
+    (let ((herdr-connections (herdr-test-connections connection)))
+      (let ((machines (herdr-dispatch-test--machines
+                       (herdr-dispatch--tree (herdr-connection-list)))))
+        (should-not (seq-find (lambda (node) (eq 'herdr-machine (car node)))
+                              machines))
+        (should (eq 'herdr-workspace (car (car machines)))))
       (should-not (string-match-p
-                   "servers" (herdr-dispatch--header
+                   "machines" (herdr-dispatch--header
                               (herdr-connection-list)))))))
 
 (ert-deftest herdr-dispatch-a-server-that-is-down-is-drawn-as-itself ()
@@ -3181,28 +2964,28 @@ a row that vanishes when a laptop sleeps tells you the wrong one."
           (herdr-connection-cache two) (herdr-state-empty))
     (herdr-dispatch-refresh t)
     (let ((text (buffer-string)))
-      (should (string-match-p "^two  not connected" text))
+      (should (string-match-p "^ *two  not connected" text))
       ;; The other is still fully there.
       (should (string-match-p "on-one" text)))
     ;; And still navigable.
-    (goto-char (point-min))
-    (search-forward "on-one")
+    (herdr-dispatch-test--in-machines "on-one")
     (should (eq one (herdr-dispatch-target-connection
                      (herdr-dispatch-target-at-point))))))
 
-(ert-deftest herdr-dispatch-a-known-root-belongs-to-one-connection ()
-  "A root is a path on some machine.  Asking every connection about every
-root is how one server's projects reached another, and how two servers
-holding the same path became indistinguishable."
-  (let* ((local (herdr-connection--make :name "local"))
-         (remote (herdr-connection--make :name "shadow" :ssh-target "shadow"))
-         (herdr-dispatch-show-known-projects t))
-    (cl-letf (((symbol-function 'herdr-dispatch--known-project-roots)
-               (lambda () '("/srv/here/" "/ssh:shadow:/srv/there/"
-                            "/ssh:elsewhere:/srv/other/"))))
-      (should (equal '("/srv/here/") (herdr-dispatch--roots-for local)))
-      (should (equal '("/ssh:shadow:/srv/there/")
-                     (herdr-dispatch--roots-for remote))))))
-
-(provide 'herdr-dispatch-test)
-;;; herdr-dispatch-test.el ends here
+(ert-deftest herdr-dispatch-worktrees-start-folded ()
+  "A repository's other checkouts are worth one line until asked for.
+Through `magit-section-initial-visibility-alist\\=' rather than a hidden
+slot set by hand, so a redraw keeps whatever the reader has since
+toggled instead of folding it shut under them again."
+  (herdr-dispatch-test-with-buffer
+      '((herdr-workspace "w1" "web  main  /tmp/web"
+         ((herdr-pane "w1:p1" "> claude working w1:p1" nil)
+          (herdr-worktrees "w1" "worktrees (1)"
+           ((herdr-worktree "/tmp/web-feat" "feat/x  /tmp/web-feat" nil))))))
+    (should (eq 'hide (alist-get 'herdr-worktrees
+                                 magit-section-initial-visibility-alist)))
+    (let ((section (herdr-dispatch-test--section-at "worktrees (")))
+      (should section)
+      (should (oref section hidden)))
+    ;; The panes beside it are not folded away with them.
+    (should-not (oref (herdr-dispatch-test--section-at "claude") hidden))))
