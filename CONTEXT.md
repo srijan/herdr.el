@@ -22,6 +22,11 @@ with `agent.rename`.
 **Session** — everything the server currently knows, cached in `herdr-state`. Every surface draws
 from the cache and never from the socket, so a redraw costs no traffic.
 
+**Machine** — a herdr server this package follows, named as `herdr machine` names it. The
+*connection* is how the package reaches one; the machine is the thing reached, and the dashboard
+row names the thing. Drawn only when there are several, so nobody following one sees a level that
+says nothing.
+
 **Dispatcher** — the `*herdr-agents*` buffer. The dashboard, and the only place with a keymap of
 its own.
 

@@ -154,25 +154,26 @@ machine. Terminals do not use that forward: a remote pane's buffer gets a TRAMP
 `default-directory` and runs the far host's own herdr, which is how it reaches a pane running
 there.
 
-With two servers connected the dashboard grows an outer level, one row per server, and a server
-that is down keeps its row rather than disappearing:
+With two machines connected the dashboard grows an outer level, one row per machine — herdr's own
+word for it, and the level its TUI heads `machines` — and a machine that is down keeps its row
+rather than disappearing:
 
 ```
-herdr   2 servers  4 workspaces  6 panes  1▶1✓
+herdr   2 machines  4 workspaces  6 panes  1▶1✓
 
 local (3)
-  herdr.el (2)                 ~/src/herdr.el/
+  herdr.el       main          ~/src/herdr.el/
     ▶ claude    working   w7:p1   Fix the reconcile order
 
 shadow (1)
-  example-api (1)              /ssh:shadow:~/src/example-api/
+  example-api    main          /ssh:shadow:~/src/example-api/
     ✓ codex     done      w1:p1   Port the retry helper
 
 scratch  not connected
 ```
 
 Ids are per-server counters, so two machines can each hold a `w1:p1`. Every structure keyed by
-one distinguishes them, and a command acts on the server of the row or candidate you chose.
+one distinguishes them, and a command acts on the machine of the row or candidate you chose.
 
 Nothing connects at startup. A laptop opened in a cafe must not slow to a stack of SSH timeouts
 for servers nobody asked about, and a server that has gone quiet costs its own freshness rather

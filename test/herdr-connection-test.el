@@ -495,15 +495,16 @@ being told a target directly."
 nothing to it, so there is no second place a machine can be described."
   (herdr-connection-test--catalog "[]" 0
     (herdr-connection-machines))
-  ;; Nothing else in the package runs `herdr machine' at all.
+  ;; `list' is the only `herdr machine' subcommand the package runs.  The
+  ;; search is for "machine" followed by another string literal -- an
+  ;; argument list -- so that the word used as a display noun, which the
+  ;; dashboard header counts with, is not mistaken for an invocation.
   (dolist (file (directory-files default-directory t "\\`herdr.*\\.el\\'"))
     (with-temp-buffer
       (insert-file-contents file)
       (goto-char (point-min))
-      (while (re-search-forward "\"machine\"" nil t)
-        (should (save-excursion
-                  (beginning-of-line)
-                  (looking-at-p ".*\"machine\" \"list\"")))))))
+      (while (re-search-forward "\"machine\"[ \t\n]+\"\\([a-z-]+\\)\"" nil t)
+        (should (equal "list" (match-string 1)))))))
 
 (ert-deftest herdr-connection-a-renamed-machine-keeps-its-connection ()
   "A profile keeps its id through a rename.  Reconnecting to a renamed

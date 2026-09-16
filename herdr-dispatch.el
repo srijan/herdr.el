@@ -258,7 +258,7 @@ foldable headings."
 ;;; The object at point
 
 (defconst herdr-dispatch-target-types
-  '(herdr-server herdr-workspace herdr-pane herdr-worktree herdr-worktrees)
+  '(herdr-machine herdr-workspace herdr-pane herdr-worktree herdr-worktrees)
   "The section types a verb can be aimed at.
 Every type `herdr-tree-build\\=' draws.  A section of any other type - the
 buffer\\='s root, the header - is not a target, and the verbs say so.")
@@ -349,14 +349,14 @@ carrying nothing, so the resolver falls through."
 (defun herdr-dispatch--row-connection (section)
   "Return the connection SECTION\\='s row came from.
 
-The enclosing `herdr-server\\=' row names it.  With one connection there
+The enclosing `herdr-machine\\=' row names it.  With one connection there
 is no such row — nothing draws a level that says nothing — and the sole
 connection is the answer.
 
 A name rather than the connection itself, because a section outlives the
 redraws around it and a reconnect replaces the struct: the name is what
 both sides still agree on."
-  (or (when-let* ((name (herdr-dispatch--enclosing-value section 'herdr-server)))
+  (or (when-let* ((name (herdr-dispatch--enclosing-value section 'herdr-machine)))
         (herdr-connection-named name))
       (herdr-connection--only)))
 
@@ -962,14 +962,14 @@ count that is always true stops being read, the same reasoning that
 already keeps idle out of the modeline segment.
 
 Counts across every connection, and says how many there are only when
-there are several: one server needs no telling that it is the only one."
+there are several: one machine needs no telling that it is the only one."
   (let* ((merged (herdr-state-merged
                   (mapcar #'herdr-state-current connections)))
          (summary (herdr-tree-status-summary merged)))
     (format "herdr   %s%s  %s%s"
             (if (cdr connections)
                 (format "%s  " (herdr-dispatch--count
-                                (length connections) "server"))
+                                (length connections) "machine"))
               "")
             (herdr-dispatch--count (length (herdr-state-workspaces merged))
                                    "workspace")
@@ -1096,7 +1096,7 @@ built from its own server alone, and this is the one place that knows
 they are being shown together."
   (if (cdr connections)
       (mapcar (lambda (connection)
-                (herdr-tree-server-node
+                (herdr-tree-machine-node
                  (herdr-connection-name connection)
                  (herdr-state-running-p connection)
                  (herdr-dispatch--tree-for connection)))

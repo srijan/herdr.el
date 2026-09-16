@@ -450,32 +450,37 @@ sections different widths."
                            (assoc (herdr-workspace-id workspace) nesting))
                          workspaces)))))
 
-(defface herdr-tree-server
+(defface herdr-tree-machine
   '((t :inherit magit-section-heading))
-  "Face for the row naming a server, drawn only when there are several."
+  "Face for the row naming a machine, drawn only when there are several."
   :group 'herdr)
 
-(defface herdr-tree-server-down
+(defface herdr-tree-machine-down
   '((t :inherit shadow))
-  "Face for the row naming a server that is not being followed."
+  "Face for the row naming a machine that is not being followed."
   :group 'herdr)
 
-(defun herdr-tree-server-node (name reachable children)
-  "Return the node holding CHILDREN, the tree of the server called NAME.
+(defun herdr-tree-machine-node (name reachable children)
+  "Return the node holding CHILDREN, the tree of the machine called NAME.
 
-Drawn only when more than one server is connected, so that nobody
-following one sees a level that says nothing.
+A machine, which is herdr\='s own word for it: `herdr machine\=' is the
+catalog these names come from, and the TUI heads this level `machines\='.
+The connection is how the package reaches one; the machine is the thing
+reached, and the row names the thing.
 
-A server that is not reachable is drawn as itself, dimmed and labelled,
-rather than left out.  An empty dashboard and an unreachable server are
-different facts, and a row that disappears when a laptop sleeps tells
-you the wrong one."
-  (list 'herdr-server name
+Drawn only when more than one is connected, so that nobody following one
+sees a level that says nothing.
+
+A machine that is not reachable is drawn as itself, dimmed and labelled,
+rather than left out.  An empty dashboard and an unreachable machine are
+different facts, and a row that disappears when a laptop sleeps tells you
+the wrong one."
+  (list 'herdr-machine name
         (herdr-tree--faced
          (if reachable
              (format "%s (%d)" name (length children))
            (format "%s  not connected" name))
-         (if reachable 'herdr-tree-server 'herdr-tree-server-down))
+         (if reachable 'herdr-tree-machine 'herdr-tree-machine-down))
         children))
 
 (provide 'herdr-tree)

@@ -2610,7 +2610,7 @@ A `main (N)\\=' heading is not refused: it sits inside a workspace, so the
 terminal goes there.  Only a row with no workspace above it has nowhere
 to send one."
   (herdr-dispatch-test-with-buffer
-      '((herdr-server "local" "local (1)" nil))
+      '((herdr-machine "local" "local (1)" nil))
     (goto-char (point-min))
     (should (equal nil
                    (herdr-dispatch-test-with-recorders
@@ -2843,7 +2843,7 @@ answered last."
       (should (string-match-p "on-one" text))
       (should (string-match-p "on-two" text)))
     ;; The header counts across both.
-    (should (string-match-p "2 servers" herdr-dispatch--rendered-header))
+    (should (string-match-p "2 machines" herdr-dispatch--rendered-header))
     (should (string-match-p "2 workspaces" herdr-dispatch--rendered-header))))
 
 (ert-deftest herdr-dispatch-a-row-resolves-to-the-server-it-came-from ()
@@ -2876,11 +2876,11 @@ whose subtree the row sits in, not whichever the resolver would answer."
     (setf (herdr-connection-name connection) "local")
     (let ((herdr-connections (herdr-test-connections connection)))
       (let ((tree (herdr-dispatch--tree (herdr-connection-list))))
-        (should-not (seq-find (lambda (node) (eq 'herdr-server (car node)))
+        (should-not (seq-find (lambda (node) (eq 'herdr-machine (car node)))
                               tree))
         (should (eq 'herdr-workspace (car (car tree)))))
       (should-not (string-match-p
-                   "servers" (herdr-dispatch--header
+                   "machines" (herdr-dispatch--header
                               (herdr-connection-list)))))))
 
 (ert-deftest herdr-dispatch-a-server-that-is-down-is-drawn-as-itself ()
