@@ -39,17 +39,47 @@ so the two surfaces cannot disagree about what a status looks like.")
   "Return the glyph for STATUS, or a space when it has none."
   (alist-get status herdr-tree-status-glyphs " " nil #'equal))
 
+(defface herdr-tree-status-blocked
+  '((t :inherit warning))
+  "Face for an agent that is blocked and wants an answer."
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
+
+(defface herdr-tree-status-working
+  '((t :inherit font-lock-keyword-face))
+  "Face for an agent that is working."
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
+
+(defface herdr-tree-status-done
+  '((t :inherit success))
+  "Face for an agent whose completion nobody here has looked at yet."
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
+
+(defface herdr-tree-status-idle
+  '((t :inherit shadow))
+  "Face for an agent that is idle and has nothing waiting."
+  :group 'herdr
+  :package-version '(herdr . "0.1.0"))
+
 (defconst herdr-tree-status-faces
-  '(("blocked" . warning) ("working" . font-lock-keyword-face)
-    ("done" . success) ("idle" . shadow))
+  '(("blocked" . herdr-tree-status-blocked)
+    ("working" . herdr-tree-status-working)
+    ("done" . herdr-tree-status-done)
+    ("idle" . herdr-tree-status-idle))
   "Face shown for each agent status.
 
-Built-in faces rather than colours of our own, so that the dashboard
-follows whatever theme is loaded instead of fighting it.  The four are
-chosen for what each state asks of you: blocked wants attention and gets
-the face Emacs already uses to ask for it, working is the one state that
-is going somewhere, done is the good ending, and idle is the state most
-lines are in most of the time and so is the one worth dimming.")
+One face per status, each inheriting a built-in rather than naming
+colours of our own, so the dashboard follows whatever theme is loaded
+instead of fighting it.  The four inherited faces are chosen for what
+each state asks of you: blocked wants attention and gets the face Emacs
+already uses to ask for it, working is the one state that is going
+somewhere, done is the good ending, and idle is the state most lines are
+in most of the time and so is the one worth dimming.
+
+Named faces rather than the built-ins directly, so that retheming one
+status is `customize-face' or a theme rule, not redefining this.")
 
 (defun herdr-tree-status-face (status)
   "Return the face for STATUS, or nil when it has none."

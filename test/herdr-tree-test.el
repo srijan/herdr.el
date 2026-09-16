@@ -294,6 +294,21 @@ share one, or the strip says only \"something is happening\"."
     (should (eq (herdr-tree-status-face "blocked")
                 (get-text-property 0 'font-lock-face blocked)))))
 
+(ert-deftest herdr-tree-status-faces-inherit-a-built-in ()
+  "Retheming `warning' rethemes a blocked agent, with nothing else done.
+
+Named faces so `customize-face' can reach one status on its own;
+inheriting built-ins so that reaching for it is never necessary.  A
+colour written here instead of inherited would satisfy every other face
+test in this file, because they all compare a face against itself."
+  (dolist (pair '(("blocked" . warning)
+                 ("working" . font-lock-keyword-face)
+                 ("done"    . success)
+                 ("idle"    . shadow)))
+    (let ((face (herdr-tree-status-face (car pair))))
+      (should (string-prefix-p "herdr-tree-status-" (symbol-name face)))
+      (should (eq (cdr pair) (face-attribute face :inherit))))))
+
 (ert-deftest herdr-tree-dims-the-fields-that-are-not-the-news ()
   "The pane id and the terminal title are context, not the message.
 
