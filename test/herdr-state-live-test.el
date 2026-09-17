@@ -10,6 +10,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 (require 'herdr-test-helper)
 (require 'herdr-state)
 
@@ -18,15 +19,24 @@
   (make-pipe-process :name "herdr-test-pipe" :noquery t))
 
 (defmacro herdr-state-live-test-with-capture (&rest body)
-  "Run BODY capturing dispatched events into the list `events'."
+  "Run BODY capturing dispatched events into the list `events'.
+
+Observes `herdr-state--dispatch' rather than the change hook.  These
+tests are about what the filter splits out of the stream and hands on,
+and the payload is what says which pane an event was about - the hook
+does not carry one, because no listener ever read it.  Wrapped rather
+than replaced, so the cache still updates underneath."
   (declare (indent 0) (debug t))
   `(let* ((events nil)
           (herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty))))
-          (herdr-state-change-functions
-           (list (lambda (_connection kind data) (push (cons kind data) events))))
+          (herdr-state-live-test--dispatch (symbol-function 'herdr-state--dispatch))
           (proc (herdr-state-live-test--proc)))
-     (unwind-protect (progn ,@body (setq events (nreverse events)))
-       (delete-process proc))))
+     (cl-letf (((symbol-function 'herdr-state--dispatch)
+                (lambda (connection kind data)
+                  (push (cons kind data) events)
+                  (funcall herdr-state-live-test--dispatch connection kind data))))
+       (unwind-protect (progn ,@body (setq events (nreverse events)))
+         (delete-process proc)))))
 
 (ert-deftest herdr-state-filter-ignores-the-subscription-ack ()
   "The ack is a response, not an event; reducing against it is meaningless."
@@ -148,7 +158,7 @@ fails here."
   (let* ((events nil)
          (herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty))))
          (herdr-state-change-functions
-          (list (lambda (_connection kind data) (push (cons kind data) events))))
+          (list (lambda (_connection kind) (push kind events))))
          (proc (herdr-state-live-test--proc)))
     (unwind-protect
         (progn
@@ -161,7 +171,7 @@ fails here."
                         "{\"pane_id\":\"w1:p2\"}}\n"))
           (should (= 2 (length (herdr-state-panes (herdr-connection-cache (herdr-current-connection))))))
           (should (equal '("pane_created" "pane_created" "pane_focused")
-                         (mapcar #'car (reverse events)))))
+                         (reverse events))))
       (delete-process proc))))
 
 (ert-deftest herdr-state-settle-reconciles-ghost-panes-away ()
@@ -222,7 +232,7 @@ kind nothing dispatches on, because the comparison must not care."
     (setf (herdr-connection-pane-stream-ids connection) stream-ids)
     (setf (herdr-connection-resubscribe-timer connection) nil)
     (unwind-protect
-        (progn (herdr-state--note-pane-set-change connection "whatever" nil)
+        (progn (herdr-state--note-pane-set-change connection "whatever")
                (and (herdr-connection-resubscribe-timer connection) t))
       (when (herdr-connection-resubscribe-timer connection)
         (cancel-timer (herdr-connection-resubscribe-timer connection)))
@@ -346,7 +356,7 @@ are not told about is the same bug one level up."
     (herdr-test-with-server
         (herdr-state-live-test--reconnect-server
          (lambda (method) (push method methods)))
-      (herdr-test-with-state (:running t :pane-process nil :resubscribe-timer nil :settle-timer nil :cache (herdr-state-live-test--stale-cache))(let* ((herdr-state-change-functions (list (lambda (_connection kind _data) (push kind kinds)))))
+      (herdr-test-with-state (:running t :pane-process nil :resubscribe-timer nil :settle-timer nil :cache (herdr-state-live-test--stale-cache))(let* ((herdr-state-change-functions (list (lambda (_connection kind) (push kind kinds)))))
         (unwind-protect
             (progn
               (herdr-state--settle (herdr-current-connection) t)

@@ -71,9 +71,13 @@
 (defvar herdr-state-change-functions nil
   "Abnormal hook run after a connection\\='s cache changes.
 
-Each function is called with (CONNECTION EVENT-KIND DATA).  EVENT-KIND
-is the string herdr used; DATA is its payload alist.  On a resync,
-EVENT-KIND is \"resync\" and DATA is nil.
+Each function is called with (CONNECTION EVENT-KIND).  EVENT-KIND is the
+string herdr used, or one this package makes up for a change no event
+announced: \"resync\", \"reconcile\", \"refresh\", \"rename\".
+
+The payload is not passed.  No listener read it - each of the six either
+ignores its arguments or reads the kind - and eight of the ten
+notifications had nothing to put in it anyway.
 
 CONNECTION is in the payload rather than in a dynamic binding around
 the notify, because startup, the synchronous refresh and stop all
@@ -236,7 +240,7 @@ by the same path as setting."
           (herdr-state--upsert (herdr-state-agent-info state)
                                'pane_id pane-id agent))
     (setf (herdr-connection-cache connection) next)
-    (run-hook-with-args 'herdr-state-change-functions connection "rename" nil)
+    (run-hook-with-args 'herdr-state-change-functions connection "rename")
     next))
 
 (defun herdr-state-workspace-directory (state workspace-id)
@@ -627,7 +631,7 @@ replay of 8 — a minute of frozen modeline and dashboard after every
 connect, precisely when an agent is most likely to be working.  0.9.0
 removed the replay, so there is nothing left to absorb either."
   (setf (herdr-connection-cache connection) (herdr-state-reduce (herdr-state-current connection) kind data))
-  (run-hook-with-args 'herdr-state-change-functions connection kind data))
+  (run-hook-with-args 'herdr-state-change-functions connection kind))
 
 (defun herdr-state--reconcile-panes-async (connection done)
   "Ask CONNECTION for the pane set and fold the reply when it lands.
@@ -868,7 +872,7 @@ continuation, which is the whole reason the repair takes one."
                 ;; sees everything.
                 (when resync
                   (run-hook-with-args 'herdr-state-change-functions
-                                      connection "resync" nil))))
+                                      connection "resync"))))
            ;; The repair declined, so nothing has settled the pane set.
            ;; Rebuilding B against an unsettled set is the thing this
            ;; ordering exists to prevent, so the whole settle goes round
@@ -1062,10 +1066,10 @@ then."
                                 (list (cons 'agent_status
                                             (herdr-pane-status pane))
                                       (cons 'agent (herdr-pane-agent pane)))))))
-           (run-hook-with-args 'herdr-state-change-functions connection "resync" nil)))
+           (run-hook-with-args 'herdr-state-change-functions connection "resync")))
        herdr-rpc-background-timeout))))
 
-(defun herdr-state--note-pane-set-change (connection _kind _data)
+(defun herdr-state--note-pane-set-change (connection _kind)
   "Rebuild connection B, debounced, when the watched pane set drifted.
 
 A set comparison rather than a dispatch on event kind, because B now
@@ -1226,7 +1230,7 @@ how the list is obtained."
                 (herdr-state-reduce (herdr-state-current connection)
                                     "pane_updated" `((pane . ,pane))))))))
     (when changed
-      (run-hook-with-args 'herdr-state-change-functions connection "reconcile" nil))
+      (run-hook-with-args 'herdr-state-change-functions connection "reconcile"))
     changed))
 
 (defun herdr-state--fold-workspaces (connection workspaces)
@@ -1257,7 +1261,7 @@ Returns non-nil when anything changed."
                                     "workspace_updated"
                                     `((workspace . ,workspace)))))))
     (when changed
-      (run-hook-with-args 'herdr-state-change-functions connection "reconcile" nil))
+      (run-hook-with-args 'herdr-state-change-functions connection "reconcile"))
     changed))
 
 (defun herdr-state-refresh (connection)
@@ -1271,7 +1275,7 @@ than one extra round trip."
                           (alist-get 'snapshot
                                      (herdr-rpc-call connection "session.snapshot")))))
     (setf (herdr-connection-cache connection) (herdr-state-from-snapshot snapshot))
-    (run-hook-with-args 'herdr-state-change-functions connection "refresh" nil)
+    (run-hook-with-args 'herdr-state-change-functions connection "refresh")
     (herdr-state-current connection)))
 
 ;;;###autoload
@@ -1282,7 +1286,7 @@ than one extra round trip."
         (herdr-state-from-snapshot
          (alist-get 'snapshot (herdr-rpc-call connection "session.snapshot"))))
   (herdr-state--open-pane-stream connection)
-  (run-hook-with-args 'herdr-state-change-functions connection "resync" nil)
+  (run-hook-with-args 'herdr-state-change-functions connection "resync")
   (herdr-state-current connection))
 
 (defun herdr-state-start (connection)
@@ -1299,7 +1303,7 @@ than one extra round trip."
                  (alist-get 'snapshot (herdr-rpc-call connection "session.snapshot"))))
           ;; Announce the snapshot immediately so consumers paint
           ;; something true before any event arrives.
-          (run-hook-with-args 'herdr-state-change-functions connection "resync" nil)
+          (run-hook-with-args 'herdr-state-change-functions connection "resync")
           (herdr-state--arm-repair-timer connection)
           (herdr-state--open-streams connection)
           (herdr-state--schedule-settle connection))
@@ -1331,7 +1335,7 @@ than one extra round trip."
   ;; this the modeline advertised the dead session's agent counts until
   ;; the mode was toggled — stale, and actionable-looking, for agents
   ;; Emacs is no longer following.
-  (run-hook-with-args 'herdr-state-change-functions connection "resync" nil))
+  (run-hook-with-args 'herdr-state-change-functions connection "resync"))
 
 (defun herdr-state-running-p (connection)
   "Return non-nil when the event stream is being followed."
