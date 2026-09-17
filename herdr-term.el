@@ -39,6 +39,7 @@
 (declare-function ghostel-desktop-restore-buffer "ghostel-desktop"
                   (file-name buffer-name misc))
 (defvar ghostel-exit-functions)
+(defvar ghostel-kill-buffer-on-exit)
 (defvar desktop-save-buffer)
 (defvar desktop-buffer-mode-handlers)
 
@@ -304,20 +305,34 @@ Reports rather than offers.  A prompt here runs inside ghostel's exit
 path, and anything that blocks while ghostel holds the terminal is how
 Emacs wedges in redraw; `herdr-pane-takeover' is the offer, on a key."
   (when-let* ((pane-id (herdr-term-pane-for-buffer buffer)))
-    ;; ghostel materializes rows on a coalescing timer, so herdr's last
-    ;; line can still be pending and the tail read empty.  Reliable here
-    ;; because a redraw only stays pending for a buffer with no render
-    ;; window, and an attaching buffer always has one.
-    (when (fboundp 'ghostel--redraw-now)
-      (ghostel--redraw-now buffer))
-    (with-current-buffer buffer
-      (let ((tail (herdr-term--squeezed
-                   (buffer-substring-no-properties
-                    (max (point-min) (- (point-max) 2000)) (point-max)))))
-        (when (string-search (herdr-term--squeezed herdr-term-attach-refused) tail)
-          (message "herdr: %s is attached elsewhere; %s takes it over"
-                   pane-id
-                   (substitute-command-keys "\\[herdr-pane-takeover]")))))))
+    (if (and (not (get-buffer-window buffer t))
+             (with-current-buffer buffer (= (point-min) (point-max))))
+        ;; Nothing was ever rendered here, so whatever herdr said is
+        ;; still only in the grid and the tail below would read empty.
+        ;; Keep the buffer rather than let ghostel kill it unread:
+        ;; `desktop-read' restores into a buffer its frameset may never
+        ;; display, and has already counted this one restored.
+        ;;
+        ;; Both conditions, not just the window: `herdr-term--attach-1'
+        ;; displays every buffer it attaches, so a terminal that worked
+        ;; and was then buried has content.  Killing that one on exit is
+        ;; ghostel's job and stays ghostel's job.
+        (with-current-buffer buffer
+          (setq-local ghostel-kill-buffer-on-exit nil)
+          (message "herdr: %s ended before anything was rendered; keeping %s"
+                   pane-id (buffer-name buffer)))
+      ;; ghostel materializes rows on a coalescing timer, so herdr's last
+      ;; line can still be pending and the tail read empty.
+      (when (fboundp 'ghostel--redraw-now)
+        (ghostel--redraw-now buffer))
+      (with-current-buffer buffer
+        (let ((tail (herdr-term--squeezed
+                     (buffer-substring-no-properties
+                      (max (point-min) (- (point-max) 2000)) (point-max)))))
+          (when (string-search (herdr-term--squeezed herdr-term-attach-refused) tail)
+            (message "herdr: %s is attached elsewhere; %s takes it over"
+                     pane-id
+                     (substitute-command-keys "\\[herdr-pane-takeover]"))))))))
 
 (defun herdr-term-desktop-save (_desktop-dirname)
   "Return this herdr terminal as desktop data: (herdr NAME PANE-ID).
@@ -462,7 +477,16 @@ terminal."
           ;; resolves for `ssh host herdr' does not resolve here.
           (ghostel-exec buffer (herdr-connection-executable connection) args)
           (push (cons (herdr-term--key connection pane-id) buffer)
-                herdr-term--buffers))
+                herdr-term--buffers)
+          ;; A terminal exists now, so terminals need managing - the reap
+          ;; and the directory tracking both hang off this hook, and
+          ;; `herdr-term-teardown' drops it again with the last buffer.
+          ;; Here rather than in `herdr-term-ensure', which creates no
+          ;; buffer and which `desktop-read' never reaches: a session
+          ;; restored from a desktop had live terminals and nothing
+          ;; watching them.
+          (add-hook 'herdr-state-change-functions
+                    #'herdr-term--on-state-change))
       (error
        (kill-buffer buffer)
        (signal (car err) (cdr err))))
@@ -615,7 +639,6 @@ trips to be told nothing moved."
   (require 'ghostel)
   (unless (herdr-server-live-p connection)
     (herdr-term--bootstrap-server connection))
-  (add-hook 'herdr-state-change-functions #'herdr-term--on-state-change)
   (prog1 (herdr-term--sync-buffers connection)
     (herdr-term--sync-directories connection)))
 
