@@ -258,8 +258,14 @@ window for each agent before you asked for anything. Once started, the client su
 buried, so you can switch away freely.
 
 Agents survive Emacs exiting, because the herdr server is a daemon. Quit Emacs, restart,
-`M-x herdr`, and every agent is still there and reattached. A plain ghostel shell cannot do that.
-It is a child of Emacs and dies with it.
+`M-x herdr`, and every agent is still there, ready to be attached again. A plain ghostel shell
+cannot do that. It is a child of Emacs and dies with it.
+
+With `desktop-save-mode` on, the terminals you had open come back attached, without visiting them.
+herdr records which pane each buffer was showing and reattaches to it, so the scrollback is the
+server's and is still there. A pane that has closed since is skipped with a message, and a restore
+connects only to a server that is already running — it never starts one. See
+[Configuration](docs/configuration.md#restoring-terminals-with-desktopel).
 
 Since herdr 0.8.2, `herdr terminal attach` takes any pane, agent or plain shell alike. A shell
 pane gets a buffer the same way an agent pane does, on first visit. Before you attach to one it

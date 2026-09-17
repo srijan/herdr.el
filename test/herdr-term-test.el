@@ -265,6 +265,119 @@ narrow window is the ordinary case, not the awkward one."
     (should (string-match-p "attached elsewhere"
                             (herdr-term-test--client-ended wrapped)))))
 
+(ert-deftest herdr-term-desktop-saves-the-pane-not-the-process ()
+  "A pane outlives the Emacs showing it, so the pane is what to write down.
+
+ghostel saves a directory and an identity, which is right for a shell
+and useless for an attach: the terminal is on the server, and the only
+part of it a later Emacs can use is which pane it was.  The connection
+goes down as a NAME - a connection is a live socket and a process, and
+the name is the part that still means something tomorrow."
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (terminal_id . "t7"))))))))
+    (herdr-test-with-state (:cache state)
+      (herdr-term-test--attaching (lambda (&rest _) t)
+        (let ((buffer (herdr-term--attach (herdr-current-connection) state
+                                          (herdr-state-pane state "w1:p1"))))
+          (unwind-protect
+              (with-current-buffer buffer
+                (should (eq #'herdr-term-desktop-save desktop-save-buffer))
+                (should (equal (list 'herdr
+                                     (herdr-connection-name
+                                      (herdr-current-connection))
+                                     "w1:p1")
+                               (herdr-term-desktop-save "/tmp"))))
+            (kill-buffer buffer)))))))
+
+(ert-deftest herdr-term-desktop-restore-hands-other-shells-to-ghostel ()
+  "This handler sits in front of ghostel's for the whole mode.
+
+Both entries key on `ghostel-mode', and desktop takes the first `assq'
+match, so herdr answers for every ghostel buffer in the session -
+including the ones that are nothing to do with herdr.  Keeping them
+would break shells this package never opened."
+  (let (passed-on)
+    (cl-letf (((symbol-function 'ghostel-desktop-restore-buffer)
+               (lambda (file name misc) (setq passed-on (list file name misc)) 'ghostel)))
+      ;; ghostel's own shape: (DIRECTORY IDENTITY).
+      (should (eq 'ghostel (herdr-term-desktop-restore
+                            nil "*shell*" '("/tmp" ((instance . 1))))))
+      (should (equal '(nil "*shell*" ("/tmp" ((instance . 1)))) passed-on)))))
+
+(ert-deftest herdr-term-desktop-restore-reattaches-a-pane-that-is-still-there ()
+  "The whole point: the pane is still on the server, so pick it up again."
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (terminal_id . "t7"))))))))
+    (herdr-test-with-state (:cache state)
+      (herdr-term-test--attaching (lambda (&rest _) t)
+        (let* ((name (herdr-connection-name (herdr-current-connection)))
+               (buffer (herdr-term-desktop-restore
+                        nil "*herdr: w1:p1*" (list 'herdr name "w1:p1"))))
+          (unwind-protect
+              (progn
+                (should (buffer-live-p buffer))
+                (should (equal buffer (herdr-term-buffer-for-pane
+                                       (herdr-current-connection) "w1:p1"))))
+            (when (buffer-live-p buffer) (kill-buffer buffer))))))))
+
+(ert-deftest herdr-term-desktop-restore-declines-what-it-cannot-reach ()
+  "Answers nil rather than signalling, twice over.
+
+A pane that has closed since the desktop was written is not a failure -
+desktop reports a handler that signals as a buffer it could not load.
+Neither is a connection that is not up: a desktop is read at startup as
+well as by hand, and an unattended restore must not start a server."
+  (let ((state (herdr-state-from-snapshot '((panes . ())))))
+    (herdr-test-with-state (:cache state)
+      (herdr-term-test--attaching (lambda (&rest _) t)
+        (let ((name (herdr-connection-name (herdr-current-connection))))
+          ;; Registered connection, pane gone.
+          (should-not (herdr-term-desktop-restore
+                       nil "*herdr: w1:p1*" (list 'herdr name "w1:p1")))
+          ;; Unknown connection, and nothing may be started to find out.
+          (cl-letf (((symbol-function 'herdr-server-live-p)
+                     (lambda (&rest _) (error "must not probe a named server"))))
+            (should-not (herdr-term-desktop-restore
+                         nil "*herdr: w1:p1*"
+                         '(herdr "a-server-that-is-not-here" "w1:p1")))))))))
+
+(ert-deftest herdr-term-desktop-restore-connects-only-to-a-server-already-up ()
+  "A desktop read at startup finds nothing connected yet.
+
+So a restore has to be able to connect - and only to a server that is
+already answering.  Starting one is what an unattended restore must not
+do, and connecting to a dead socket is what makes it block instead."
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (terminal_id . "t7"))))))))
+    (herdr-term-test--attaching (lambda (&rest _) t)
+      ;; Running: connect, then reattach.
+      (let ((herdr-connections nil) connected)
+        (cl-letf (((symbol-function 'herdr-server-live-p) (lambda (&rest _) t))
+                  ((symbol-function 'herdr-connect)
+                   (lambda (name path)
+                     (setq connected (list name path))
+                     (let ((connection (herdr-connection-local)))
+                       (setf (herdr-connection-cache connection) state)
+                       (herdr-connection-register connection)))))
+          (let ((buffer (herdr-term-desktop-restore
+                         nil "*herdr: w1:p1*" '(herdr "local" "w1:p1"))))
+            (unwind-protect
+                (progn
+                  (should (equal (list "local" herdr-socket-path) connected))
+                  (should (buffer-live-p buffer)))
+              (when (buffer-live-p buffer) (kill-buffer buffer))))))
+      ;; Not running: no connect, no buffer, no error.
+      (let ((herdr-connections nil) connected)
+        (cl-letf (((symbol-function 'herdr-server-live-p) (lambda (&rest _) nil))
+                  ((symbol-function 'herdr-connect)
+                   (lambda (&rest args) (setq connected args) nil)))
+          (should-not (herdr-term-desktop-restore
+                       nil "*herdr: w1:p1*" '(herdr "local" "w1:p1")))
+          (should-not connected))))))
+
 (ert-deftest herdr-term-attach-leaves-nothing-behind-when-the-client-fails ()
   "The defect this test exists for: a failing start used to be able to
 leave a live, displayed buffer that never reached the registry, so
