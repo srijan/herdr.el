@@ -67,7 +67,6 @@ this goes wrong while still sending the right method."
           (herdr-project)))
       (should (equal (list (nth 1 case)) wire))
       (should (equal (nth 3 case) (alist-get (nth 2 case) params)))))
-  ;; A created workspace is named for the directory it is rooted in.
   (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-project-test--state))))
         (default-directory "/tmp/nowhere/")
         params)
@@ -85,7 +84,7 @@ this goes wrong while still sending the right method."
             (setq params (alist-get 'params req))
             (cons (herdr-test-ok req '((type . "ok"))) nil))
         (herdr-project)))
-    (should (equal "nowhere" (alist-get 'label params)))))
+    (should-not (alist-get 'label params))))
 
 (ert-deftest herdr-project-prefers-the-project-root-over-the-default-directory ()
   "A command run from a file deep in a tree should reach the tree's

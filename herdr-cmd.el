@@ -447,23 +447,21 @@ serialized as one object."
 
 ;;; Opening a place to run something
 
-(defun herdr-cmd--workspace-label (directory)
-  "Return the label a workspace created at DIRECTORY takes."
-  (file-name-nondirectory (directory-file-name directory)))
-
 (defun herdr-cmd--create-workspace-pane (directory &optional label)
   "Create a focused workspace at DIRECTORY called LABEL.
 Return its root pane\\='s id.
 `focus' rides on the create: without it the workspace is made but not
 focused, and anything that then asks the server \"where am I?\" answers
 with the pane the user was on before.  The reply names the new
-workspace\\='s root pane, so callers go there directly rather than asking."
+workspace\\='s root pane, so callers go there directly rather than asking.
+LABEL is sent only when given; herdr names an unlabelled workspace
+itself, and keeps that name current."
   (let ((connection (herdr-current-connection)))
     (herdr-cmd--created-pane-id
      (herdr-rpc-call connection "workspace.create"
                      `((cwd . ,(herdr-connection-server-path
                                 connection directory))
-                       (label . ,(or label (herdr-cmd--workspace-label directory)))
+                       (label . ,label)
                        (focus . t))))))
 
 (defun herdr-cmd-open-workspace-for (root)
