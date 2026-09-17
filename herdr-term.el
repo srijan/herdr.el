@@ -366,6 +366,7 @@ since closed is not a failure worth that."
              name buffer-name)
     nil))
 
+;;;###autoload
 (defun herdr-term-desktop-restore (file-name buffer-name misc)
   "Restore a ghostel buffer from desktop data MISC.
 
@@ -385,9 +386,20 @@ FILE-NAME and BUFFER-NAME are desktop's; MISC is what
       (herdr-term--desktop-reattach (nth 1 misc) (nth 2 misc) buffer-name)
     (ghostel-desktop-restore-buffer file-name buffer-name misc)))
 
+;; Autoloaded, because a desktop is read before anything has called a
+;; herdr command.  `use-package' defers this package, `desktop-read' runs
+;; from `emacs-startup-hook', and a registration that waits for
+;; herdr-term.el to load is therefore never there when it is needed:
+;; ghostel's handler answers instead and skips every herdr buffer.  The
+;; autoloads file is loaded at init, so this form is.
+;;
 ;; After ghostel, deliberately.  Both entries key on `ghostel-mode' and
-;; desktop takes the first `assq' match, so herdr has to be the one
-;; added last.
+;; desktop takes the first `assq' match, so herdr has to be the one added
+;; last.  Either order of loading gets there: with ghostel already
+;; loaded the body runs now, and otherwise it runs when `desktop-load-file'
+;; loads ghostel for the mode, which desktop does before it looks the
+;; handler up.
+;;;###autoload
 (with-eval-after-load 'ghostel
   (add-to-list 'desktop-buffer-mode-handlers
                '(ghostel-mode . herdr-term-desktop-restore)))
