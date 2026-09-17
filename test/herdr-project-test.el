@@ -67,8 +67,6 @@ this goes wrong while still sending the right method."
           (herdr-project)))
       (should (equal (list (nth 1 case)) wire))
       (should (equal (nth 3 case) (alist-get (nth 2 case) params)))))
-  ;; A created workspace carries no label, so herdr names it after the
-  ;; directory itself and keeps renaming it as that directory changes.
   (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-project-test--state))))
         (default-directory "/tmp/nowhere/")
         params)

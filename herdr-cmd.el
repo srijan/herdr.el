@@ -454,11 +454,8 @@ Return its root pane\\='s id.
 focused, and anything that then asks the server \"where am I?\" answers
 with the pane the user was on before.  The reply names the new
 workspace\\='s root pane, so callers go there directly rather than asking.
-
-LABEL is sent only when there is one.  herdr names an unlabelled
-workspace after its focused pane\\='s directory and renames it as that
-directory changes; sending a label -- even the one herdr would have
-picked -- reads as a name a human chose and stops that."
+LABEL is sent only when given; herdr names an unlabelled workspace
+itself, and keeps that name current."
   (let ((connection (herdr-current-connection)))
     (herdr-cmd--created-pane-id
      (herdr-rpc-call connection "workspace.create"
