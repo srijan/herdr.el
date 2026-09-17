@@ -4,6 +4,9 @@
 
 (require 'ert)
 (require 'herdr-tree)
+;; Required outright, as in herdr-dispatch-test.el: this file asserts
+;; that the dispatcher refuses exactly what the renderer will not draw.
+(require 'herdr-dispatch)
 
 (defun herdr-tree-test--state (&rest overrides)
   "Return a state: one workspace, two tabs, three panes.
@@ -630,6 +633,48 @@ So absence reads as not linked."
                                               (branch . "main"))))
   (should-not (herdr-worktree-linked-p '((is_linked_worktree . nil))))
   (should (herdr-worktree-linked-p '((is_linked_worktree . t)))))
+
+(defun herdr-tree-test--drawn-p (worktree)
+  "Return non-nil when the renderer draws a row for WORKTREE under w1."
+  (let* ((worktrees `(("w1" . ((worktrees . (,worktree))))))
+         (children (nth 3 (car (herdr-tree-build (herdr-tree-test--state)
+                                                 worktrees)))))
+    (and (herdr-tree-test--worktree-rows children) t)))
+
+(defun herdr-tree-test--actionable-p (worktree)
+  "Return non-nil when a worktree verb will act on WORKTREE under w1."
+  (condition-case nil
+      (progn (herdr-dispatch--checked-worktree
+              (herdr-dispatch--target-make
+               :type 'herdr-worktree
+               :value (herdr-worktree-path worktree)
+               :record worktree
+               :workspace "w1"
+               :connection nil))
+             t)
+    (user-error nil)))
+
+(ert-deftest herdr-tree-dispatcher-refuses-exactly-what-is-not-drawn ()
+  "The dispatcher refuses exactly what the renderer will not draw.
+
+That is what `herdr-dispatch--checked-worktree' claims to be: the
+backstop for the renderer's filter.
+
+Nothing asserted it.  Both sides apply the same pair of predicates, each
+with its own tests and its own fixtures, so either could drift alone: a
+renderer that draws what the dispatcher refuses leaves a row no verb
+will touch, and a dispatcher that accepts what the renderer drops makes
+a row actionable that nobody can see.
+
+Six shapes, the cross product of the two things the pair asks about."
+  (dolist (linked '(t nil))
+    (dolist (open '("w1" "w9" nil))
+      (let ((worktree `((path . "/tmp/repo-checkout")
+                        (branch . "topic")
+                        (is_linked_worktree . ,linked)
+                        (open_workspace_id . ,open))))
+        (should (eq (herdr-tree-test--drawn-p worktree)
+                    (herdr-tree-test--actionable-p worktree)))))))
 
 (ert-deftest herdr-tree-worktree-row-shows-its-own-directory ()
   "A worktree row named only by branch gave no way to tell two
