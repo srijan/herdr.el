@@ -36,7 +36,11 @@
 (declare-function ghostel-exec "ghostel" (buffer program &optional args))
 (declare-function ghostel-mode "ghostel" ())
 (declare-function ghostel--redraw-now "ghostel" (buffer &optional force))
+(declare-function ghostel-desktop-restore-buffer "ghostel-desktop"
+                  (file-name buffer-name misc))
 (defvar ghostel-exit-functions)
+(defvar desktop-save-buffer)
+(defvar desktop-buffer-mode-handlers)
 
 (defcustom herdr-display-action
   '((display-buffer-reuse-window display-buffer-same-window))
@@ -314,6 +318,80 @@ Emacs wedges in redraw; `herdr-pane-takeover' is the offer, on a key."
                    pane-id
                    (substitute-command-keys "\\[herdr-pane-takeover]")))))))
 
+(defun herdr-term-desktop-save (_desktop-dirname)
+  "Return this herdr terminal as desktop data: (herdr NAME PANE-ID).
+
+Only herdr's own buffers get this: `ghostel-mode' sets
+`desktop-save-buffer' to ghostel's saver and `herdr-term--attach-1'
+overrides it afterwards, so every other ghostel buffer saves as before.
+
+The connection is named rather than written out.  A connection is a
+live socket and a process; the name is what the user typed, what the
+registry is keyed by, and the only part of it that means anything in a
+later Emacs."
+  (list 'herdr
+        (herdr-connection-name herdr-buffer-connection)
+        (herdr-term-pane-for-buffer (current-buffer))))
+
+(defun herdr-term--desktop-connection (name)
+  "Return the connection called NAME, connecting first when it is not up.
+
+Connects only to a server that is already running, and only the local
+one.  A desktop is read at startup as well as by hand, and an
+unattended restore must not start a server - nor block on one that is
+not there, which is what a connect to a dead socket costs.
+
+A remote connection cannot be rebuilt from a name alone: it needs its
+ssh target, which is not ours to guess.  One that is already registered
+is used; one that is not is skipped."
+  (or (herdr-connection-named name)
+      (when (equal name (herdr-connection-name (herdr-connection-local)))
+        (let ((candidate (herdr-connection-local)))
+          (when (herdr-server-live-p candidate)
+            (herdr-connect name herdr-socket-path))))))
+
+(defun herdr-term--desktop-reattach (name pane-id buffer-name)
+  "Reattach to PANE-ID on the connection called NAME, for BUFFER-NAME.
+
+Answers nil rather than signalling when it cannot: desktop reports a
+handler that signals as a buffer it could not load, and a pane that has
+since closed is not a failure worth that."
+  (if-let* ((connection (herdr-term--desktop-connection name)))
+      (or (herdr-term--attach-if-possible connection pane-id)
+          (progn
+            (message "herdr: %s is gone on %s; not restoring %s"
+                     pane-id name buffer-name)
+            nil))
+    (message "herdr: no herdr server called %s; not restoring %s"
+             name buffer-name)
+    nil))
+
+(defun herdr-term-desktop-restore (file-name buffer-name misc)
+  "Restore a ghostel buffer from desktop data MISC.
+
+herdr's own buffers are reattached to their pane, which is the whole
+point: a pane outlives the Emacs that was showing it, so the terminal
+can be picked up exactly where it was left.  ghostel's own handler
+declines them - it will not re-run an exec'd command unattended, and
+`herdr terminal attach' is one - so herdr has to answer for them.
+
+Every other ghostel buffer is handed straight to ghostel.  This handler
+sits in front of ghostel's for the whole mode, so declining to pass
+those on would break shells that have nothing to do with herdr.
+
+FILE-NAME and BUFFER-NAME are desktop's; MISC is what
+`herdr-term-desktop-save' or `ghostel-desktop-save-buffer' wrote."
+  (if (eq 'herdr (car-safe misc))
+      (herdr-term--desktop-reattach (nth 1 misc) (nth 2 misc) buffer-name)
+    (ghostel-desktop-restore-buffer file-name buffer-name misc)))
+
+;; After ghostel, deliberately.  Both entries key on `ghostel-mode' and
+;; desktop takes the first `assq' match, so herdr has to be the one
+;; added last.
+(with-eval-after-load 'ghostel
+  (add-to-list 'desktop-buffer-mode-handlers
+               '(ghostel-mode . herdr-term-desktop-restore)))
+
 (defun herdr-term--attach (connection state pane &optional takeover)
   "Create and start a ghostel buffer attached to PANE, named from STATE.
 Returns an existing buffer untouched rather than attaching twice:
@@ -365,6 +443,8 @@ terminal."
             ;; Buffer-local: `ghostel-exit-functions' is global, and only
             ;; herdr's own buffers have a herdr message to read.
             (add-hook 'ghostel-exit-functions #'herdr-term--client-ended nil t)
+            ;; After `ghostel-mode', which sets its own saver.
+            (setq-local desktop-save-buffer #'herdr-term-desktop-save)
             ;; And before the client starts, because `ghostel-exec' reads
             ;; `default-directory' to decide which machine to spawn the
             ;; pty on.  The host is the floor: a remote pane whose cwd

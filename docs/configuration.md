@@ -189,6 +189,28 @@ is the backstop, and it runs whether or not a terminal buffer exists; see
 nudges one, grouped by `herdr-term-directory-debounce`, so a `cd` shows up at the debounce interval
 rather than at the backstop's.
 
+### Restoring terminals with desktop.el
+
+With `desktop-save-mode` on, the terminals you had open come back attached. A pane outlives the
+Emacs that was showing it, so the buffer is rebuilt by reattaching to the same pane rather than by
+starting anything: the scrollback is the server's and is still there.
+
+There is nothing to configure. herdr writes `(herdr NAME PANE-ID)` into the desktop file for each of
+its buffers, where NAME is the connection's, and reads it back on restore.
+
+Two things it will not do. A pane that has closed since the desktop was written is skipped with a
+message rather than recreated — the pane is the thing, and it is gone. And a restore never starts a
+server: it connects to one that is already answering and otherwise skips, because a desktop is read
+at startup as well as by hand, and an unattended restore should neither launch a daemon nor block on
+a socket nobody is listening to. Run `M-x herdr` afterwards and attach as usual.
+
+A remote connection is restored only if it is already registered. Rebuilding one needs its ssh
+target, which the name alone does not carry.
+
+herdr answers for every `ghostel-mode` buffer during a restore, not only its own — desktop keys
+handlers by major mode and takes the first match. Buffers that are not herdr's are handed straight
+to `ghostel-desktop-restore-buffer`, which is what would have run otherwise.
+
 ## The dashboard
 
 | Option | Default | Function |
