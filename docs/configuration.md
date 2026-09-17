@@ -204,6 +204,10 @@ server: it connects to one that is already answering and otherwise skips, becaus
 at startup as well as by hand, and an unattended restore should neither launch a daemon nor block on
 a socket nobody is listening to. Run `M-x herdr` afterwards and attach as usual.
 
+A skipped buffer counts as a failure in desktop's own summary — it reports `N failed to restore`
+for any handler that does not hand it back a buffer, and has no notion of one that declined on
+purpose. herdr says which buffer it skipped and why, on the line above.
+
 A remote connection is restored only if it is already registered. Rebuilding one needs its ssh
 target, which the name alone does not carry.
 

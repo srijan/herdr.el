@@ -265,6 +265,34 @@ narrow window is the ordinary case, not the awkward one."
     (should (string-match-p "attached elsewhere"
                             (herdr-term-test--client-ended wrapped)))))
 
+(defconst herdr-term-test--source-directory
+  (file-name-directory
+   (directory-file-name
+    (file-name-directory (or load-file-name buffer-file-name))))
+  "The package root, found from this file rather than from `default-directory'.")
+
+(ert-deftest herdr-term-desktop-handler-is-registered-by-the-autoloads ()
+  "The registration has to be there before this file is loaded.
+
+A desktop is read from `emacs-startup-hook', and `use-package' defers
+this package, so nothing has called a herdr command yet: a registration
+that waits for herdr-term.el to load is not there when desktop looks for
+it, ghostel's handler answers instead, and every herdr buffer is skipped.
+It shipped that way once, and the symptom was \"2 failed to restore\".
+
+Nothing in-process can catch that - these tests load the file, which is
+exactly what the real startup does not do - so the cookie is what gets
+asserted."
+  (with-temp-buffer
+    (insert-file-contents
+     (expand-file-name "herdr-term.el" herdr-term-test--source-directory))
+    (goto-char (point-min))
+    (should (re-search-forward
+             (rx bol ";;;###autoload" "\n"
+                 "(with-eval-after-load " (? "'") "ghostel" (* space) "\n"
+                 (* space) "(add-to-list " (? "'") "desktop-buffer-mode-handlers")
+             nil t))))
+
 (ert-deftest herdr-term-desktop-saves-the-pane-not-the-process ()
   "A pane outlives the Emacs showing it, so the pane is what to write down.
 
