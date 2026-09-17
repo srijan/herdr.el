@@ -320,15 +320,8 @@ Emacs wedges in redraw; `herdr-pane-takeover' is the offer, on a key."
 
 (defun herdr-term-desktop-save (_desktop-dirname)
   "Return this herdr terminal as desktop data: (herdr NAME PANE-ID).
-
-Only herdr's own buffers get this: `ghostel-mode' sets
-`desktop-save-buffer' to ghostel's saver and `herdr-term--attach-1'
-overrides it afterwards, so every other ghostel buffer saves as before.
-
-The connection is named rather than written out.  A connection is a
-live socket and a process; the name is what the user typed, what the
-registry is keyed by, and the only part of it that means anything in a
-later Emacs."
+The connection goes down as a name: a connection is a live socket and a
+process, and the name is the only part that means anything later."
   (list 'herdr
         (herdr-connection-name herdr-buffer-connection)
         (herdr-term-pane-for-buffer (current-buffer))))
@@ -345,26 +338,10 @@ A remote connection cannot be rebuilt from a name alone: it needs its
 ssh target, which is not ours to guess.  One that is already registered
 is used; one that is not is skipped."
   (or (herdr-connection-named name)
-      (when (equal name (herdr-connection-name (herdr-connection-local)))
-        (let ((candidate (herdr-connection-local)))
-          (when (herdr-server-live-p candidate)
-            (herdr-connect name herdr-socket-path))))))
-
-(defun herdr-term--desktop-reattach (name pane-id buffer-name)
-  "Reattach to PANE-ID on the connection called NAME, for BUFFER-NAME.
-
-Answers nil rather than signalling when it cannot: desktop reports a
-handler that signals as a buffer it could not load, and a pane that has
-since closed is not a failure worth that."
-  (if-let* ((connection (herdr-term--desktop-connection name)))
-      (or (herdr-term--attach-if-possible connection pane-id)
-          (progn
-            (message "herdr: %s is gone on %s; not restoring %s"
-                     pane-id name buffer-name)
-            nil))
-    (message "herdr: no herdr server called %s; not restoring %s"
-             name buffer-name)
-    nil))
+      (let ((candidate (herdr-connection-local)))
+        (when (and (equal name (herdr-connection-name candidate))
+                   (herdr-server-live-p candidate))
+          (herdr-connect name herdr-socket-path)))))
 
 ;;;###autoload
 (defun herdr-term-desktop-restore (file-name buffer-name misc)
@@ -382,23 +359,26 @@ those on would break shells that have nothing to do with herdr.
 
 FILE-NAME and BUFFER-NAME are desktop's; MISC is what
 `herdr-term-desktop-save' or `ghostel-desktop-save-buffer' wrote."
-  (if (eq 'herdr (car-safe misc))
-      (herdr-term--desktop-reattach (nth 1 misc) (nth 2 misc) buffer-name)
-    (ghostel-desktop-restore-buffer file-name buffer-name misc)))
+  (if (not (eq 'herdr (car-safe misc)))
+      (ghostel-desktop-restore-buffer file-name buffer-name misc)
+    ;; Nil rather than a signal throughout: desktop reports a handler
+    ;; that signals as a buffer it could not load.
+    (let ((name (nth 1 misc))
+          (pane-id (nth 2 misc)))
+      (if-let* ((connection (herdr-term--desktop-connection name)))
+          (or (herdr-term--attach-if-possible connection pane-id)
+              (progn
+                (message "herdr: %s is gone on %s; not restoring %s"
+                         pane-id name buffer-name)
+                nil))
+        (message "herdr: no herdr server called %s; not restoring %s"
+                 name buffer-name)
+        nil))))
 
-;; Autoloaded, because a desktop is read before anything has called a
-;; herdr command.  `use-package' defers this package, `desktop-read' runs
-;; from `emacs-startup-hook', and a registration that waits for
-;; herdr-term.el to load is therefore never there when it is needed:
-;; ghostel's handler answers instead and skips every herdr buffer.  The
-;; autoloads file is loaded at init, so this form is.
-;;
-;; After ghostel, deliberately.  Both entries key on `ghostel-mode' and
-;; desktop takes the first `assq' match, so herdr has to be the one added
-;; last.  Either order of loading gets there: with ghostel already
-;; loaded the body runs now, and otherwise it runs when `desktop-load-file'
-;; loads ghostel for the mode, which desktop does before it looks the
-;; handler up.
+;; Autoloaded: `desktop-read' runs from `emacs-startup-hook', before
+;; anything has loaded this file.  Added after ghostel's entry
+;; deliberately - same mode key, and desktop takes the first `assq'
+;; match.
 ;;;###autoload
 (with-eval-after-load 'ghostel
   (add-to-list 'desktop-buffer-mode-handlers
