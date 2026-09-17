@@ -80,8 +80,9 @@ the same name, so callers that create a buffer must uniquify first; see
 that fetches what it needs from one."
   (herdr-pane-identity pane
                        (herdr-state-agent-name state (herdr-pane-id pane))
-                       (herdr-state-workspace-label
-                        state (herdr-pane-workspace-id pane))))
+                       (herdr-workspace-label
+                        (herdr-state-workspace
+                         state (herdr-pane-workspace-id pane)))))
 
 (defun herdr-term--unique-buffer-name (state pane)
   "Return a unique buffer name for PANE in STATE.

@@ -517,8 +517,9 @@ around it and a reconnect replaces the struct."
                         (herdr-tree--agent-label state pane)
                         (if (string-empty-p name) id name)
                         (herdr-tree--faced
-                         (or (herdr-state-workspace-label
-                              state (herdr-pane-workspace-id pane))
+                         (or (herdr-workspace-label
+                              (herdr-state-workspace
+                               state (herdr-pane-workspace-id pane)))
                              (herdr-pane-workspace-id pane) "")
                          'font-lock-comment-face)))))
     (list 'herdr-pane id

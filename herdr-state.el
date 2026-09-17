@@ -197,14 +197,6 @@ per-server counters, so a merged done set would let one machine\\='s
   (seq-find (lambda (workspace) (equal id (herdr-workspace-id workspace)))
             (herdr-state-workspaces state)))
 
-(defun herdr-state-workspace-label (state id)
-  "Return the label of the workspace ID in STATE, or nil.
-Nil for a workspace the cache has no record of, and for one the server
-labelled with an empty string: both mean the same thing to a caller, and
-each has its own fallback - a buffer name wants the workspace id, a
-confirmation wants the workspace id in parentheses."
-  (herdr-workspace-label (herdr-state-workspace state id)))
-
 (defun herdr-state-agents (state)
   "Return the panes in STATE with a detected or reported agent."
   (seq-filter (lambda (pane) (herdr-pane-agent pane))
