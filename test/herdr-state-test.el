@@ -1303,5 +1303,78 @@ nothing to reconnect, and a failed poll stays a failed poll."
       (should-not (herdr-state-reconcile-panes (herdr-current-connection)))
       (should-not (herdr-connection-reconnect-timer (herdr-current-connection)))))))
 
+;;; Which kind each notification carries
+
+(defmacro herdr-state-test--kinds (&rest body)
+  "Return the kinds BODY announces on the change hook, in order."
+  (declare (indent 0) (debug t))
+  `(let ((kinds nil))
+     (let ((herdr-state-change-functions
+            (list (lambda (_connection kind) (push kind kinds)))))
+       ,@body)
+     (nreverse kinds)))
+
+(ert-deftest herdr-state-every-notification-announces-its-own-kind ()
+  "Listeners branch on the kind, so which one a site sends is contract
+rather than label.  Nothing pinned it: the reconcile the folds announce,
+rewritten to a resync, passed the whole suite — and a listener reading
+the kind would have quietly done the wrong work on every reconcile."
+  (herdr-state-test--with-quiet-session
+    (let ((connection (herdr-current-connection))
+          (snapshot '((snapshot . ((panes . ()))))))
+      (cl-letf (((symbol-function 'herdr-rpc-call) (lambda (&rest _) snapshot))
+                ((symbol-function 'herdr-rpc-call-async)
+                 (lambda (_connection _method _params callback &rest _)
+                   (funcall callback snapshot nil)))
+                ((symbol-function 'herdr-state--open-streams) #'ignore)
+                ((symbol-function 'herdr-state--open-pane-stream) #'ignore)
+                ((symbol-function 'herdr-state--reconcile-panes-async)
+                 (lambda (_connection done) (funcall done nil)))
+                ((symbol-function 'herdr-state--reconcile-workspaces-async)
+                 (lambda (_connection done) (funcall done nil))))
+        (setf (herdr-connection-cache connection)
+              (herdr-state-from-snapshot
+               '((workspaces . (((workspace_id . "w1"))))
+                 (panes . (((pane_id . "w1:p1")))))))
+        ;; An event herdr named keeps its own name; the dispatch invents
+        ;; nothing.
+        (should (equal '("pane_created")
+                       (herdr-state-test--kinds
+                         (herdr-state--dispatch
+                          connection "pane_created"
+                          '((pane . ((pane_id . "w1:p9"))))))))
+        (should (equal '("rename")
+                       (herdr-state-test--kinds
+                         (herdr-state-note-agent
+                          connection '((pane_id . "w1:p1") (name . "one"))))))
+        ;; Both folds, because they are the pair a reconcile is made of
+        ;; and either one drifting is invisible from the other.
+        (should (equal '("reconcile")
+                       (herdr-state-test--kinds
+                         (herdr-state--fold-panes connection nil '("w1:p1")))))
+        (should (equal '("reconcile")
+                       (herdr-state-test--kinds
+                         (herdr-state--fold-workspaces connection nil))))
+        (should (equal '("refresh")
+                       (herdr-state-test--kinds
+                         (herdr-state-refresh connection))))
+        (should (equal '("resync")
+                       (herdr-state-test--kinds
+                         (herdr-state-resync connection))))
+        (setf (herdr-connection-running connection) t)
+        (should (equal '("resync")
+                       (herdr-state-test--kinds
+                         (herdr-state--refresh-statuses connection))))
+        (should (equal '("resync")
+                       (herdr-state-test--kinds
+                         (herdr-state--settle connection t))))
+        (should (equal '("resync")
+                       (herdr-state-test--kinds
+                         (herdr-state-stop connection))))
+        (should (equal '("resync")
+                       (herdr-state-test--kinds
+                         (herdr-state-start connection))))))))
+
+
 (provide 'herdr-state-test)
 ;;; herdr-state-test.el ends here
