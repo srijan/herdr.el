@@ -190,6 +190,84 @@ A buffer that started but never reached it is invisible to every one."
               (should (equal buffer (herdr-term-buffer-for-pane (herdr-current-connection) "w1:p1"))))
           (kill-buffer buffer))))))
 
+(ert-deftest herdr-term-attach-takes-the-terminal-only-when-asked ()
+  "Attachment is exclusive per pane, so `--takeover' is the whole
+difference between joining a pane and taking it.  Passing it by accident
+would stop another client mid-session, so the flag is asserted rather
+than assumed."
+  (let ((state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (terminal_id . "t7")))))))
+        started)
+    (herdr-term-test--attaching
+        (lambda (_buffer _program &optional args) (setq started args) t)
+      (let ((buffer (herdr-term--attach (herdr-current-connection) state
+                                        (herdr-state-pane state "w1:p1") t)))
+        (unwind-protect
+            (should (equal '("terminal" "attach" "t7" "--takeover") started))
+          (kill-buffer buffer)))
+      (let ((buffer (herdr-term--attach (herdr-current-connection) state
+                                        (herdr-state-pane state "w1:p1"))))
+        (unwind-protect
+            (should (equal '("terminal" "attach" "t7") started))
+          (kill-buffer buffer))))))
+
+(defun herdr-term-test--client-ended (text)
+  "Return what `herdr-term--client-ended' says for a client that left TEXT."
+  (let ((buffer (generate-new-buffer " *herdr-exit-test*"))
+        (said nil))
+    (unwind-protect
+        (herdr-test-with-state
+            (:cache (herdr-state-from-snapshot
+                     '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")))))))
+          (let ((herdr-term--buffers
+                 (herdr-test-term-buffers (list (cons "w1:p1" buffer)))))
+            (with-current-buffer buffer (insert text))
+            (cl-letf (((symbol-function 'message)
+                       (lambda (format &rest args)
+                         (setq said (apply #'format-message format args)))))
+              (herdr-term--client-ended buffer "exited abnormally with code 1"))
+            said))
+      (kill-buffer buffer))))
+
+(ert-deftest herdr-term-client-end-tells-a-held-pane-from-a-closed-one ()
+  "herdr exits 1 whichever way an attach ends.
+
+Measured against 0.9.0: refused, taken over, and the pane closing under
+a healthy attach all exit 1, so the status cannot tell them apart and
+the text is the only signal there is.  Without this the third case and
+the first look identical - a buffer that appears and vanishes - which is
+the whole defect."
+  (let ((held (herdr-term-test--client-ended
+               (concat "herdr: server shut down: terminal attach failed: "
+                       "terminal term_abc123 already has an attached client; "
+                       "retry with --takeover\\n")))
+        (stolen (herdr-term-test--client-ended
+                 "herdr: server shut down: terminal attach taken over\\n"))
+        (closed (herdr-term-test--client-ended "user@host /tmp %\\n")))
+    (should (string-match-p "w1:p1" held))
+    (should (string-match-p "attached elsewhere" held))
+    (should (string-match-p "took over w1:p1" stolen))
+    ;; A pane that simply closed says nothing, as it always did.
+    (should-not closed)))
+
+(ert-deftest herdr-term-client-end-reads-a-wrapped-refusal ()
+  "A refusal wraps, and a hard wrap breaks a word rather than a space.
+
+The buffer is a terminal grid, so the width of the window decides where
+herdr's 130-character refusal breaks.  At 80 columns the phrase worth
+matching is split across two rows, which a plain search misses - and a
+narrow window is the ordinary case, not the awkward one."
+  (let* ((line (concat "herdr: server shut down: terminal attach failed: "
+                       "terminal term_abc1234567890 already has an attached "
+                       "client; retry with --takeover"))
+         (wrapped (mapconcat #'identity
+                             (seq-partition line 80)
+                             "\n")))
+    (should-not (string-search "already has an attached client" wrapped))
+    (should (string-match-p "attached elsewhere"
+                            (herdr-term-test--client-ended wrapped)))))
+
 (ert-deftest herdr-term-attach-leaves-nothing-behind-when-the-client-fails ()
   "The defect this test exists for: a failing start used to be able to
 leave a live, displayed buffer that never reached the registry, so
