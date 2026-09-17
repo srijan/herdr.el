@@ -241,13 +241,10 @@ the whole defect."
   (let ((held (herdr-term-test--client-ended
                (concat "herdr: server shut down: terminal attach failed: "
                        "terminal term_abc123 already has an attached client; "
-                       "retry with --takeover\\n")))
-        (stolen (herdr-term-test--client-ended
-                 "herdr: server shut down: terminal attach taken over\\n"))
-        (closed (herdr-term-test--client-ended "user@host /tmp %\\n")))
+                       "retry with --takeover\n")))
+        (closed (herdr-term-test--client-ended "user@host /tmp %\n")))
     (should (string-match-p "w1:p1" held))
     (should (string-match-p "attached elsewhere" held))
-    (should (string-match-p "took over w1:p1" stolen))
     ;; A pane that simply closed says nothing, as it always did.
     (should-not closed)))
 

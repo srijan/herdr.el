@@ -235,7 +235,7 @@ taken over' and it stops, which is the whole of what takeover means."
     ;; A refused attach leaves no buffer - ghostel kills it on exit - but
     ;; a live one would be returned untouched by `herdr-term--attach',
     ;; and taking over from ourselves is not what was asked for.
-    (when-let* ((held (herdr-term-buffer-for-pane connection pane)))
+    (let ((held (herdr-term-buffer-for-pane connection pane)))
       (when (buffer-live-p held) (kill-buffer held)))
     (if-let* ((buffer (herdr-term--attach-if-possible connection pane t)))
         (progn (herdr-term--show buffer)

@@ -282,18 +282,10 @@ buffer to clean up rather than one to protect."
 (defconst herdr-term-attach-refused "already has an attached client"
   "What herdr leaves in the terminal when the pane is held elsewhere.")
 
-(defconst herdr-term-attach-stolen "terminal attach taken over"
-  "What herdr leaves in the terminal when another client took the pane.")
-
 (defun herdr-term--squeezed (text)
   "Return TEXT with every space, tab and newline taken out.
-
-The buffer being searched is a terminal grid, not a log.  herdr's
-refusal runs to 130 characters, so any window narrower than that wraps
-it - and a hard wrap breaks a word rather than a space, so at 80 columns
-the phrase to match for is split across two rows.  Rows are also padded
-out with spaces.  Removing whitespace from both sides makes the match
-independent of how wide the window happened to be."
+The buffer is a terminal grid: herdr's 130-character refusal hard-wraps
+mid-word below that width, so both sides are compared squeezed."
   (replace-regexp-in-string "[ \t\n\r]+" "" text))
 
 (defun herdr-term--client-ended (buffer _event)
@@ -307,27 +299,20 @@ Reports rather than offers.  A prompt here runs inside ghostel's exit
 path, and anything that blocks while ghostel holds the terminal is how
 Emacs wedges in redraw; `herdr-pane-takeover' is the offer, on a key."
   (when-let* ((pane-id (herdr-term-pane-for-buffer buffer)))
-    ;; The buffer is not the terminal: ghostel materializes rows into it
-    ;; on a coalescing timer, so herdr's last line can still be pending
-    ;; here and the tail read empty.  Forcing the redraw closes that gap.
-    ;; It is private, hence the guard, and it is reliable on this path in
-    ;; particular: a redraw stays pending for a buffer with no render
-    ;; window, and an attaching buffer always has one - the client paints
-    ;; nothing into a zero-sized PTY, so `herdr-term--attach-1' displays
-    ;; it before starting the client.
+    ;; ghostel materializes rows on a coalescing timer, so herdr's last
+    ;; line can still be pending and the tail read empty.  Reliable here
+    ;; because a redraw only stays pending for a buffer with no render
+    ;; window, and an attaching buffer always has one.
     (when (fboundp 'ghostel--redraw-now)
       (ghostel--redraw-now buffer))
     (with-current-buffer buffer
       (let ((tail (herdr-term--squeezed
                    (buffer-substring-no-properties
                     (max (point-min) (- (point-max) 2000)) (point-max)))))
-        (cond
-         ((string-search (herdr-term--squeezed herdr-term-attach-refused) tail)
+        (when (string-search (herdr-term--squeezed herdr-term-attach-refused) tail)
           (message "herdr: %s is attached elsewhere; %s takes it over"
                    pane-id
-                   (substitute-command-keys "\\[herdr-pane-takeover]")))
-         ((string-search (herdr-term--squeezed herdr-term-attach-stolen) tail)
-          (message "herdr: another client took over %s" pane-id)))))))
+                   (substitute-command-keys "\\[herdr-pane-takeover]")))))))
 
 (defun herdr-term--attach (connection state pane &optional takeover)
   "Create and start a ghostel buffer attached to PANE, named from STATE.
