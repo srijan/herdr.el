@@ -1431,7 +1431,7 @@ request for the same workspace."
   (herdr-dispatch-test-in-dispatcher herdr-dispatch-test--worktree-snapshot
     (herdr-dispatch-test-with-async
       (herdr-dispatch-refresh t)
-      (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "worktree_created" nil)
+      (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "worktree_created")
       (should-not (herdr-dispatch--worktrees-unanswered (herdr-current-connection)))
       (herdr-dispatch-refresh)
       (should (equal '("/tmp/web/" "/tmp/api/" "/tmp/web/" "/tmp/api/")
@@ -1598,7 +1598,7 @@ asked again."
   (herdr-dispatch-test--with-worktrees '(("w1" . (ignored)))
     :pending '("w2") :unanswered '(("w3" . error)) :generation 7
     (let ((before (herdr-connection-worktrees-generation (herdr-current-connection))))
-      (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "worktree_created" nil)
+      (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "worktree_created")
       (should-not (herdr-connection-worktrees (herdr-current-connection)))
       (should-not (herdr-dispatch--worktrees-unanswered (herdr-current-connection)))
       (should-not (equal before (herdr-connection-worktrees-generation (herdr-current-connection)))))))
@@ -1624,8 +1624,7 @@ would then press RET on."
                   (open_workspace_id . "w1")))))))
     :pending '("w3") :unanswered '(("w4" . error)) :generation 7
     (let ((before (herdr-connection-worktrees-generation (herdr-current-connection))))
-      (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "workspace_closed"
-                                            '((workspace_id . "w1")))
+      (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "workspace_closed")
       (should-not (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w1"))
       (should-not (herdr-dispatch--worktrees-answered-p (herdr-current-connection) "w2"))
       (should-not (herdr-dispatch--worktrees-unanswered (herdr-current-connection)))
@@ -1645,7 +1644,7 @@ was, with nothing to say so."
     (herdr-dispatch-test--with-worktrees '(("w1" . (ignored)))
       :generation 7
       (let ((before (herdr-connection-worktrees-generation (herdr-current-connection))))
-        (herdr-dispatch--invalidate-worktrees (herdr-current-connection) kind '((workspace_id . "w1")))
+        (herdr-dispatch--invalidate-worktrees (herdr-current-connection) kind)
         (should-not (herdr-connection-worktrees (herdr-current-connection)))
         (should-not (equal before (herdr-connection-worktrees-generation (herdr-current-connection))))))))
 
@@ -1658,11 +1657,11 @@ cache nothing reads and making the next open re-ask for every workspace."
          (buffer (get-buffer-create herdr-dispatch-buffer-name)))
     (unwind-protect
         (progn
-          (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "pane_updated" nil)
+          (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "pane_updated")
           (should (memq #'herdr-dispatch--invalidate-worktrees
                         herdr-state-change-functions))
           (kill-buffer buffer)
-          (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "pane_updated" nil)
+          (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "pane_updated")
           (should-not (memq #'herdr-dispatch--invalidate-worktrees
                             herdr-state-change-functions)))
       (when (buffer-live-p buffer) (kill-buffer buffer))))))
@@ -1708,7 +1707,7 @@ or every visit pays for a full re-fetch."
   (herdr-dispatch-test--with-worktrees '(("w1" . (ignored)))
     :generation 7
     (let ((before (herdr-connection-worktrees-generation (herdr-current-connection))))
-      (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "pane_updated" nil)
+      (herdr-dispatch--invalidate-worktrees (herdr-current-connection) "pane_updated")
       (should (herdr-connection-worktrees (herdr-current-connection)))
       (should (equal before (herdr-connection-worktrees-generation (herdr-current-connection)))))))
 

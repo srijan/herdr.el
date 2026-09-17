@@ -614,7 +614,7 @@ minor mode was toggled."
   (herdr-test-with-state (:running t :global-process nil :pane-process nil :reconnect-timer nil :resubscribe-timer nil :settle-timer nil :reconnect-delay nil :cache (herdr-state-from-snapshot
           '((panes . (((pane_id . "w1:p1") (agent . "claude")))))))(let* ((kinds nil))
     (let ((herdr-state-change-functions
-           (list (lambda (_connection kind _data) (push kind kinds)))))
+           (list (lambda (_connection kind) (push kind kinds)))))
       (herdr-state-stop (herdr-current-connection))
       (should (equal '("resync") kinds))
       (should-not (herdr-state-pane-ids (herdr-connection-cache (herdr-current-connection))))))))
@@ -1207,7 +1207,7 @@ background bound, and fold the reply in when it lands."
                        callback cb)
                  'proc)))
       (let ((herdr-state-change-functions
-             (list (lambda (_connection kind _data) (push kind kinds)))))
+             (list (lambda (_connection kind) (push kind kinds)))))
         (herdr-state--refresh-statuses (herdr-current-connection))
         ;; Nothing folded yet: the call returned without blocking.
         (should (equal (list "session.snapshot" nil
@@ -1237,7 +1237,7 @@ the generation captured when the request went out must not."
                (lambda (_connection _method _params cb &optional _timeout)
                  (setq callback cb) 'proc)))
       (let ((herdr-state-change-functions
-             (list (lambda (_connection kind _data) (push kind kinds)))))
+             (list (lambda (_connection kind) (push kind kinds)))))
         (herdr-state--refresh-statuses (herdr-current-connection))
         ;; The session was stopped and restarted while the request was
         ;; in flight: still running, but a new generation.

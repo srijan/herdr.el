@@ -659,7 +659,7 @@ whole instead."
         (herdr-connection-worktrees-generation connection)
         (1+ (herdr-connection-worktrees-generation connection))))
 
-(defun herdr-dispatch--invalidate-worktrees (connection kind _data)
+(defun herdr-dispatch--invalidate-worktrees (connection kind)
   "Drop the worktree cache when KIND changed the set of worktrees.
 Also unhooks from `herdr-state-change-functions' once the dispatcher's buffer
 is gone, matching `herdr-dispatch--refresh-hook'.

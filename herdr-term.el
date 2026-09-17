@@ -598,7 +598,7 @@ at a local path of the same name."
         (when-let* ((pane (herdr-state-pane state (car cell))))
           (herdr-term--set-directory connection (cdr cell) pane))))))
 
-(defun herdr-term--on-state-change (connection kind _data)
+(defun herdr-term--on-state-change (connection kind)
   "Resync CONNECTION\\='s terminal buffers after its cache changed.
 Nudges a repair for every KIND but \"reconcile\", which is a repair
 reporting what it just changed: nudging another one there pays two round

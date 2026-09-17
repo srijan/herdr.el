@@ -846,11 +846,11 @@ every real change cost two extra round trips on the main thread."
                (lambda (&rest _) (cl-incf armed) 'armed))
               ((symbol-function 'herdr-term--sync-buffers) #'ignore)
               ((symbol-function 'herdr-term--sync-directories) #'ignore))
-      (herdr-term--on-state-change (herdr-current-connection) "reconcile" nil)
+      (herdr-term--on-state-change (herdr-current-connection) "reconcile")
       (should (zerop armed))
       ;; Every other event still nudges one: a `cd' reaches the cache
       ;; only through a repair.
-      (herdr-term--on-state-change (herdr-current-connection) "layout_updated" nil)
+      (herdr-term--on-state-change (herdr-current-connection) "layout_updated")
       (should (= 1 armed)))))
 
 ;;; Directory tracking is a display option and nothing more
@@ -1023,7 +1023,7 @@ the ordinary case, not a reason to kill its terminal."
                (list (cons (herdr-term--key one "w1:p1") mine)
                      (cons (herdr-term--key two "w1:p1") theirs))))
           ;; One's cache has no panes at all, so its own buffer goes.
-          (herdr-term--on-state-change one "reconcile" nil)
+          (herdr-term--on-state-change one "reconcile")
           (should-not (buffer-live-p mine))
           (should (buffer-live-p theirs)))
       (dolist (buffer (list mine theirs))
