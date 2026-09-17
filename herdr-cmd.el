@@ -72,8 +72,8 @@ has to say something."
 
 (defun herdr-cmd--workspace-description (workspace-id)
   "Return a readable description of WORKSPACE-ID, retaining its exact id."
-  (if-let* ((label (herdr-state-workspace-label (herdr-state-current)
-                                               workspace-id)))
+  (if-let* ((label (herdr-workspace-label
+                    (herdr-state-workspace (herdr-state-current) workspace-id))))
       (format "%s (%s)" label workspace-id)
     workspace-id))
 
