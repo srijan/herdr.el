@@ -204,6 +204,12 @@ server: it connects to one that is already answering and otherwise skips, becaus
 at startup as well as by hand, and an unattended restore should neither launch a daemon nor block on
 a socket nobody is listening to. Run `M-x herdr` afterwards and attach as usual.
 
+A restored buffer whose attach is refused is kept rather than killed, and herdr says so. herdr
+exits 1 whichever way an attach ends and the reason is only in the text it leaves in the terminal
+— which a buffer that no window ever displayed has not rendered, so there is nothing to read. The
+buffer stays behind holding it instead of disappearing without a word. `M-x herdr-pane-takeover`
+is how you claim a pane another client is holding.
+
 A skipped buffer counts as a failure in desktop's own summary — it reports `N failed to restore`
 for any handler that does not hand it back a buffer, and has no notion of one that declined on
 purpose. herdr says which buffer it skipped and why, on the line above.

@@ -14,6 +14,12 @@
 (require 'herdr-term)
 (require 'herdr-test-helper)
 
+;; ghostel is not loaded in the suite, and herdr-term.el declares this
+;; one without a value - which is special only inside that file.  A
+;; plain `let' here would bind it lexically and `buffer-local-value'
+;; would still find the global void.
+(defvar ghostel-kill-buffer-on-exit t)
+
 (defun herdr-term-test--state (&rest panes)
   (herdr-state-from-snapshot `((panes . ,panes))))
 
@@ -212,8 +218,10 @@ than assumed."
             (should (equal '("terminal" "attach" "t7") started))
           (kill-buffer buffer))))))
 
-(defun herdr-term-test--client-ended (text)
-  "Return what `herdr-term--client-ended' says for a client that left TEXT."
+(defun herdr-term-test--client-ended (text &optional hidden)
+  "Return what `herdr-term--client-ended' says for a client that left TEXT.
+The buffer is displayed unless HIDDEN, because reading the grid is what
+a window is for: undisplayed, there is nothing in the buffer to read."
   (let ((buffer (generate-new-buffer " *herdr-exit-test*"))
         (said nil))
     (unwind-protect
@@ -226,7 +234,12 @@ than assumed."
             (cl-letf (((symbol-function 'message)
                        (lambda (format &rest args)
                          (setq said (apply #'format-message format args)))))
-              (herdr-term--client-ended buffer "exited abnormally with code 1"))
+              (if hidden
+                  (herdr-term--client-ended buffer "exited abnormally with code 1")
+                (save-window-excursion
+                  (set-window-buffer (selected-window) buffer)
+                  (herdr-term--client-ended buffer
+                                            "exited abnormally with code 1"))))
             said))
       (kill-buffer buffer))))
 
@@ -264,6 +277,100 @@ narrow window is the ordinary case, not the awkward one."
     (should-not (string-search "already has an attached client" wrapped))
     (should (string-match-p "attached elsewhere"
                             (herdr-term-test--client-ended wrapped)))))
+
+(ert-deftest herdr-term-client-end-keeps-a-buffer-that-was-never-shown ()
+  "A restore that is refused must not vanish without a word.
+
+`desktop-read' builds the buffer, its frameset may never display it, and
+ghostel renders nothing into a buffer with no window - so the refusal
+stays in the grid and the tail reads empty.  ghostel then kills the
+buffer on exit and desktop has already counted it restored: the pane
+disappears with no message, no failure count and nothing left to look
+at.  Keeping the buffer is what leaves the evidence."
+  (let* ((kept nil)
+         (said nil)
+         (buffer (generate-new-buffer " *herdr-hidden-exit-test*")))
+    (unwind-protect
+        (herdr-test-with-state
+            (:cache (herdr-state-from-snapshot
+                     '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")))))))
+          (let ((herdr-term--buffers
+                 (herdr-test-term-buffers (list (cons "w1:p1" buffer))))
+                (ghostel-kill-buffer-on-exit t))
+            ;; Empty on purpose: the refusal is in the grid, and with no
+            ;; window ghostel never materialized a character of it.
+            (should (= (point-min) (point-max)))
+            (should-not (get-buffer-window buffer t))
+            (cl-letf (((symbol-function 'message)
+                       (lambda (format &rest args)
+                         (setq said (apply #'format-message format args)))))
+              (herdr-term--client-ended buffer "exited abnormally with code 1"))
+            (setq kept (buffer-local-value 'ghostel-kill-buffer-on-exit buffer))
+            ;; ghostel reads it inside `with-current-buffer', so the
+            ;; buffer-local nil is what stays its hand.
+            (should-not kept)
+            (should (string-match-p "w1:p1" said))
+            (should (string-match-p "keeping" said))))
+      (kill-buffer buffer))))
+
+(ert-deftest herdr-term-client-end-leaves-a-buried-terminal-to-ghostel ()
+  "The keep is for a buffer nothing rendered, not for every hidden one.
+
+`herdr-term--attach-1' displays what it attaches, so a terminal that ran
+and was then buried has content.  Keeping that one too would leak a dead
+buffer per terminal for the rest of the session, which is a worse bug
+than the one being fixed."
+  (let ((buffer (generate-new-buffer " *herdr-buried-exit-test*")))
+    (unwind-protect
+        (herdr-test-with-state
+            (:cache (herdr-state-from-snapshot
+                     '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")))))))
+          (let ((herdr-term--buffers
+                 (herdr-test-term-buffers (list (cons "w1:p1" buffer))))
+                (ghostel-kill-buffer-on-exit t))
+            (with-current-buffer buffer (insert "user@host /tmp %\n"))
+            (should-not (get-buffer-window buffer t))
+            (cl-letf (((symbol-function 'message) #'ignore))
+              (herdr-term--client-ended buffer "exited abnormally with code 1"))
+            (should (buffer-local-value 'ghostel-kill-buffer-on-exit buffer))))
+      (kill-buffer buffer))))
+
+(ert-deftest herdr-term-attaching-registers-the-state-listener ()
+  "The reap and the directory tracking hang off this hook, and it used to
+be added only by `herdr-term-ensure' - whose only callers are in
+`herdr-start'.  A session restored from a desktop reaches the attach
+directly and never runs either, so it came up with live terminals and
+nothing watching them: a pane closing left its buffer behind for the
+rest of the session."
+  (let ((herdr-state-change-functions nil)
+        (state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (terminal_id . "t7"))))))))
+    (herdr-test-with-state (:cache state)
+      (herdr-term-test--attaching (lambda (&rest _) t)
+        (let ((buffer (herdr-term--attach-if-possible
+                       (herdr-current-connection) "w1:p1")))
+          (unwind-protect
+              (should (memq #'herdr-term--on-state-change
+                            herdr-state-change-functions))
+            (when (buffer-live-p buffer) (kill-buffer buffer))))))))
+
+(ert-deftest herdr-term-desktop-restore-registers-the-state-listener ()
+  "The path that had the defect, end to end: nothing between
+`desktop-read' and the attach calls `herdr-term-ensure'."
+  (let ((herdr-state-change-functions nil)
+        (state (herdr-state-from-snapshot
+                '((panes . (((pane_id . "w1:p1") (workspace_id . "w1")
+                             (terminal_id . "t7"))))))))
+    (herdr-test-with-state (:cache state)
+      (herdr-term-test--attaching (lambda (&rest _) t)
+        (let* ((name (herdr-connection-name (herdr-current-connection)))
+               (buffer (herdr-term-desktop-restore
+                        nil "*herdr: w1:p1*" (list 'herdr name "w1:p1"))))
+          (unwind-protect
+              (should (memq #'herdr-term--on-state-change
+                            herdr-state-change-functions))
+            (when (buffer-live-p buffer) (kill-buffer buffer))))))))
 
 (defconst herdr-term-test--source-directory
   (file-name-directory
