@@ -328,6 +328,27 @@ field as volatile. Do not treat it as a label when you compare two panes.
 
 **`pane.read` nests its text.** The text is under a `read` object. It is not a top-level field.
 
+**Attachment is exclusive, and the exit status will not tell you why it ended.** Measured against
+0.9.0 with two clients on one terminal. A second `herdr terminal attach` is refused while another
+client holds the terminal; `--takeover` takes it and the client that held it is stopped, not asked.
+All three endings — refused, taken over, and the pane closing under a healthy attach — exit **1**,
+so the status separates none of them. The text does:
+
+| Ending | Written to the terminal |
+|---|---|
+| Refused | `terminal attach failed: terminal <id> already has an attached client; retry with --takeover` |
+| Taken over | `herdr: server shut down: terminal attach taken over` |
+| Pane closed | nothing from herdr — only whatever the program last printed |
+
+`--takeover` goes after the terminal id; before it, the id is rejected as an unknown option. And
+nothing in the socket API reports which terminals have a client: `attach`, `client` and `takeover`
+appear in no method or field, so a client cannot ask first and can only read what it is told on
+the way out.
+
+**An attach needs a sized PTY.** With no controlling terminal it fails `Inappropriate ioctl for
+device`, and with a terminal of zero size it fails `terminal reported a zero-sized grid`. This is
+why a buffer has to be displayed before its client starts.
+
 ## How to read the herdr source
 
 ```bash

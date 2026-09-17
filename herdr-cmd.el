@@ -217,6 +217,33 @@ test is enough."
     buffer))
 
 ;;;###autoload
+(defun herdr-pane-takeover (&optional pane-id)
+  "Attach to PANE-ID, taking the terminal from the client that holds it.
+
+Attachment is exclusive per pane, so an ordinary attach to a pane some
+other client already has is refused - herdr says so in the terminal and
+`herdr-term--client-ended' passes it on.  This is the other half of that
+message: the same attach, with herdr told to take the terminal.
+
+The client that held it is not asked.  herdr tells it `terminal attach
+taken over' and it stops, which is the whole of what takeover means."
+  (interactive)
+  (let ((pane (or pane-id (herdr-select-pane "Take over pane: ")))
+        (connection (herdr-current-connection)))
+    (when (herdr-self-pane-p connection pane)
+      (user-error "herdr: %s is the pane this Emacs is running in" pane))
+    ;; A refused attach leaves no buffer - ghostel kills it on exit - but
+    ;; a live one would be returned untouched by `herdr-term--attach',
+    ;; and taking over from ourselves is not what was asked for.
+    (let ((held (herdr-term-buffer-for-pane connection pane)))
+      (when (buffer-live-p held) (kill-buffer held)))
+    (if-let* ((buffer (herdr-term--attach-if-possible connection pane t)))
+        (progn (herdr-term--show buffer)
+               (message "herdr: took over %s" pane)
+               buffer)
+      (user-error "herdr: %s is not a pane this server knows" pane))))
+
+;;;###autoload
 (defun herdr-pane-read (&optional pane-id source lines)
   "Read PANE-ID's output from SOURCE into a buffer, at most LINES lines."
   (interactive)

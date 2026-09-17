@@ -17,9 +17,10 @@
 ;; server is a daemon.
 ;;
 ;; Two constraints shape the code here.  Attachment is exclusive per
-;; pane, so a second attach needs `--takeover' and this asks first.  And
-;; the client paints nothing into a zero-sized PTY, so a buffer must be
-;; displayed before its process starts.
+;; pane, so a second attach is refused and `herdr-pane-takeover' is what
+;; takes the terminal instead.  And the client paints nothing into a
+;; zero-sized PTY, so a buffer must be displayed before its process
+;; starts.
 ;;
 ;; Measured throughput and attach behaviour are in docs/protocol.md.
 
@@ -34,6 +35,8 @@
 
 (declare-function ghostel-exec "ghostel" (buffer program &optional args))
 (declare-function ghostel-mode "ghostel" ())
+(declare-function ghostel--redraw-now "ghostel" (buffer &optional force))
+(defvar ghostel-exit-functions)
 
 (defcustom herdr-display-action
   '((display-buffer-reuse-window display-buffer-same-window))
@@ -227,11 +230,12 @@ thing to have pressed RET on."
       (herdr-term--show buffer)
       buffer)))
 
-(defun herdr-term--attach-if-possible (connection pane-id)
-  "Attach to CONNECTION\\='s PANE-ID now, if its cache knows it."
+(defun herdr-term--attach-if-possible (connection pane-id &optional takeover)
+  "Attach to CONNECTION\\='s PANE-ID now, if its cache knows it.
+With TAKEOVER, take the terminal from whatever client holds it."
   (let ((state (herdr-state-current connection)))
     (when-let* ((pane (herdr-state-pane state pane-id)))
-      (herdr-term--attach connection state pane))))
+      (herdr-term--attach connection state pane takeover))))
 
 (defun herdr-term-select-focused (&optional connection)
   "Select the buffer for whichever pane CONNECTION now considers focused.
@@ -275,7 +279,42 @@ this still answers for a buffer whose pane has gone away, which is a
 buffer to clean up rather than one to protect."
   (and (rassq (or buffer (current-buffer)) (herdr-term--live-buffers)) t))
 
-(defun herdr-term--attach (connection state pane)
+(defconst herdr-term-attach-refused "already has an attached client"
+  "What herdr leaves in the terminal when the pane is held elsewhere.")
+
+(defun herdr-term--squeezed (text)
+  "Return TEXT with every space, tab and newline taken out.
+The buffer is a terminal grid: herdr's 130-character refusal hard-wraps
+mid-word below that width, so both sides are compared squeezed."
+  (replace-regexp-in-string "[ \t\n\r]+" "" text))
+
+(defun herdr-term--client-ended (buffer _event)
+  "Say why herdr's client for BUFFER stopped, when herdr said why.
+
+The status cannot answer it.  Measured against 0.9.0: refused, taken
+over, and the pane closing under a healthy attach all exit 1, so the
+reason is only in the text herdr leaves behind.
+
+Reports rather than offers.  A prompt here runs inside ghostel's exit
+path, and anything that blocks while ghostel holds the terminal is how
+Emacs wedges in redraw; `herdr-pane-takeover' is the offer, on a key."
+  (when-let* ((pane-id (herdr-term-pane-for-buffer buffer)))
+    ;; ghostel materializes rows on a coalescing timer, so herdr's last
+    ;; line can still be pending and the tail read empty.  Reliable here
+    ;; because a redraw only stays pending for a buffer with no render
+    ;; window, and an attaching buffer always has one.
+    (when (fboundp 'ghostel--redraw-now)
+      (ghostel--redraw-now buffer))
+    (with-current-buffer buffer
+      (let ((tail (herdr-term--squeezed
+                   (buffer-substring-no-properties
+                    (max (point-min) (- (point-max) 2000)) (point-max)))))
+        (when (string-search (herdr-term--squeezed herdr-term-attach-refused) tail)
+          (message "herdr: %s is attached elsewhere; %s takes it over"
+                   pane-id
+                   (substitute-command-keys "\\[herdr-pane-takeover]")))))))
+
+(defun herdr-term--attach (connection state pane &optional takeover)
   "Create and start a ghostel buffer attached to PANE, named from STATE.
 Returns an existing buffer untouched rather than attaching twice:
 attachment is exclusive per pane, so a second attach either fails or
@@ -285,9 +324,9 @@ same id on another connection is another pane and gets its own buffer."
          (existing (herdr-term-buffer-for-pane connection pane-id)))
     (if (buffer-live-p existing)
         existing
-      (herdr-term--attach-1 connection state pane pane-id))))
+      (herdr-term--attach-1 connection state pane pane-id takeover))))
 
-(defun herdr-term--attach-1 (connection state pane pane-id)
+(defun herdr-term--attach-1 (connection state pane pane-id &optional takeover)
   "Create and start a ghostel buffer attached to PANE, named from STATE.
 
 Signals rather than answering nil when the client will not start: the
@@ -306,7 +345,7 @@ terminal."
          ;; `terminal_id', and that refusal is about the server being
          ;; too old, not about this buffer.
          (args (herdr-pane-attach-args
-                pane nil (herdr-connection-session connection)))
+                pane takeover (herdr-connection-session connection)))
          (buffer (get-buffer-create
                   (herdr-term--unique-buffer-name state pane))))
     ;; Everything from here to the registry under one cleanup.  A buffer
@@ -323,6 +362,9 @@ terminal."
             ;; registry without its connection answers commands typed in
             ;; it against whichever server is current.
             (setq herdr-buffer-connection connection)
+            ;; Buffer-local: `ghostel-exit-functions' is global, and only
+            ;; herdr's own buffers have a herdr message to read.
+            (add-hook 'ghostel-exit-functions #'herdr-term--client-ended nil t)
             ;; And before the client starts, because `ghostel-exec' reads
             ;; `default-directory' to decide which machine to spawn the
             ;; pty on.  The host is the floor: a remote pane whose cwd

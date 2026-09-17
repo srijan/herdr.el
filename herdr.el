@@ -123,6 +123,7 @@ The one entry point that runs the start sequence first, which is why
     (define-key map "f" #'herdr-pane-focus)
     (define-key map "n" #'herdr-new-terminal)
     (define-key map "k" #'herdr-pane-close)
+    (define-key map "t" #'herdr-pane-takeover)
     (define-key map "w" #'herdr-workspace-focus)
     (define-key map "p" #'herdr-project)
     (define-key map "%" #'herdr-worktree-create)

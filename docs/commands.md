@@ -70,6 +70,8 @@ Under `use-package`, use `:bind-keymap`. `herdr-command-map` is a keymap, not a 
 | `f` | `herdr-pane-focus` |
 | `n` | `herdr-new-terminal` |
 | `k` | `herdr-pane-close` |
+| `t` | `herdr-pane-takeover` |
+| `a` | `herdr-agent-send-keys` |
 | `w` | `herdr-workspace-focus` |
 | `p` | `herdr-project` |
 | `%` | `herdr-worktree-create` |
@@ -104,6 +106,7 @@ terminal. See [Agents](#agents).
 | `herdr-pane-rename` | `pane.rename` | Give the target pane a new label. |
 | `herdr-pane-focus` | `pane.focus` | Focus the pane and select its buffer. |
 | `herdr-pane-read` | `pane.read` | Put the output of the pane into a buffer. |
+| `herdr-pane-takeover` | — | Attach, taking the terminal from the client holding it. |
 
 `herdr-pane-read` accepts a source. The source `recent_unwrapped` removes the line wrapping of
 the terminal. Use that source when you want to search the result.
