@@ -758,12 +758,15 @@ different request, and nil is dropped from the payload entirely."
     (herdr-workspace-create "/tmp/example-api" "named")
     (should (equal "named" (alist-get 'label params)))))
 
-(ert-deftest herdr-workspace-create-defaults-the-label-to-the-directory ()
-  "An unnamed workspace should still read as something, so it borrows the
-directory's own name."
+(ert-deftest herdr-workspace-create-sends-no-label-when-given-none ()
+  "herdr names an unlabelled workspace after its focused pane's directory
+and renames it as that directory changes.  Sending a label - even the
+one herdr would have picked itself - reads as a name a human chose and
+pins it, so a workspace opened from Emacs never followed a cd again."
   (herdr-cmd-test--capturing-params params
     (herdr-workspace-create "/tmp/herdr-example/" nil)
-    (should (equal "herdr-example" (alist-get 'label params)))))
+    (should-not (alist-get 'label params))
+    (should (equal "/tmp/herdr-example/" (alist-get 'cwd params)))))
 
 ;;; Opening a terminal: the one create mechanism
 
@@ -778,7 +781,7 @@ directory's own name."
       (let ((herdr-connections (herdr-test-connections (herdr-test-connection (herdr-state-empty)))))
         (should (equal "w7:p1" (herdr-cmd-pane-in-directory "/tmp/fresh/")))
         (should (equal '(("workspace.create" . ((cwd . "/tmp/fresh/")
-                                                (label . "fresh")
+                                                (label . nil)
                                                 (focus . t))))
                        (reverse calls)))))))
 
@@ -811,7 +814,7 @@ pins them to one call."
                   (setq going (reverse calls))
                 (setq opening (reverse calls))))))))
     (should (equal '(("workspace.create" . ((cwd . "/tmp/fresh/")
-                                            (label . "fresh")
+                                            (label . nil)
                                             (focus . t))))
                    going))
     (should (equal going opening))))
