@@ -112,10 +112,10 @@ every reader calls. There is no client-side seen state to keep in step, and no w
 clients to disagree about what is finished.
 
 This reversed an earlier design. herdr.el used to derive `done` itself, in
-`herdr-state--track-seen`, from a `working` → `idle` transition cleared by `pane_focused`,
-because 0.9.0 never sent `done` and told clients to track seen-ness independently. The
-derivation was removed once the server's arc was measured — by then it was already dead, since
-the server goes `working` → `done` without the intermediate `idle` it watched for.
+`herdr-state--track-seen`, from a `working` → `idle` transition cleared by `pane_focused`, on
+the belief that the server never sent it. That belief was mistaken rather than outdated — see
+[Protocol notes](protocol.md) — and the derivation was already dead when it went, since the
+server goes `working` → `done` without the intermediate `idle` it watched for.
 
 ## The pure half and the impure half
 
