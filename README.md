@@ -50,8 +50,8 @@ press `TAB` on it — the queue already lists every agent, so nothing is shown t
 
 `READY` holds agents that finished while you were elsewhere. Going to one marks it seen and drops
 it to `IDLE`; reading its output with `r` does not, so you can look through what finished without
-emptying the list. herdr keeps that seen state per client and never sends it, so herdr.el works it
-out from the transitions it watches.
+emptying the list. herdr tracks that seen state itself and sends it, so the dashboard and an
+attached TUI agree about what is still unread.
 
 The dashboard opens in the selected window and leaves your other windows alone. `q` restores the
 buffer that window held before.

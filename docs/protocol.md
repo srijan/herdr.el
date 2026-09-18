@@ -249,12 +249,19 @@ Reporting only gives a pane an entry in herdr's own agent list: the sidebar, and
 the focus in Emacs, the focus moves in every attached TUI.
 
 **`done` does cross the socket API.** The `AgentStatus` enum lists it and the server sends it.
-Measured against a live protocol 22 server by driving a real agent: the pane went
-`idle` → `working` → `done` on `session.snapshot`, and focusing it put it back to `idle`. The
-workspace rollup carries the same value. Re-measure before trusting this: it was the opposite on
-0.9.0, where `agent.list`, `agent.get` and `pane.agent_status_changed` reported only `idle`,
-`working`, `blocked` and `unknown`, and herdr expected each client to derive `done` from its own
-seen state.
+Measured on 2026-09-17 against herdr 0.9.0 (protocol 22) by driving a real agent: the pane went
+`idle` → `working` → `done`, and focusing it put it back to `idle`. `session.snapshot`,
+`pane.list` and `pane.get` all report `done` for the same pane at the same moment, and the
+workspace rollup carries it too. `pane.list` matters on its own account: it is what the repair
+timer folds over the cache, and `agent_status` is a significant field, so a `pane.list` that
+disagreed would demote a finished pane on every repair tick.
+
+This page previously said the opposite — that the server never sends `done` and each client
+derives it from its own seen state — and attributed that to 0.9.0. That attribution cannot be
+right: 0.9.0 is the version measured above, and it sends `done`. The earlier claim is recorded
+here as believed mistaken, not as a version that has since changed. **No version boundary is
+known**, so nothing should gate on one; a client that needs to know whether a server reports
+`done` has to observe it.
 
 So the seen state is herdr's now, not the client's. `idle` and `done` still both mean ready for
 input, and what tells them apart — whether anybody has looked — is tracked server-side and shared
@@ -289,10 +296,11 @@ verb for that.
 `pane.agent_status_changed`, and not enough for these two: they answer `agent_not_ready`, with
 "no longer the pane foreground process" and "is not an active named agent" respectively.
 
-**`agent.wait` on `done` can only ever time out.** `--until` accepts every `AgentStatus`, and the
-server never enters `done` (see above), so `agent.wait --until done` waits out its deadline and
-returns `timeout`. Measured. Without `--until`, herdr matches idle, done or blocked — which is
-why the default works: `idle` is in it. herdr also documents that `--wait` on a prompt does not
+**`agent.wait --until done` resolves.** `--until` accepts every `AgentStatus`, and since the
+server does enter `done` (see above) the wait returns with the agent at `done` rather than timing
+out. Measured on 2026-09-17 against 0.9.0 by prompting an agent with `--wait --until done`. This
+page previously recorded the opposite, on the same mistaken premise corrected above. Without
+`--until`, herdr matches idle, done or blocked. herdr also documents that `--wait` on a prompt does not
 track turns, so prompting an agent that is already working may match that earlier turn finishing.
 
 **herdr tells a pane what it is.** Every pane it starts carries `HERDR_ENV=1`, `HERDR_PANE_ID`,

@@ -101,7 +101,7 @@ until that answer lands and for a directory that is not a git repository.
 A closed section shows the worst status inside it. A closed section therefore never hides a
 blocked agent.
 
-`READY` is where an agent lands when it finishes: it was working, it went idle, and nobody has
+`READY` is where an agent lands when it finishes: it was working, it finished, and nobody has
 looked at it yet. Going to it — `RET` on the row, or focusing it from anywhere else — is what
 marks it seen and drops it to `IDLE`. Reading its output with `r` does not, so you can look
 through what finished without emptying the list you are working from.
