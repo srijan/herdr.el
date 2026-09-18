@@ -104,6 +104,11 @@ arrived on, so it sees what happens from then and nothing older. Events emitted 
 subscription is still being set up are kept, which upstream pins with a test named
 `lifecycle_subscription_skips_history_but_keeps_setup_window_events`.
 
+Measured here too, on 2026-09-18 against 0.9.0: a workspace created and closed while nothing was
+subscribed reached a client that subscribed straight afterwards as no events at all, while the
+same pair with the client already connected arrived as six. `events.subscribe` takes no cursor
+or start sequence, so there is nothing for a client to ask history with.
+
 The rest of this section is what 0.8.2 did. It stays because the client still carries defences
 built for it, and because deleting a finding only means the next reader derives it again.
 
