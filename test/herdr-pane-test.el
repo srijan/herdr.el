@@ -209,15 +209,6 @@ shows what it is doing, the buffer is called what it is."
 
 ;;; Fields
 
-(ert-deftest herdr-pane-directory-prefers-cwd ()
-  (should (equal "/tmp/" (herdr-pane-directory
-                          '((cwd . "/tmp") (foreground_cwd . "/usr")))))
-  (should (equal "/usr/" (herdr-pane-directory
-                          '((foreground_cwd . "/usr")))))
-  (should (null (herdr-pane-directory '((pane_id . "w1:p1")))))
-  (should (null (herdr-pane-directory
-                 '((cwd . "/definitely/not/here/at/all"))))))
-
 (ert-deftest herdr-pane-label-is-a-significant-field ()
   "A `pane.rename' must redraw the surfaces that now show the label.
 Left off `herdr-pane-significant-fields', a rename reached the

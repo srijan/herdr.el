@@ -57,7 +57,7 @@
       ;; row and the confirmations, so no two surfaces can disagree
       ;; about what a pane is called.
       (let ((agent (herdr-pane-agent pane))
-            (status (herdr-state-pane-status state pane))
+            (status (herdr-pane-status pane))
             (title (herdr-pane-name pane))
             (cwd (herdr-pane-cwd pane)))
         (concat "  "

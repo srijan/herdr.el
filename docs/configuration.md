@@ -262,8 +262,8 @@ To get desktop notifications, set the statuses that you want:
 
 herdr.el uses the `alert` package when the package is present.
 
-`"done"` is worth having here and is the one status the server never sends: it means an agent
-finished and you have not looked at it yet, which herdr.el works out for itself.
+`"done"` is worth having here: it means an agent finished and you have not looked at it yet.
+herdr works that out and sends it, so every attached client agrees on what is still unread.
 
 These are herdr.el's own notifications, and they do not come from the server. herdr has a notifier
 of its own under `[ui.toast]` in `config.toml` — `off`, `inside herdr`, `via terminal` or

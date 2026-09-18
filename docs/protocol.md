@@ -248,27 +248,23 @@ Reporting only gives a pane an entry in herdr's own agent list: the sidebar, and
 **Focus is shared.** The session has one focused pane, not one for each client. When you move
 the focus in Emacs, the focus moves in every attached TUI.
 
-**`done` never crosses the socket API.** The `AgentStatus` enum in the schema lists it, and the
-server never sends it. Measured against 0.9.0: `agent.list`, `agent.get` and
-`pane.agent_status_changed` report only `idle`, `working`, `blocked` and `unknown`, and no reply
-carries a `seen` field. `pane.report_agent` will not even accept `done` — its `--state` takes the
-other four.
+**`done` does cross the socket API.** The `AgentStatus` enum lists it and the server sends it.
+Measured against a live protocol 22 server by driving a real agent: the pane went
+`idle` → `working` → `done` on `session.snapshot`, and focusing it put it back to `idle`. The
+workspace rollup carries the same value. Re-measure before trusting this: it was the opposite on
+0.9.0, where `agent.list`, `agent.get` and `pane.agent_status_changed` reported only `idle`,
+`working`, `blocked` and `unknown`, and herdr expected each client to derive `done` from its own
+seen state.
 
-herdr says why in its own agent skill: `idle` and `done` both mean the agent is ready for input,
-the seen state is what tells them apart, and each client tracks it independently. So `done` is a
-client's word for a completion it has not looked at, and a client that wants one derives it.
+So the seen state is herdr's now, not the client's. `idle` and `done` still both mean ready for
+input, and what tells them apart — whether anybody has looked — is tracked server-side and shared
+by every attached client. The schema exposes `seen` as an agent-view field for the same reason.
 
-herdr.el derives it in `herdr-state--track-seen`: an agent that was `working` and is now `idle`
-is a completion, and `pane_focused` for that pane clears it. Both halves are measured. `pane.focus`,
-`agent.focus`, `workspace.focus` and a focusing `workspace.create` all emit `pane_focused` — including
-for a pane that already holds focus, which is why the clear reads the event rather than watching
-the focused id move. `pane.read` and `agent.read` emit no event at all, which is what makes
-"focus marks seen, reads do not" hold here without herdr.el having to suppress anything.
-
-The mark lives beside the cache, in the state's `done-panes`, and never in the pane record.
-Writing `done` into `agent_status` would put it in `herdr-pane-significant-fields`, so every
-`pane.list` reconcile would see cached `done` against a fresh `idle`, call it a change, and
-redraw the dashboard on the repair interval for as long as anything was finished.
+herdr.el therefore stores what it is sent. It used to derive `done` in
+`herdr-state--track-seen`, promoting a `working` → `idle` transition and clearing it on
+`pane_focused`. That code was removed once the server's own arc was measured, and it had already
+stopped firing: the server goes `working` → `done` directly and never passes through the `idle`
+that the promotion waited for.
 
 **There is no `agent_renamed` event.** The event schema carries `workspace_renamed` and
 `tab_renamed` and nothing for an agent, so `agent.rename` is announced only in its own reply, which

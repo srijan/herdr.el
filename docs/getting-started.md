@@ -106,11 +106,9 @@ looked at it yet. Going to it — `RET` on the row, or focusing it from anywhere
 marks it seen and drops it to `IDLE`. Reading its output with `r` does not, so you can look
 through what finished without emptying the list you are working from.
 
-That distinction is herdr's own, and the seen half of it is herdr.el's: the server never sends
-`done` and keeps no seen state for this client, so a completion is noticed here or nowhere. An
-agent that was already idle when Emacs connected is not a completion, and neither is one that
-went from `blocked` to `idle` — herdr cannot tell a question somebody answered from one that
-stopped being asked.
+That distinction is herdr's own, both halves of it: the server tracks what you have looked at
+and sends `done` for what you have not, so the dashboard and an attached TUI agree about what is
+still unread, and marking something seen in one marks it seen in the other.
 
 ## Step 5: Do the first tasks
 
