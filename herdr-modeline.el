@@ -161,7 +161,7 @@ its next status firing one that never happened."
       (dolist (pane (herdr-state-agents state))
         (let* ((id (herdr-pane-id pane))
                (key (cons (herdr-connection-token connection) id))
-               (status (herdr-state-pane-status state pane))
+               (status (herdr-pane-status pane))
                (previous (gethash key herdr-notify--last-status)))
           (unless (equal status previous)
             (puthash key status herdr-notify--last-status)

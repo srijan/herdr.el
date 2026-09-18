@@ -18,15 +18,14 @@ them per workspace; a repository's own checkout is a worktree too, drawn as the 
 **Agent** — a coding assistant running in a pane. Not a separate object: a pane with an `agent`
 field. It has a status and may have a name someone set with `agent.rename`.
 
-**Status** — `working`, `blocked`, `idle`, `unknown` from the server, plus `done`, which herdr.el
-derives. herdr keeps the seen state per client and never puts it on the wire, so a completion
-nobody has looked at is `idle` on the socket and `done` here. `herdr-state-pane-status` is the
-only reader that knows the difference; anything showing a status goes through it rather than
-`herdr-pane-status`. See [Protocol notes](docs/protocol.md#panes-and-agents).
+**Status** — `working`, `blocked`, `done`, `idle`, `unknown`, all from the server. `done` is a
+completion nobody has looked at yet. herdr.el stores what it is sent and derives nothing, so
+`herdr-pane-status` is the only reader and every surface goes through it.
+See [Protocol notes](docs/protocol.md#panes-and-agents).
 
-**Seen** — whether you have looked at an agent since it finished. Focus marks it, reads do not;
-that is herdr's rule, and herdr.el follows it on `pane_focused`, whichever client caused the
-focus.
+**Seen** — whether you have looked at an agent since it finished. Focus marks it, reads do not.
+herdr tracks that itself and reports the result as `done` or `idle`, so every attached client
+agrees about what is still unread, whichever one caused the focus.
 
 **Session** — everything the server currently knows, cached in `herdr-state`. Every surface draws
 from the cache and never from the socket, so a redraw costs no traffic.

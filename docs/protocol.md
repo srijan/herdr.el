@@ -104,6 +104,11 @@ arrived on, so it sees what happens from then and nothing older. Events emitted 
 subscription is still being set up are kept, which upstream pins with a test named
 `lifecycle_subscription_skips_history_but_keeps_setup_window_events`.
 
+Measured here too, on 2026-09-18 against 0.9.0: a workspace created and closed while nothing was
+subscribed reached a client that subscribed straight afterwards as no events at all, while the
+same pair with the client already connected arrived as six. `events.subscribe` takes no cursor
+or start sequence, so there is nothing for a client to ask history with.
+
 The rest of this section is what 0.8.2 did. It stays because the client still carries defences
 built for it, and because deleting a finding only means the next reader derives it again.
 
@@ -248,27 +253,22 @@ Reporting only gives a pane an entry in herdr's own agent list: the sidebar, and
 **Focus is shared.** The session has one focused pane, not one for each client. When you move
 the focus in Emacs, the focus moves in every attached TUI.
 
-**`done` never crosses the socket API.** The `AgentStatus` enum in the schema lists it, and the
-server never sends it. Measured against 0.9.0: `agent.list`, `agent.get` and
-`pane.agent_status_changed` report only `idle`, `working`, `blocked` and `unknown`, and no reply
-carries a `seen` field. `pane.report_agent` will not even accept `done` — its `--state` takes the
-other four.
+**`done` does cross the socket API.** The `AgentStatus` enum lists it and the server sends it.
+Measured on 2026-09-17 against herdr 0.9.0 (protocol 22) by driving a real agent: the pane went
+`idle` → `working` → `done`, and focusing it put it back to `idle`. `session.snapshot`,
+`pane.list` and `pane.get` all report `done` for the same pane at the same moment, and the
+workspace rollup carries it too — `pane.list` included, which matters because that is the reply
+a polling client reconciles against.
 
-herdr says why in its own agent skill: `idle` and `done` both mean the agent is ready for input,
-the seen state is what tells them apart, and each client tracks it independently. So `done` is a
-client's word for a completion it has not looked at, and a client that wants one derives it.
+**No version boundary is known**, so nothing may gate on one; a client that needs to know whether
+a server reports `done` has to observe it. This page said the opposite until 2026-09-17 and
+attributed that to 0.9.0, which is the version measured above.
 
-herdr.el derives it in `herdr-state--track-seen`: an agent that was `working` and is now `idle`
-is a completion, and `pane_focused` for that pane clears it. Both halves are measured. `pane.focus`,
-`agent.focus`, `workspace.focus` and a focusing `workspace.create` all emit `pane_focused` — including
-for a pane that already holds focus, which is why the clear reads the event rather than watching
-the focused id move. `pane.read` and `agent.read` emit no event at all, which is what makes
-"focus marks seen, reads do not" hold here without herdr.el having to suppress anything.
+So the seen state is herdr's now, not the client's. `idle` and `done` still both mean ready for
+input, and what tells them apart — whether anybody has looked — is tracked server-side and shared
+by every attached client. The schema exposes `seen` as an agent-view field for the same reason.
 
-The mark lives beside the cache, in the state's `done-panes`, and never in the pane record.
-Writing `done` into `agent_status` would put it in `herdr-pane-significant-fields`, so every
-`pane.list` reconcile would see cached `done` against a fresh `idle`, call it a change, and
-redraw the dashboard on the repair interval for as long as anything was finished.
+herdr.el therefore stores what it is sent.
 
 **There is no `agent_renamed` event.** The event schema carries `workspace_renamed` and
 `tab_renamed` and nothing for an agent, so `agent.rename` is announced only in its own reply, which
@@ -293,11 +293,12 @@ verb for that.
 `pane.agent_status_changed`, and not enough for these two: they answer `agent_not_ready`, with
 "no longer the pane foreground process" and "is not an active named agent" respectively.
 
-**`agent.wait` on `done` can only ever time out.** `--until` accepts every `AgentStatus`, and the
-server never enters `done` (see above), so `agent.wait --until done` waits out its deadline and
-returns `timeout`. Measured. Without `--until`, herdr matches idle, done or blocked — which is
-why the default works: `idle` is in it. herdr also documents that `--wait` on a prompt does not
-track turns, so prompting an agent that is already working may match that earlier turn finishing.
+**`agent.wait --until done` resolves.** `--until` accepts every `AgentStatus`, and since the
+server does enter `done` (see above) the wait returns with the agent at `done` rather than timing
+out. Measured on 2026-09-17 against 0.9.0 by prompting an agent with `--wait --until done`.
+Without `--until`, herdr matches idle, done or blocked. herdr also documents that `--wait` on a
+prompt does not track turns, so prompting an agent that is already working may match that
+earlier turn finishing.
 
 **herdr tells a pane what it is.** Every pane it starts carries `HERDR_ENV=1`, `HERDR_PANE_ID`,
 `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`, `HERDR_SOCKET_PATH` and `HERDR_BIN_PATH`. Read out of a live
@@ -317,9 +318,16 @@ workspaces: the server knows nothing about a project you are not working in righ
 false positive here: when you send the escapes inline, the shell echoes the command text, and
 that text holds the same characters.
 
-**herdr tracks the working directory itself.** The field `pane.cwd` follows a `cd` within about
-one second. But the server sends no event for the change. A `cd` emits `layout_updated` only, so
-a client must poll.
+**herdr tracks the working directory itself, and announces it.** A pane record's `cwd` follows a
+`cd` within about a tenth of a second, and the server says so: a `cd` emits `pane_updated`
+carrying the whole record, twice, roughly 100ms apart. Measured on 2026-09-18 against 0.9.0 over
+a direct socket subscription, 12 directory changes across two panes — and not one
+`layout_updated` among them, which is what this page used to claim was the only thing a `cd`
+emitted.
+
+A client that does not subscribe to `pane.updated` therefore learns a new directory from a poll
+rather than from the wire. herdr.el is such a client deliberately; see
+`herdr-state-global-subscriptions` for what that subscription costs.
 
 **Terminal titles animate.** Claude puts a spinner glyph and a second counter in the title.
 The field `terminal_title_stripped` therefore changes several times each second: 662 of 662

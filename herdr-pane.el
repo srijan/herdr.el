@@ -96,36 +96,21 @@ with a manifest name has one - and it falls back to the detected agent."
   (or (herdr-pane--said (alist-get 'display_agent pane))
       (herdr-pane--said (alist-get 'agent pane))))
 
-(defun herdr-pane-directory (pane)
-  "Return PANE\\='s working directory as a directory name, or nil.
-
-herdr tracks cwd itself and republishes it as panes change directory,
-which is what makes this possible: it consumes OSC 7 rather than
-forwarding it, so a terminal buffer fronting a herdr pane has no other
-way to know where it is.
-
-`foreground_cwd' is the fallback: a pane that has not reported a cwd of
-its own may still say where its foreground process is."
-  (when-let* ((dir (herdr-pane-directory-name pane)))
-    (when (file-directory-p dir) dir)))
-
 (defun herdr-pane-directory-name (pane)
   "Return PANE\\='s working directory as a directory name, unchecked.
 
-`herdr-pane-directory' asks the filesystem whether it exists; this does
-not, because the filesystem it would ask is the wrong one whenever the
-pane belongs to a server on another machine.  Checking a remote path
-properly means a stat over TRAMP per pane per poll, and the server
-tracks its own machine\\='s directories and republishes them, so it is the
-better authority anyway."
+Unchecked on purpose: the filesystem it would ask is the wrong one
+whenever the pane belongs to a server on another machine.  Checking a
+remote path properly means a stat over TRAMP per pane per poll, and
+the server tracks its own machine\\='s directories and republishes
+them, so it is the better authority anyway."
   (when-let* ((dir (or (alist-get 'cwd pane)
                        (alist-get 'foreground_cwd pane))))
     (and (stringp dir) (file-name-as-directory dir))))
 
 (defun herdr-pane-cwd (pane)
   "Return the cwd PANE reports, unchecked, or nil.
-`herdr-pane-directory' is the one to use when the answer must name a
-directory that exists; this is the raw field, for showing."
+The raw field, for showing."
   (alist-get 'cwd pane))
 
 (defun herdr-pane-terminal-id (pane)
@@ -161,8 +146,8 @@ A record differing only in excluded fields is still refreshed, silently,
 without running the change hook; see `herdr-state-reconcile-panes'.
 
 `revision' is not a staleness guard.  herdr bumps it for presentation
-metadata only, never for `agent_status' (0.8.2, terminal/state.rs), so
-it cannot order status updates.")
+metadata only, never for `agent_status', so it cannot order status
+updates.  Measured on 0.8.2; re-measure before relying on it again.")
 
 (defun herdr-pane-differs-p (known fresh)
   "Return non-nil when FRESH differs from KNOWN in a field worth noticing."

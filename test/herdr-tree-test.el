@@ -935,28 +935,19 @@ repository at all, shows no branch rather than a placeholder."
 (defun herdr-tree-test--queue-state (&rest specs)
   "Return a state whose agents are SPECS, each (ID STATUS SEQ).
 
-A spec of `done' seeds the record as `idle' and marks the pane unseen,
-because that is the only shape the server can produce: `done' never
-crosses the wire, and a fixture writing it into `agent_status' would
-test a record herdr cannot send."
-  (let ((state (herdr-state-from-snapshot
-                `((workspaces . (((workspace_id . "w1") (label . "web"))))
-                  (panes . ,(mapcar
-                             (lambda (spec)
-                               `((pane_id . ,(nth 0 spec))
-                                 (workspace_id . "w1")
-                                 (agent . "claude")
-                                 (agent_status
-                                  . ,(if (equal (nth 1 spec) "done")
-                                         "idle"
-                                       (nth 1 spec)))
-                                 (state_change_seq . ,(nth 2 spec))))
-                             specs))))))
-    (setf (herdr-state-done-panes state)
-          (mapcar (lambda (spec) (nth 0 spec))
-                  (seq-filter (lambda (spec) (equal (nth 1 spec) "done"))
-                              specs)))
-    state))
+STATUS goes into `agent_status' as given, `done' included: herdr computes
+`done' itself and puts it on the wire, measured against a live protocol
+22 server driving an agent through idle, working and done."
+  (herdr-state-from-snapshot
+   `((workspaces . (((workspace_id . "w1") (label . "web"))))
+     (panes . ,(mapcar
+                (lambda (spec)
+                  `((pane_id . ,(nth 0 spec))
+                    (workspace_id . "w1")
+                    (agent . "claude")
+                    (agent_status . ,(nth 1 spec))
+                    (state_change_seq . ,(nth 2 spec))))
+                specs)))))
 
 (ert-deftest herdr-tree-queue-heads-the-worst-first-and-omits-what-is-empty ()
   "Worst first, so the section that wants you most is the one you land on.
@@ -975,33 +966,35 @@ that never says anything."
 (ert-deftest herdr-tree-queue-heads-a-real-completion-ready ()
   "The whole path, from the event herdr sends to the heading you read.
 
-Every other queue test sets the done mark by hand.  This one drives the
-only thing the server actually emits - working, then idle - so a change
-that leaves the mark unset, or that reads the record instead of the
-projection, cannot pass by agreeing with a fixture."
+Every other queue test writes the status into a fixture.  This one
+drives the transitions a live server actually emits - working, then
+done, then idle when you look at it - so a change that reads the wrong
+field cannot pass by agreeing with a fixture."
   (let* ((state (herdr-tree-test--queue-state '("w1:p1" "idle" 1)))
-         (done (herdr-state-reduce
-                (herdr-state-reduce state "pane.agent_status_changed"
-                                    '((pane_id . "w1:p1")
-                                      (agent_status . "working")))
-                "pane.agent_status_changed"
-                '((pane_id . "w1:p1") (agent_status . "idle")))))
-    (should (equal '("READY (1)")
-                   (mapcar (lambda (node) (nth 2 node))
-                           (herdr-tree-queue-nodes (list (cons nil done))))))
-    ;; Looking at it puts it back under IDLE.
+         (headings (lambda (s)
+                     (mapcar (lambda (node) (nth 2 node))
+                             (herdr-tree-queue-nodes (list (cons nil s))))))
+         (working (herdr-state-reduce state "pane.agent_status_changed"
+                                      '((pane_id . "w1:p1")
+                                        (agent_status . "working"))))
+         (done (herdr-state-reduce working "pane.agent_status_changed"
+                                   '((pane_id . "w1:p1")
+                                     (agent_status . "done")))))
+    (should (equal '("WORKING (1)") (funcall headings working)))
+    (should (equal '("READY (1)") (funcall headings done)))
+    ;; Looking at it is herdr's own business: focusing the pane is what
+    ;; moves it back to idle, and herdr says so with another status event.
     (should (equal '("IDLE (1)")
-                   (mapcar (lambda (node) (nth 2 node))
-                           (herdr-tree-queue-nodes
-                            (list (cons nil (herdr-state-reduce
-                                             done "pane_focused"
-                                             '((pane_id . "w1:p1")))))))))))
+                   (funcall headings
+                            (herdr-state-reduce done "pane.agent_status_changed"
+                                                '((pane_id . "w1:p1")
+                                                  (agent_status . "idle"))))))))
 
 (ert-deftest herdr-tree-queue-reads-done-as-ready-and-keeps-unknown-apart ()
-  "herdr says `idle' and `done' both mean ready for input and uses its
-seen state to tell them apart, so `done' is work nobody has looked at:
-READY.  `unknown' keeps a heading of its own because herdr says it does
-not prove completion — it must not read as nothing to do."
+  "`done' is work that finished and nobody has looked at, which is what
+the queue calls READY.  `unknown' keeps a heading of its own because
+herdr says it does not prove completion — it must not read as nothing
+to do."
   (let ((headings (mapcar (lambda (node) (nth 2 node))
                           (herdr-tree-queue-nodes
                            (list (cons nil (herdr-tree-test--queue-state
@@ -1030,6 +1023,20 @@ already aimed at a pane row works on it with no arm of its own."
     (should (eq 'herdr-pane (nth 0 row)))
     (should (equal "w1:p1" (nth 1 row)))
     (should-not (nth 3 row))))
+
+(ert-deftest herdr-tree-queue-row-shows-its-own-status ()
+  "The glyph and its face come from the pane's status, not from a constant.
+Every other surface reading a status kills a hardcoded value; this row
+did not, because its node type and id are asserted and its rendered line
+was not."
+  (dolist (status '("blocked" "done"))
+    (let* ((row (car (nth 3 (car (herdr-tree-queue-nodes
+                                  (list (cons nil (herdr-tree-test--queue-state
+                                                   (list "w1:p1" status 1)))))))))
+           (line (nth 2 row)))
+      (should (string-prefix-p (herdr-tree-glyph status) line))
+      (should (eq (herdr-tree-status-face status)
+                  (get-text-property 0 'face line))))))
 
 (ert-deftest herdr-tree-queue-carries-the-machine-only-when-there-are-several ()
   "A queue is ordered by attention, not by machine, so a row has no

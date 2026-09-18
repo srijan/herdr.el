@@ -544,17 +544,17 @@ herdr consumes OSC 7 rather than forwarding it, so ghostel's own
 directory tracking cannot see through it.  herdr does track cwd itself,
 so `default-directory' is driven from that instead.
 
-It has to be asked for.  herdr publishes no event when a pane changes
-directory: a `cd' produces only unrelated `layout_updated' traffic, so
-there is nothing to subscribe to.  A directory therefore reaches the
-cache only through a repair; see `herdr-state-repair'."
+It has to be asked for.  herdr does announce a `cd', on `pane.updated',
+but `herdr-state-global-subscriptions' leaves that one out on purpose,
+so a directory reaches the cache through a repair instead; see
+`herdr-state-repair'."
   :type 'boolean
   :group 'herdr
   :package-version '(herdr . "0.1.0"))
 
 (defcustom herdr-term-directory-debounce 0.4
   "Seconds to coalesce directory refreshes triggered by events.
-One `cd' emits dozens of `layout_updated' events."
+A burst of events should cost one repair, not one each."
   :type 'number
   :group 'herdr
   :package-version '(herdr . "0.1.0"))

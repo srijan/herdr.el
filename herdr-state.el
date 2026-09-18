@@ -125,12 +125,7 @@ result right rather than lucky either way.")
   ;; `session.snapshot', which carries `name' — the one field no
   ;; PaneInfo has.
   (agent-info nil)
-  (focused-pane-id nil)
-  ;; Ids of panes whose last completion nobody here has looked at.  Not
-  ;; a field of any record: herdr keeps the seen state per client, so
-  ;; this is herdr.el's own and lives beside the cache rather than in
-  ;; it.  See `herdr-state-pane-status'.
-  (done-panes nil))
+  (focused-pane-id nil))
 
 (defun herdr-state-empty ()
   "Return an empty state."
@@ -154,47 +149,12 @@ dropped rather than picked: several servers each have one, and no
 answer is better than an arbitrary one."
   (herdr-state-from-snapshot
    `((workspaces . ,(seq-mapcat #'herdr-state-workspaces states))
-     (panes . ,(seq-mapcat #'herdr-state--projected-panes states)))))
+     (panes . ,(seq-mapcat #'herdr-state-panes states)))))
 
 (defun herdr-state-pane (state id)
   "Return the pane in STATE whose id is ID, or nil."
   (seq-find (lambda (pane) (equal id (herdr-pane-id pane)))
             (herdr-state-panes state)))
-
-(defun herdr-state-pane-status (state pane)
-  "Return PANE\\='s agent status in STATE, as this client sees it.
-
-`done' never crosses the socket API - measured against a 0.9.0 server,
-which reports only `idle', `working', `blocked' and `unknown' on
-both `agent.list' and the event stream, and puts no `seen' field on any
-record.  herdr keeps the seen state per client and says so: `idle' and
-`done' both mean ready for input, and each client tells them apart from
-what it has looked at.  So a completion nobody here has focused reads
-`idle' on the wire and `done' to us.
-
-Every surface that shows a status goes through this rather than
-`herdr-pane-status', or the queue would head a pane READY that the
-modeline calls idle."
-  (let ((status (herdr-pane-status pane)))
-    (if (and (equal status "idle")
-             (member (herdr-pane-id pane) (herdr-state-done-panes state)))
-        "done"
-      status)))
-
-(defun herdr-state--projected-panes (state)
-  "Return STATE\\='s panes with each `agent_status' as this client sees it.
-
-For `herdr-state-merged', which folds several servers into one state.
-The projection is applied per state, before the merge: pane ids are
-per-server counters, so a merged done set would let one machine\\='s
-`w1:p1' answer for another\\='s."
-  (mapcar (lambda (pane)
-            (let ((status (herdr-state-pane-status state pane)))
-              (if (equal status (herdr-pane-status pane))
-                  pane
-                (cons (cons 'agent_status status)
-                      (assq-delete-all 'agent_status (copy-sequence pane))))))
-          (herdr-state-panes state)))
 
 (defun herdr-state-workspace (state id)
   "Return the workspace in STATE whose id is ID, or nil."
@@ -246,8 +206,11 @@ by the same path as setting."
 (defun herdr-state-workspace-directory (state workspace-id)
   "Return WORKSPACE-ID\\='s directory in STATE, or nil.
 
-Protocol 19\\='s WorkspaceInfo carries no cwd of any kind, so it is derived
-from the workspace\\='s panes: the first one that reports a `cwd'.  Panes
+Derived from the workspace\\='s panes: the first one that reports a `cwd'.
+Protocol 22 declares a `worktree' object on WorkspaceInfo carrying
+`repo_root' and `checkout_path', but a live 22 server leaves it absent
+on every ordinary workspace — measured — so the panes stay the only
+source.  Panes
 are held in cache order — snapshot order with later arrivals appended —
 so that is the oldest pane herdr told us about, which is the one the
 workspace was created in."
@@ -261,8 +224,8 @@ workspace was created in."
 (defun herdr-state-workspace-for-directory (state root)
   "Return the workspace in STATE rooted at ROOT, or nil.
 
-Compared through `herdr-state-workspace-directory' because protocol 19
-workspaces carry no cwd of their own — this used to compare against an
+Compared through `herdr-state-workspace-directory' because a workspace
+record states no cwd of its own — this used to compare against an
 `identity_cwd' field that does not exist, so it never matched and
 `herdr-project' made a fresh workspace every time it was called.  ROOT
 is normalized first — with or without a trailing slash must match the
@@ -386,58 +349,6 @@ which matters because per-pane status events carry only a few fields."
 Pure: STATE is never mutated.  KIND is herdr's event name.  Note that
 global events use underscores while the three per-pane subscription
 events use dots, so both spellings appear here deliberately."
-  (herdr-state--track-seen state (herdr-state--reduce-event state kind data)
-                           kind data))
-
-(defun herdr-state--track-seen (before after kind data)
-  "Return AFTER with its done set brought up to date against BEFORE.
-
-Wraps the reduce rather than living in its branches because every write
-to a pane record already funnels through one: the status events, the
-`final_status' a release carries, and the `pane_updated' that
-`herdr-state--fold-panes' reconciles with.  A completion noticed in one
-place is noticed on all three.
-
-A completion is an agent that was working and is now idle.  Nothing
-else: `unknown' does not prove one on herdr\\='s own account, a pane
-arriving already idle is most of a snapshot rather than news, and
-`blocked' to `idle' is a question that stopped being asked, which
-herdr cannot tell from one somebody answered.  Blocked agents head the
-queue on their own, so reading that as finished work would promote it
-twice and be wrong half the time.
-
-Focus is what clears it, and KIND is read rather than the focused id
-compared, because herdr emits `pane_focused' even for a pane that
-already held focus: focusing the row you are sitting on is exactly how
-you look at the thing that finished.  A read clears nothing, which is
-the whole point - `pane.read' and `agent.read' emit no event at all,
-measured, so there is nothing here to ignore."
-  (let* ((done (herdr-state-done-panes before))
-         (next done))
-    (dolist (pane (herdr-state-panes after))
-      (let ((id (herdr-pane-id pane)))
-        (when (and (equal (herdr-pane-status pane) "idle")
-                   (equal (herdr-pane-status (herdr-state-pane before id))
-                          "working")
-                   (not (member id next)))
-          (setq next (cons id next)))))
-    ;; `remove', not `delete': NEXT is still the list BEFORE holds, and
-    ;; the destructive one would edit it in place - through a reduce
-    ;; whose whole contract is that it does not touch its argument.
-    (when (equal kind "pane_focused")
-      (setq next (remove (alist-get 'pane_id data) next)))
-    ;; A pane that has gone would otherwise keep its id in here for the
-    ;; life of the session, and herdr reuses ids within a workspace.
-    (setq next (seq-filter (lambda (id) (herdr-state-pane after id)) next))
-    (if (equal next done)
-        after
-      (let ((copy (herdr-state-copy after)))
-        (setf (herdr-state-done-panes copy) next)
-        copy))))
-
-(defun herdr-state--reduce-event (state kind data)
-  "Apply event KIND with DATA to STATE, ignoring the done set.
-`herdr-state-reduce' is the caller, and keeps that set up to date."
   (let ((next (herdr-state-copy state)))
     (pcase kind
       ((or "pane_created" "pane_updated" "pane_moved")
@@ -1141,10 +1052,11 @@ without changing what B should watch."
 (defun herdr-state-reconcile-panes (connection)
   "Make the cached pane set match the server, and refresh directories.
 
-The event stream cannot keep the cache right on its own.  A `cd' is
-never announced, and a subscription starts at the sequence its request
-arrived on, so whatever happened between the snapshot and the subscribe
-is never sent.  One `pane.list' is authoritative and answers both.
+The event stream cannot keep the cache right on its own.  herdr does
+announce a `cd', on `pane.updated', but `herdr-state-global-subscriptions'
+leaves that one out on purpose, and a subscription starts at the sequence
+its request arrived on, so whatever happened between the snapshot and the
+subscribe is never sent.  One `pane.list' is authoritative and answers both.
 Through herdr 0.8.2 there was a third reason: a fresh subscription
 replayed the server's event ring, so a `pane_created' for a
 long-closed pane arrived as news.

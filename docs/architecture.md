@@ -103,22 +103,16 @@ workspaces collect for the life of a session.
 
 ## Seen state
 
-The cache holds one thing the server did not say: which agents have finished without anybody
-looking at them. herdr keeps that per client and never puts it on the wire, so the `done` status
-the dashboard heads `READY` exists only here.
+herdr owns it. A pane that has finished and that nobody has looked at reads `done` on the wire,
+which is what the dashboard heads `READY`; focusing it puts it back to `idle`. Both halves were
+measured against a live protocol 22 server.
 
-`herdr-state-reduce` maintains it, in `herdr-state--track-seen`, because every write to a pane
-record already goes through that one function — the status events, the `final_status` a release
-carries, and the `pane_updated` a reconcile folds in. A completion noticed in one place is
-noticed in all three.
+The cache stores that value as sent and no surface projects it, so `herdr-pane-status` is what
+every reader calls. There is no client-side seen state to keep in step, and no way for two
+clients to disagree about what is finished.
 
-It lives in the state's `done-panes` slot, beside the records rather than inside them. Writing
-`done` into a record's `agent_status` would put it in `herdr-pane-significant-fields`, and every
-reconcile would then read cached `done` against a fresh `idle`, call it a change, and redraw on
-the repair interval.
-
-Read it with `herdr-state-pane-status`, never `herdr-pane-status`. A surface that reads the
-record directly shows `idle` for a pane the queue is heading `READY`.
+Do not derive it here again. herdr.el once did, on the belief that the server never sent
+`done`; the belief was mistaken rather than outdated — see [Protocol notes](protocol.md).
 
 ## The pure half and the impure half
 
