@@ -111,11 +111,8 @@ The cache stores that value as sent and no surface projects it, so `herdr-pane-s
 every reader calls. There is no client-side seen state to keep in step, and no way for two
 clients to disagree about what is finished.
 
-This reversed an earlier design. herdr.el used to derive `done` itself, in
-`herdr-state--track-seen`, from a `working` → `idle` transition cleared by `pane_focused`, on
-the belief that the server never sent it. That belief was mistaken rather than outdated — see
-[Protocol notes](protocol.md) — and the derivation was already dead when it went, since the
-server goes `working` → `done` without the intermediate `idle` it watched for.
+Do not derive it here again. herdr.el once did, on the belief that the server never sent
+`done`; the belief was mistaken rather than outdated — see [Protocol notes](protocol.md).
 
 ## The pure half and the impure half
 

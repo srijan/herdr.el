@@ -263,11 +263,7 @@ So the seen state is herdr's now, not the client's. `idle` and `done` still both
 input, and what tells them apart — whether anybody has looked — is tracked server-side and shared
 by every attached client. The schema exposes `seen` as an agent-view field for the same reason.
 
-herdr.el therefore stores what it is sent. It used to derive `done` in
-`herdr-state--track-seen`, promoting a `working` → `idle` transition and clearing it on
-`pane_focused`. That code was removed once the server's own arc was measured, and it had already
-stopped firing: the server goes `working` → `done` directly and never passes through the `idle`
-that the promotion waited for.
+herdr.el therefore stores what it is sent.
 
 **There is no `agent_renamed` event.** The event schema carries `workspace_renamed` and
 `tab_renamed` and nothing for an agent, so `agent.rename` is announced only in its own reply, which
