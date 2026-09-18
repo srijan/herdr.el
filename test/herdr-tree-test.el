@@ -1024,6 +1024,20 @@ already aimed at a pane row works on it with no arm of its own."
     (should (equal "w1:p1" (nth 1 row)))
     (should-not (nth 3 row))))
 
+(ert-deftest herdr-tree-queue-row-shows-its-own-status ()
+  "The glyph and its face come from the pane's status, not from a constant.
+Every other surface reading a status kills a hardcoded value; this row
+did not, because its node type and id are asserted and its rendered line
+was not."
+  (dolist (status '("blocked" "done"))
+    (let* ((row (car (nth 3 (car (herdr-tree-queue-nodes
+                                  (list (cons nil (herdr-tree-test--queue-state
+                                                   (list "w1:p1" status 1)))))))))
+           (line (nth 2 row)))
+      (should (string-prefix-p (herdr-tree-glyph status) line))
+      (should (eq (herdr-tree-status-face status)
+                  (get-text-property 0 'face line))))))
+
 (ert-deftest herdr-tree-queue-carries-the-machine-only-when-there-are-several ()
   "A queue is ordered by attention, not by machine, so a row has no
 machine heading above it to be read off.  It carries the name on its own

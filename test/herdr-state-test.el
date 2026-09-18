@@ -181,7 +181,7 @@ rather than signal."
     (should-not (fboundp 'herdr-state-tabs))
     (should-not (fboundp 'herdr-state-reconcile-tabs))))
 
-;;; Seen, which herdr keeps per client and never puts on the wire
+;;; Renames and moves, whose events carry no nested record
 
 (ert-deftest herdr-state-reduce-workspace-renamed-updates-the-label ()
   "The event is `workspace_id' plus `label', with no WorkspaceInfo.

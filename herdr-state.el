@@ -1052,10 +1052,11 @@ without changing what B should watch."
 (defun herdr-state-reconcile-panes (connection)
   "Make the cached pane set match the server, and refresh directories.
 
-The event stream cannot keep the cache right on its own.  A `cd' is
-never announced, and a subscription starts at the sequence its request
-arrived on, so whatever happened between the snapshot and the subscribe
-is never sent.  One `pane.list' is authoritative and answers both.
+The event stream cannot keep the cache right on its own.  herdr does
+announce a `cd', on `pane.updated', but `herdr-state-global-subscriptions'
+leaves that one out on purpose, and a subscription starts at the sequence
+its request arrived on, so whatever happened between the snapshot and the
+subscribe is never sent.  One `pane.list' is authoritative and answers both.
 Through herdr 0.8.2 there was a third reason: a fresh subscription
 replayed the server's event ring, so a `pane_created' for a
 long-closed pane arrived as news.
