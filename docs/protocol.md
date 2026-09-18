@@ -313,9 +313,16 @@ workspaces: the server knows nothing about a project you are not working in righ
 false positive here: when you send the escapes inline, the shell echoes the command text, and
 that text holds the same characters.
 
-**herdr tracks the working directory itself.** The field `pane.cwd` follows a `cd` within about
-one second. But the server sends no event for the change. A `cd` emits `layout_updated` only, so
-a client must poll.
+**herdr tracks the working directory itself, and announces it.** A pane record's `cwd` follows a
+`cd` within about a tenth of a second, and the server says so: a `cd` emits `pane_updated`
+carrying the whole record, twice, roughly 100ms apart. Measured on 2026-09-18 against 0.9.0 over
+a direct socket subscription, 12 directory changes across two panes — and not one
+`layout_updated` among them, which is what this page used to claim was the only thing a `cd`
+emitted.
+
+A client that does not subscribe to `pane.updated` therefore learns a new directory from a poll
+rather than from the wire. herdr.el is such a client deliberately; see
+`herdr-state-global-subscriptions` for what that subscription costs.
 
 **Terminal titles animate.** Claude puts a spinner glyph and a second counter in the title.
 The field `terminal_title_stripped` therefore changes several times each second: 662 of 662
