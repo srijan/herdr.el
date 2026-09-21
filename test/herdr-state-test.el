@@ -1097,6 +1097,54 @@ and the lag."
   (should (< (seq-position herdr-state-global-subscriptions "pane.created")
              (seq-position herdr-state-global-subscriptions "pane.closed"))))
 
+(ert-deftest herdr-state-a-snapshot-carries-done-into-the-cache ()
+  "`done' arrives on the record now, so it has to survive the two paths
+that are not the reducer.  The snapshot half: `session.snapshot' is what
+every picker and resync rebuilds the cache from, and the old design kept
+`done' out of the record on purpose, so nothing ever asked whether a
+stored one comes back."
+  (herdr-state-test--with-quiet-session
+    (let ((reply '((snapshot
+                    . ((panes . (((pane_id . "w1:p1")
+                                  (agent . "claude")
+                                  (agent_status . "done")))))))))
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (&rest _) reply)))
+        (herdr-state-refresh (herdr-current-connection))
+        (should (equal "done"
+                       (herdr-pane-status
+                        (herdr-state-pane
+                         (herdr-state-current (herdr-current-connection))
+                         "w1:p1"))))))))
+
+(ert-deftest herdr-state-a-reconcile-carries-done-into-the-cache ()
+  "The reconcile half, and the one that matters after a reconnect: a
+`pane.list' reply is what repairs a cache that missed events.  A pane the
+cache still holds as working must come back `done', and the change must
+be announced - `agent_status' is a significant field, so a silent
+refresh here would leave the queue drawing the status before it."
+  (let ((kinds nil)
+        (reply '((panes . (((pane_id . "w1:p1")
+                            (agent . "claude")
+                            (agent_status . "done")))))))
+    (herdr-test-with-state
+        (:running t
+         :cache (herdr-state-from-snapshot
+                 '((panes . (((pane_id . "w1:p1")
+                              (agent . "claude")
+                              (agent_status . "working")))))))
+      (cl-letf (((symbol-function 'herdr-rpc-call)
+                 (lambda (&rest _) reply)))
+        (let ((herdr-state-change-functions
+               (list (lambda (_connection kind) (push kind kinds)))))
+          (should (herdr-state-reconcile-panes (herdr-current-connection))))
+        (should (equal "done"
+                       (herdr-pane-status
+                        (herdr-state-pane
+                         (herdr-state-current (herdr-current-connection))
+                         "w1:p1"))))
+        (should kinds)))))
+
 (ert-deftest herdr-state-reduce-status-event-merges-display-agent ()
   "With `pane.updated' gone, the B event is the only prompt carrier of
 `display_agent', which buffer naming and the dashboard rows prefer."
